@@ -879,7 +879,12 @@ def register_incident_tools(
 
         @mcp.tool(name="updateIncident")
         async def update_incident(
-            incident_id: Annotated[str, Field(description="Incident ID to update")],
+            incident_id: Annotated[
+                str,
+                Field(
+                    description="Incident reference to update: UUID, bare number like 4460, #4460, or INC-4460"
+                ),
+            ],
             retrospective_progress_status: Annotated[
                 str | None,
                 Field(
@@ -926,8 +931,11 @@ def register_incident_tools(
             }
 
             try:
+                resolved_incident_id = await _resolve_incident_reference_to_uuid(
+                    incident_id, make_authenticated_request
+                )
                 response = await make_authenticated_request(
-                    "PUT", f"/v1/incidents/{incident_id}", json=payload
+                    "PUT", f"/v1/incidents/{resolved_incident_id}", json=payload
                 )
                 response.raise_for_status()
 
@@ -977,11 +985,15 @@ def register_incident_tools(
         """
         try:
             target_incident: dict[str, Any] = {}
+            resolved_incident_id = ""
 
             if incident_id:
                 # Get the target incident details by ID
+                resolved_incident_id = await _resolve_incident_reference_to_uuid(
+                    incident_id, make_authenticated_request
+                )
                 target_response = await make_authenticated_request(
-                    "GET", f"/v1/incidents/{incident_id}"
+                    "GET", f"/v1/incidents/{resolved_incident_id}"
                 )
                 target_response.raise_for_status()
                 target_incident_data = strip_heavy_nested_data(
@@ -1033,7 +1045,9 @@ def register_incident_tools(
             # Filter out the target incident itself if it exists
             if incident_id:
                 historical_incidents = [
-                    inc for inc in historical_incidents if str(inc.get("id")) != str(incident_id)
+                    inc
+                    for inc in historical_incidents
+                    if str(inc.get("id")) != str(resolved_incident_id)
                 ]
 
             if not historical_incidents:
@@ -1042,6 +1056,7 @@ def register_incident_tools(
                     "message": "No historical incidents found for comparison",
                     "target_incident": {
                         "id": incident_id or "synthetic",
+                        "resolved_incident_id": resolved_incident_id or None,
                         "title": target_incident.get("attributes", {}).get(
                             "title", incident_description
                         ),
@@ -1076,6 +1091,7 @@ def register_incident_tools(
             return {
                 "target_incident": {
                     "id": incident_id or "synthetic",
+                    "resolved_incident_id": resolved_incident_id or None,
                     "title": target_incident.get("attributes", {}).get(
                         "title", incident_description
                     ),
@@ -1123,10 +1139,16 @@ def register_incident_tools(
         """
         try:
             target_incident: dict[str, Any] = {}
+            resolved_incident_id = ""
 
             if incident_id:
                 # Get incident details by ID
-                response = await make_authenticated_request("GET", f"/v1/incidents/{incident_id}")
+                resolved_incident_id = await _resolve_incident_reference_to_uuid(
+                    incident_id, make_authenticated_request
+                )
+                response = await make_authenticated_request(
+                    "GET", f"/v1/incidents/{resolved_incident_id}"
+                )
                 response.raise_for_status()
                 incident_data = strip_heavy_nested_data({"data": [response.json().get("data", {})]})
                 target_incident = incident_data.get("data", [{}])[0]
@@ -1174,7 +1196,9 @@ def register_incident_tools(
             # Filter out target incident if it exists
             if incident_id:
                 historical_incidents = [
-                    inc for inc in historical_incidents if str(inc.get("id")) != str(incident_id)
+                    inc
+                    for inc in historical_incidents
+                    if str(inc.get("id")) != str(resolved_incident_id)
                 ]
 
             if not historical_incidents:
@@ -1208,6 +1232,7 @@ def register_incident_tools(
             return {
                 "target_incident": {
                     "id": incident_id or "synthetic",
+                    "resolved_incident_id": resolved_incident_id or None,
                     "title": target_incident.get("attributes", {}).get("title", incident_title),
                     "description": target_incident.get("attributes", {}).get(
                         "summary", incident_description
