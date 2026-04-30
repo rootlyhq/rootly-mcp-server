@@ -253,6 +253,189 @@ class TestScopedIncidentUpdateTool:
         assert result["data"]["attributes"]["retrospective_progress_status"] == "active"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("incident_reference"),
+        [
+            "4460",
+            "#4460",
+            "INC-4460",
+        ],
+    )
+    async def test_get_incident_resolves_sequential_references(self, incident_reference: str):
+        tools, request = self._register_tools()
+
+        list_response = Mock()
+        list_response.raise_for_status.return_value = None
+        list_response.json.return_value = {
+            "data": [
+                {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4460},
+                }
+            ],
+            "meta": {
+                "current_page": 1,
+                "next_page": None,
+                "prev_page": None,
+                "total_pages": 1,
+                "total_count": 1,
+            },
+        }
+
+        incident_response = Mock()
+        incident_response.raise_for_status.return_value = None
+        incident_response.json.return_value = {
+            "data": {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "type": "incidents",
+                "attributes": {
+                    "summary": "Updated PIR summary",
+                    "retrospective_progress_status": "active",
+                },
+            }
+        }
+
+        request.side_effect = [list_response, incident_response]
+
+        result = await tools["getIncident"](incident_id=incident_reference)
+
+        assert request.await_args_list == [
+            call(
+                "GET",
+                "/v1/incidents",
+                params={
+                    "page[size]": 100,
+                    "page[number]": 1,
+                    "fields[incidents]": "id,sequential_id",
+                    "include": "",
+                    "sort": "-created_at",
+                },
+            ),
+            call("GET", "/v1/incidents/11111111-1111-4111-8111-111111111111"),
+        ]
+        assert result["data"]["id"] == "11111111-1111-4111-8111-111111111111"
+
+    @pytest.mark.asyncio
+    async def test_get_incident_returns_clear_error_for_unknown_sequential_reference(self):
+        tools, request = self._register_tools()
+
+        first_page_response = Mock()
+        first_page_response.raise_for_status.return_value = None
+        first_page_response.json.return_value = {
+            "data": [
+                {
+                    "id": "uuid-page-1",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 5000},
+                },
+                {
+                    "id": "uuid-page-1-last",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4901},
+                },
+            ],
+            "meta": {
+                "current_page": 1,
+                "next_page": 2,
+                "prev_page": None,
+                "total_pages": 8,
+                "total_count": 800,
+            },
+        }
+
+        mid_page_response = Mock()
+        mid_page_response.raise_for_status.return_value = None
+        mid_page_response.json.return_value = {
+            "data": [
+                {
+                    "id": "uuid-page-4",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4700},
+                },
+                {
+                    "id": "uuid-page-4-last",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4601},
+                },
+            ],
+            "meta": {
+                "current_page": 4,
+                "next_page": 5,
+                "prev_page": 3,
+                "total_pages": 8,
+                "total_count": 800,
+            },
+        }
+
+        target_range_response = Mock()
+        target_range_response.raise_for_status.return_value = None
+        target_range_response.json.return_value = {
+            "data": [
+                {
+                    "id": "uuid-page-6",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4500},
+                },
+                {
+                    "id": "uuid-page-6-last",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4401},
+                },
+            ],
+            "meta": {
+                "current_page": 6,
+                "next_page": 7,
+                "prev_page": 5,
+                "total_pages": 8,
+                "total_count": 800,
+            },
+        }
+
+        request.side_effect = [first_page_response, mid_page_response, target_range_response]
+
+        result = await tools["getIncident"](incident_id="4460")
+
+        assert result["error"] is True
+        assert result["error_type"] == "not_found"
+        assert "INC-4460" in result["message"]
+        assert request.await_args_list == [
+            call(
+                "GET",
+                "/v1/incidents",
+                params={
+                    "page[size]": 100,
+                    "page[number]": 1,
+                    "fields[incidents]": "id,sequential_id",
+                    "include": "",
+                    "sort": "-created_at",
+                },
+            ),
+            call(
+                "GET",
+                "/v1/incidents",
+                params={
+                    "page[size]": 100,
+                    "page[number]": 4,
+                    "fields[incidents]": "id,sequential_id",
+                    "include": "",
+                    "sort": "-created_at",
+                },
+            ),
+            call(
+                "GET",
+                "/v1/incidents",
+                params={
+                    "page[size]": 100,
+                    "page[number]": 6,
+                    "fields[incidents]": "id,sequential_id",
+                    "include": "",
+                    "sort": "-created_at",
+                },
+            ),
+        ]
+
+    @pytest.mark.asyncio
     async def test_update_incident_sends_only_allowed_fields(self):
         tools, request = self._register_tools()
         response = Mock()
