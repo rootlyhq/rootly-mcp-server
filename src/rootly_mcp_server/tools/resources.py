@@ -6,6 +6,8 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
+from .incidents import _resolve_incident_reference_to_uuid
+
 JsonDict = dict[str, Any]
 MakeAuthenticatedRequest = Callable[..., Awaitable[Any]]
 StripHeavyNestedData = Callable[[JsonDict], JsonDict]
@@ -30,14 +32,20 @@ def register_resource_handlers(
     async def get_incident_resource(incident_id: str) -> JsonDict:
         """Expose incident details as an MCP resource for easy reference and context."""
         try:
-            response = await make_authenticated_request("GET", f"/v1/incidents/{incident_id}")
+            resolved_incident_id = await _resolve_incident_reference_to_uuid(
+                incident_id, make_authenticated_request
+            )
+            response = await make_authenticated_request(
+                "GET", f"/v1/incidents/{resolved_incident_id}"
+            )
             response.raise_for_status()
             incident_data = strip_heavy_nested_data({"data": [response.json().get("data", {})]})
 
             incident = incident_data.get("data", [{}])[0]
             attributes = incident.get("attributes", {})
 
-            text_content = f"""Incident #{incident_id}
+            text_content = f"""Incident Reference: {incident_id}
+Resolved Incident ID: {resolved_incident_id}
 Title: {attributes.get("title", "N/A")}
 Status: {attributes.get("status", "N/A")}
 Severity: {attributes.get("severity", "N/A")}
@@ -48,7 +56,7 @@ URL: {attributes.get("url", "N/A")}"""
 
             return {
                 "uri": f"incident://{incident_id}",
-                "name": f"Incident #{incident_id}",
+                "name": f"Incident {incident_id}",
                 "text": text_content,
                 "mimeType": "text/plain",
             }
@@ -56,7 +64,7 @@ URL: {attributes.get("url", "N/A")}"""
             error_type, error_message = mcp_error.categorize_error(e)
             return {
                 "uri": f"incident://{incident_id}",
-                "name": f"Incident #{incident_id} (Error)",
+                "name": f"Incident {incident_id} (Error)",
                 "text": f"Error ({error_type}): {error_message}",
                 "mimeType": "text/plain",
             }

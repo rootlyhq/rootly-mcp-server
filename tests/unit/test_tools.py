@@ -17,6 +17,7 @@ import pytest
 from rootly_mcp_server.server import DEFAULT_ALLOWED_PATHS, create_rootly_mcp_server
 from rootly_mcp_server.server_defaults import _generate_recommendation
 from rootly_mcp_server.tools.incidents import INCIDENT_LIST_FIELDS, register_incident_tools
+from rootly_mcp_server.tools.resources import register_resource_handlers
 
 
 class FakeMCP:
@@ -24,10 +25,18 @@ class FakeMCP:
 
     def __init__(self) -> None:
         self.tools: dict[str, Any] = {}
+        self.resources: dict[str, Any] = {}
 
     def tool(self, name: str | None = None, **_: Any):
         def decorator(fn):
             self.tools[name or fn.__name__] = fn
+            return fn
+
+        return decorator
+
+    def resource(self, uri_template: str, **_: Any):
+        def decorator(fn):
+            self.resources[uri_template] = fn
             return fn
 
         return decorator
@@ -37,8 +46,8 @@ class FakeMCPError:
     """Minimal error helper for custom tool tests."""
 
     @staticmethod
-    def categorize_error(error: Exception) -> tuple[str, str]:
-        return (error.__class__.__name__, str(error))
+    def categorize_error(exception: Exception) -> tuple[str, str]:
+        return (exception.__class__.__name__, str(exception))
 
     @staticmethod
     def tool_error(message: str, error_type: str) -> dict[str, Any]:
@@ -253,6 +262,189 @@ class TestScopedIncidentUpdateTool:
         assert result["data"]["attributes"]["retrospective_progress_status"] == "active"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("incident_reference"),
+        [
+            "4460",
+            "#4460",
+            "INC-4460",
+        ],
+    )
+    async def test_get_incident_resolves_sequential_references(self, incident_reference: str):
+        tools, request = self._register_tools()
+
+        list_response = Mock()
+        list_response.raise_for_status.return_value = None
+        list_response.json.return_value = {
+            "data": [
+                {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4460},
+                }
+            ],
+            "meta": {
+                "current_page": 1,
+                "next_page": None,
+                "prev_page": None,
+                "total_pages": 1,
+                "total_count": 1,
+            },
+        }
+
+        incident_response = Mock()
+        incident_response.raise_for_status.return_value = None
+        incident_response.json.return_value = {
+            "data": {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "type": "incidents",
+                "attributes": {
+                    "summary": "Updated PIR summary",
+                    "retrospective_progress_status": "active",
+                },
+            }
+        }
+
+        request.side_effect = [list_response, incident_response]
+
+        result = await tools["getIncident"](incident_id=incident_reference)
+
+        assert request.await_args_list == [
+            call(
+                "GET",
+                "/v1/incidents",
+                params={
+                    "page[size]": 100,
+                    "page[number]": 1,
+                    "fields[incidents]": "id,sequential_id",
+                    "include": "",
+                    "sort": "-created_at",
+                },
+            ),
+            call("GET", "/v1/incidents/11111111-1111-4111-8111-111111111111"),
+        ]
+        assert result["data"]["id"] == "11111111-1111-4111-8111-111111111111"
+
+    @pytest.mark.asyncio
+    async def test_get_incident_returns_clear_error_for_unknown_sequential_reference(self):
+        tools, request = self._register_tools()
+
+        first_page_response = Mock()
+        first_page_response.raise_for_status.return_value = None
+        first_page_response.json.return_value = {
+            "data": [
+                {
+                    "id": "uuid-page-1",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 5000},
+                },
+                {
+                    "id": "uuid-page-1-last",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4901},
+                },
+            ],
+            "meta": {
+                "current_page": 1,
+                "next_page": 2,
+                "prev_page": None,
+                "total_pages": 8,
+                "total_count": 800,
+            },
+        }
+
+        mid_page_response = Mock()
+        mid_page_response.raise_for_status.return_value = None
+        mid_page_response.json.return_value = {
+            "data": [
+                {
+                    "id": "uuid-page-4",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4700},
+                },
+                {
+                    "id": "uuid-page-4-last",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4601},
+                },
+            ],
+            "meta": {
+                "current_page": 4,
+                "next_page": 5,
+                "prev_page": 3,
+                "total_pages": 8,
+                "total_count": 800,
+            },
+        }
+
+        target_range_response = Mock()
+        target_range_response.raise_for_status.return_value = None
+        target_range_response.json.return_value = {
+            "data": [
+                {
+                    "id": "uuid-page-6",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4500},
+                },
+                {
+                    "id": "uuid-page-6-last",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4401},
+                },
+            ],
+            "meta": {
+                "current_page": 6,
+                "next_page": 7,
+                "prev_page": 5,
+                "total_pages": 8,
+                "total_count": 800,
+            },
+        }
+
+        request.side_effect = [first_page_response, mid_page_response, target_range_response]
+
+        result = await tools["getIncident"](incident_id="4460")
+
+        assert result["error"] is True
+        assert result["error_type"] == "not_found"
+        assert "INC-4460" in result["message"]
+        assert request.await_args_list == [
+            call(
+                "GET",
+                "/v1/incidents",
+                params={
+                    "page[size]": 100,
+                    "page[number]": 1,
+                    "fields[incidents]": "id,sequential_id",
+                    "include": "",
+                    "sort": "-created_at",
+                },
+            ),
+            call(
+                "GET",
+                "/v1/incidents",
+                params={
+                    "page[size]": 100,
+                    "page[number]": 4,
+                    "fields[incidents]": "id,sequential_id",
+                    "include": "",
+                    "sort": "-created_at",
+                },
+            ),
+            call(
+                "GET",
+                "/v1/incidents",
+                params={
+                    "page[size]": 100,
+                    "page[number]": 6,
+                    "fields[incidents]": "id,sequential_id",
+                    "include": "",
+                    "sort": "-created_at",
+                },
+            ),
+        ]
+
+    @pytest.mark.asyncio
     async def test_update_incident_sends_only_allowed_fields(self):
         tools, request = self._register_tools()
         response = Mock()
@@ -291,6 +483,70 @@ class TestScopedIncidentUpdateTool:
         )
         assert result["data"]["attributes"]["retrospective_progress_status"] == "active"
         assert result["data"]["attributes"]["summary"] == "Updated PIR summary"
+
+    @pytest.mark.asyncio
+    async def test_update_incident_resolves_sequential_reference(self):
+        tools, request = self._register_tools()
+
+        list_response = Mock()
+        list_response.raise_for_status.return_value = None
+        list_response.json.return_value = {
+            "data": [
+                {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4460},
+                }
+            ],
+            "meta": {"current_page": 1, "next_page": None, "prev_page": None, "total_pages": 1},
+        }
+
+        update_response = Mock()
+        update_response.raise_for_status.return_value = None
+        update_response.json.return_value = {
+            "data": {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "type": "incidents",
+                "attributes": {
+                    "summary": "Updated PIR summary",
+                    "retrospective_progress_status": "active",
+                },
+            }
+        }
+
+        request.side_effect = [list_response, update_response]
+
+        result = await tools["updateIncident"](
+            incident_id="#4460",
+            retrospective_progress_status="active",
+        )
+
+        assert request.await_args_list == [
+            call(
+                "GET",
+                "/v1/incidents",
+                params={
+                    "page[size]": 100,
+                    "page[number]": 1,
+                    "fields[incidents]": "id,sequential_id",
+                    "include": "",
+                    "sort": "-created_at",
+                },
+            ),
+            call(
+                "PUT",
+                "/v1/incidents/11111111-1111-4111-8111-111111111111",
+                json={
+                    "data": {
+                        "type": "incidents",
+                        "attributes": {
+                            "retrospective_progress_status": "active",
+                        },
+                    }
+                },
+            ),
+        ]
+        assert result["data"]["id"] == "11111111-1111-4111-8111-111111111111"
 
     @pytest.mark.asyncio
     async def test_update_incident_allows_skipped_status(self):
@@ -792,3 +1048,182 @@ class TestCollectIncidentsTool:
             "INC-102",
             "INC-103",
         ]
+
+
+@pytest.mark.unit
+class TestIncidentReferenceResolutionAcrossTools:
+    def _register_tools(self):
+        mcp = FakeMCP()
+        request = AsyncMock()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+        register_resource_handlers(
+            mcp=mcp,
+            make_authenticated_request=request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+        )
+        return mcp, request
+
+    @pytest.mark.asyncio
+    async def test_find_related_incidents_resolves_sequential_reference(self):
+        mcp, request = self._register_tools()
+
+        list_response = Mock()
+        list_response.raise_for_status.return_value = None
+        list_response.json.return_value = {
+            "data": [
+                {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4460},
+                }
+            ],
+            "meta": {"current_page": 1, "next_page": None, "prev_page": None, "total_pages": 1},
+        }
+
+        incident_response = Mock()
+        incident_response.raise_for_status.return_value = None
+        incident_response.json.return_value = {
+            "data": {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "attributes": {
+                    "title": "Database timeout",
+                    "summary": "Connection pool exhausted",
+                },
+            }
+        }
+
+        historical_response = Mock()
+        historical_response.raise_for_status.return_value = None
+        historical_response.json.return_value = {
+            "data": [
+                {
+                    "id": "other-1",
+                    "attributes": {
+                        "title": "Database timeout",
+                        "summary": "Connection pool exhausted",
+                        "status": "resolved",
+                        "created_at": "2026-04-01T00:00:00Z",
+                        "url": "https://example.com/incidents/other-1",
+                    },
+                }
+            ]
+        }
+
+        request.side_effect = [list_response, incident_response, historical_response]
+
+        result = await mcp.tools["find_related_incidents"](incident_id="INC-4460")
+
+        assert request.await_args_list[1] == call(
+            "GET", "/v1/incidents/11111111-1111-4111-8111-111111111111"
+        )
+        assert result["target_incident"]["resolved_incident_id"] == (
+            "11111111-1111-4111-8111-111111111111"
+        )
+
+    @pytest.mark.asyncio
+    async def test_suggest_solutions_resolves_sequential_reference(self):
+        mcp, request = self._register_tools()
+
+        list_response = Mock()
+        list_response.raise_for_status.return_value = None
+        list_response.json.return_value = {
+            "data": [
+                {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4460},
+                }
+            ],
+            "meta": {"current_page": 1, "next_page": None, "prev_page": None, "total_pages": 1},
+        }
+
+        incident_response = Mock()
+        incident_response.raise_for_status.return_value = None
+        incident_response.json.return_value = {
+            "data": {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "attributes": {
+                    "title": "Database timeout",
+                    "summary": "Connection pool exhausted",
+                },
+            }
+        }
+
+        historical_response = Mock()
+        historical_response.raise_for_status.return_value = None
+        historical_response.json.return_value = {
+            "data": [
+                {
+                    "id": "other-1",
+                    "attributes": {
+                        "title": "Database timeout",
+                        "summary": "Connection pool exhausted",
+                        "status": "resolved",
+                        "created_at": "2026-04-01T00:00:00Z",
+                        "resolved_at": "2026-04-01T01:00:00Z",
+                    },
+                }
+            ]
+        }
+
+        request.side_effect = [list_response, incident_response, historical_response]
+
+        result = await mcp.tools["suggest_solutions"](incident_id="4460")
+
+        assert request.await_args_list[1] == call(
+            "GET", "/v1/incidents/11111111-1111-4111-8111-111111111111"
+        )
+        assert result["target_incident"]["resolved_incident_id"] == (
+            "11111111-1111-4111-8111-111111111111"
+        )
+
+    @pytest.mark.asyncio
+    async def test_incident_resource_resolves_sequential_reference(self):
+        mcp, request = self._register_tools()
+
+        list_response = Mock()
+        list_response.raise_for_status.return_value = None
+        list_response.json.return_value = {
+            "data": [
+                {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4460},
+                }
+            ],
+            "meta": {"current_page": 1, "next_page": None, "prev_page": None, "total_pages": 1},
+        }
+
+        incident_response = Mock()
+        incident_response.raise_for_status.return_value = None
+        incident_response.json.return_value = {
+            "data": {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "attributes": {
+                    "title": "Database timeout",
+                    "status": "resolved",
+                    "severity": "critical",
+                    "created_at": "2026-04-01T00:00:00Z",
+                    "updated_at": "2026-04-01T00:05:00Z",
+                    "summary": "Connection pool exhausted",
+                    "url": "https://example.com/incidents/4460",
+                },
+            }
+        }
+
+        request.side_effect = [list_response, incident_response]
+
+        result = await mcp.resources["incident://{incident_id}"]("#4460")
+
+        assert request.await_args_list[1] == call(
+            "GET", "/v1/incidents/11111111-1111-4111-8111-111111111111"
+        )
+        assert "Resolved Incident ID: 11111111-1111-4111-8111-111111111111" in result["text"]
