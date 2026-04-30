@@ -5,6 +5,16 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.4] - Released 2026-04-30
+
+### Features
+
+- **Incident Timeline Events Enabled by Default**: Exposed incident timeline event creation in the default MCP write surface so agents can add timeline entries without extra configuration
+
+### Dependencies
+
+- **Routine Dependency Refresh**: Pulled in the latest minor and patch dependency updates from Dependabot
+
 ## [2.3.2] - Released 2026-04-23
 
 ### Fixed
