@@ -1,6 +1,6 @@
 [project]
 name = "rootly-mcp-server"
-version = "2.3.4"
+version = "2.3.5"
 description = "Secure Model Context Protocol server for Rootly APIs with AI SRE capabilities, comprehensive error handling, and input validation"
 readme = "README.md"
 requires-python = ">=3.12"

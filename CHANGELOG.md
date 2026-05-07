@@ -5,6 +5,17 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.5] - Released 2026-05-07
+
+### Fixed
+
+- **Sequential Incident Reference Resolution**: Added server-side resolution for incident references like `4460`, `#4460`, and `INC-4460`, so callers no longer need to convert sequential incident numbers to UUIDs themselves
+- **Broader Incident Tool Support**: Applied the same reference resolution behavior across `getIncident`, `updateIncident`, `find_related_incidents`, `suggest_solutions`, and the `incident://{incident_id}` resource for a more consistent incident workflow
+
+### Testing
+
+- **Incident Reference Coverage**: Added focused test coverage for UUID and sequential incident references, not-found handling, bounded lookup behavior, and the expanded incident tool/resource paths
+
 ## [2.3.4] - Released 2026-04-30
 
 ### Features
