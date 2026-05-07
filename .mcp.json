@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "rootly": {
+      "url": "https://mcp.rootly.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ROOTLY_API_TOKEN}"
+      }
+    }
+  }
+}
