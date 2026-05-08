@@ -472,6 +472,11 @@ def main():
                 logger.info("Code Mode enabled at path: %s", code_mode_path)
 
         logger.info(f"Running server with transport: {normalized_transport}...")
+        direct_streamable_stateless_http = streamable_http_stateless_enabled(
+            hosted=hosted_mode,
+            fastmcp_stateless_http=os.getenv("FASTMCP_STATELESS_HTTP", "").lower()
+            in ("true", "1", "yes"),
+        )
         if normalized_transport == "both":
             run_dual_http_server(
                 server=server,
@@ -483,13 +488,16 @@ def main():
         elif normalized_transport == "stdio":
             server.run(transport=normalized_transport)
         else:
-            server.run(
-                transport=normalized_transport,
-                middleware=get_hosted_auth_middleware(),
+            run_kwargs = {
+                "transport": normalized_transport,
+                "middleware": get_hosted_auth_middleware(),
                 # Override FastMCP's default of 0s to allow active SSE connections
                 # to finish gracefully during deployments (avoids 502s).
-                uvicorn_config={"timeout_graceful_shutdown": 30},
-            )
+                "uvicorn_config": {"timeout_graceful_shutdown": 30},
+            }
+            if normalized_transport == "streamable-http":
+                run_kwargs["stateless_http"] = direct_streamable_stateless_http
+            server.run(**run_kwargs)
 
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")
