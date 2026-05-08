@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.3.7] - Released 2026-05-08
 
+### Features
+
+- **MCP OAuth2 Authorization Discovery**: Added hosted-only OAuth protected resource metadata and `WWW-Authenticate` discovery headers so compatible MCP clients can discover Rootly's authorization server automatically
+
 ### Fixed
 
 - **Hosted Streamable HTTP Session Accumulation**: Defaulted hosted streamable HTTP to stateless mode so the server no longer accumulates long-lived MCP sessions when clients do not explicitly terminate them
