@@ -30,6 +30,19 @@ def is_mcp_server_url_static() -> bool:
     return bool(_MCP_SERVER_URL)
 
 
+def auth_header_state(auth_header: str) -> str:
+    """Classify Authorization header shape without exposing token contents."""
+    raw = (auth_header or "").strip()
+    if not raw:
+        return "missing"
+    parts = raw.split(None, 1)
+    if not parts or parts[0].lower() != "bearer":
+        return "invalid_format"
+    if len(parts) == 1 or not parts[1].strip():
+        return "missing_token"
+    return "bearer"
+
+
 def sanitize_parameter_name(name: str) -> str:
     """
     Sanitize parameter names to match MCP property key pattern ^[a-zA-Z0-9_.-]{1,64}$.
