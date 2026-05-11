@@ -27,6 +27,7 @@ from .tools.oncall import register_oncall_tools
 from .tools.resources import register_resource_handlers
 from .utils import (
     OAUTH_PROTECTED_RESOURCE_PATH,
+    auth_header_state,
     is_mcp_server_url_static,
     resolve_mcp_server_url,
     sanitize_parameters_in_spec,
@@ -89,15 +90,7 @@ def _fingerprint_auth_header(auth_header: str) -> str:
 
 def _auth_header_state(auth_header: str) -> str:
     """Classify Authorization header shape without exposing token contents."""
-    raw = (auth_header or "").strip()
-    if not raw:
-        return "missing"
-    parts = raw.split(None, 1)
-    if not parts or parts[0].lower() != "bearer":
-        return "invalid_format"
-    if len(parts) == 1 or not parts[1].strip():
-        return "missing_token"
-    return "bearer"
+    return auth_header_state(auth_header)
 
 
 def _validate_bearer_auth_header(auth_header: str) -> str:

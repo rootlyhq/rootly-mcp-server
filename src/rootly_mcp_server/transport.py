@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from .security import mask_sensitive_data
-from .utils import OAUTH_PROTECTED_RESOURCE_PATH, resolve_mcp_server_url
+from .utils import OAUTH_PROTECTED_RESOURCE_PATH, auth_header_state, resolve_mcp_server_url
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +248,8 @@ class AuthCaptureMiddleware:
     are unavailable in async child contexts.
     """
 
+    _TOKEN_CACHE_TTL = 300
+
     def __init__(self, app):
         self.app = app
         self._sse_path = _normalize_path(os.getenv("FASTMCP_SSE_PATH", "/sse"))
@@ -260,6 +262,41 @@ class AuthCaptureMiddleware:
             self._streamable_path,
             self._code_mode_path,
         }
+        self._base_url = os.getenv("ROOTLY_BASE_URL", "https://api.rootly.com")
+        self._validated_tokens: dict[str, float] = {}
+
+    async def _validate_token_upstream(self, auth_header: str) -> bool:
+        """Probe the Rootly API to verify the Bearer token is valid."""
+        import hashlib
+        import time
+
+        token_hash = hashlib.sha256(auth_header.encode()).hexdigest()[:16]
+        now = time.monotonic()
+
+        cached_at = self._validated_tokens.get(token_hash)
+        if cached_at is not None and (now - cached_at) < self._TOKEN_CACHE_TTL:
+            return True
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{self._base_url}/v1/users/me",
+                    headers={
+                        "Authorization": auth_header,
+                        "Accept": "application/vnd.api+json",
+                    },
+                )
+            if resp.is_success:
+                self._validated_tokens[token_hash] = now
+                if len(self._validated_tokens) > 10000:
+                    cutoff = now - self._TOKEN_CACHE_TTL
+                    self._validated_tokens = {
+                        k: v for k, v in self._validated_tokens.items() if v > cutoff
+                    }
+                return True
+        except Exception:
+            logger.warning("Token validation probe failed, rejecting request")
+        return False
 
     async def __call__(self, scope, receive, send):
         path = _normalize_path(str(scope.get("path", "")))
@@ -309,6 +346,32 @@ class AuthCaptureMiddleware:
                 f"{resolve_mcp_server_url(request)}{OAUTH_PROTECTED_RESOURCE_PATH}"
             )
             www_auth_value = f'Bearer resource_metadata="{resource_metadata_url}"'.encode()
+
+            # Reject unauthenticated, malformed, or invalid tokens on MCP
+            # transport paths before FastMCP processes the protocol message.
+            auth_state = auth_header_state(auth)
+            if auth_state != "bearer" or not await self._validate_token_upstream(auth):
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"www-authenticate", www_auth_value),
+                        ],
+                    }
+                )
+                body = {
+                    "error": "unauthorized",
+                    "message": "Authorization header with a valid Bearer token is required.",
+                }
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": json.dumps(body).encode(),
+                    }
+                )
+                return
 
             async def _send_with_www_authenticate(message):
                 if message.get("type") == "http.response.start" and message.get("status") == 401:
