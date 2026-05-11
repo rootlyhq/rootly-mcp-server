@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from .security import mask_sensitive_data
-from .utils import OAUTH_PROTECTED_RESOURCE_PATH, resolve_mcp_server_url
+from .utils import OAUTH_PROTECTED_RESOURCE_PATH, auth_header_state, resolve_mcp_server_url
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +309,32 @@ class AuthCaptureMiddleware:
                 f"{resolve_mcp_server_url(request)}{OAUTH_PROTECTED_RESOURCE_PATH}"
             )
             www_auth_value = f'Bearer resource_metadata="{resource_metadata_url}"'.encode()
+
+            # Reject unauthenticated or malformed requests on MCP transport
+            # paths early, before FastMCP processes the MCP protocol message.
+            auth_state = auth_header_state(auth)
+            if auth_state != "bearer":
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"www-authenticate", www_auth_value),
+                        ],
+                    }
+                )
+                body = {
+                    "error": "unauthorized",
+                    "message": "Authorization header with a valid Bearer token is required.",
+                }
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": json.dumps(body).encode(),
+                    }
+                )
+                return
 
             async def _send_with_www_authenticate(message):
                 if message.get("type") == "http.response.start" and message.get("status") == 401:
