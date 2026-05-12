@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
+import hashlib
 import json
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import httpx
@@ -248,6 +251,10 @@ class AuthCaptureMiddleware:
     are unavailable in async child contexts.
     """
 
+    _POSITIVE_CACHE_TTL = 300
+    _NEGATIVE_CACHE_TTL = 60
+    _MAX_CACHE_SIZE = 10_000
+
     def __init__(self, app):
         self.app = app
         self._sse_path = _normalize_path(os.getenv("FASTMCP_SSE_PATH", "/sse"))
@@ -260,6 +267,72 @@ class AuthCaptureMiddleware:
             self._streamable_path,
             self._code_mode_path,
         }
+        self._base_url = os.getenv("ROOTLY_BASE_URL", "https://api.rootly.com")
+        # Maps token_hash -> (timestamp, is_valid)
+        self._token_cache: dict[str, tuple[float, bool]] = {}
+        # In-flight probes keyed by token_hash to prevent cache stampede
+        self._inflight: dict[str, asyncio.Future[bool]] = {}
+
+    async def _validate_token_upstream(self, auth_header: str) -> bool:
+        """Probe the Rootly API to verify the Bearer token is valid."""
+        token_hash = hashlib.sha256(auth_header.encode()).hexdigest()
+        now = time.monotonic()
+
+        cached = self._token_cache.get(token_hash)
+        if cached is not None:
+            cached_at, was_valid = cached
+            ttl = self._POSITIVE_CACHE_TTL if was_valid else self._NEGATIVE_CACHE_TTL
+            if (now - cached_at) < ttl:
+                return was_valid
+
+        existing = self._inflight.get(token_hash)
+        if existing is not None:
+            return await existing
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+        self._inflight[token_hash] = future
+
+        try:
+            is_valid = await self._probe_upstream(auth_header)
+            self._token_cache[token_hash] = (time.monotonic(), is_valid)
+            self._evict_cache(time.monotonic())
+            future.set_result(is_valid)
+            return is_valid
+        except Exception:
+            future.set_result(False)
+            return False
+        finally:
+            self._inflight.pop(token_hash, None)
+
+    async def _probe_upstream(self, auth_header: str) -> bool:
+        """Make the actual upstream validation request."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{self._base_url}/v1/users/me",
+                    headers={
+                        "Authorization": auth_header,
+                        "Accept": "application/vnd.api+json",
+                    },
+                )
+            return resp.is_success
+        except Exception:
+            logger.warning("Token validation probe failed, rejecting request")
+            return False
+
+    def _evict_cache(self, now: float) -> None:
+        """Remove expired entries then enforce hard size cap."""
+        if len(self._token_cache) <= self._MAX_CACHE_SIZE:
+            return
+        self._token_cache = {
+            k: (ts, valid)
+            for k, (ts, valid) in self._token_cache.items()
+            if (now - ts) < (self._POSITIVE_CACHE_TTL if valid else self._NEGATIVE_CACHE_TTL)
+        }
+        if len(self._token_cache) > self._MAX_CACHE_SIZE:
+            sorted_entries = sorted(self._token_cache.items(), key=lambda x: x[1][0])
+            self._token_cache = dict(sorted_entries[-self._MAX_CACHE_SIZE :])
 
     async def __call__(self, scope, receive, send):
         path = _normalize_path(str(scope.get("path", "")))
@@ -310,10 +383,10 @@ class AuthCaptureMiddleware:
             )
             www_auth_value = f'Bearer resource_metadata="{resource_metadata_url}"'.encode()
 
-            # Reject unauthenticated or malformed requests on MCP transport
-            # paths early, before FastMCP processes the MCP protocol message.
+            # Reject unauthenticated, malformed, or invalid tokens on MCP
+            # transport paths before FastMCP processes the protocol message.
             auth_state = auth_header_state(auth)
-            if auth_state != "bearer":
+            if auth_state != "bearer" or not await self._validate_token_upstream(auth):
                 await send(
                     {
                         "type": "http.response.start",

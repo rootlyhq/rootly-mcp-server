@@ -11,6 +11,15 @@ from rootly_mcp_server import transport
 class TestTransportModule:
     """Direct tests for extracted transport/auth helpers."""
 
+    @pytest.fixture(autouse=True)
+    def _bypass_token_probe(self):
+        with patch.object(
+            transport.AuthCaptureMiddleware,
+            "_validate_token_upstream",
+            return_value=True,
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_auth_capture_middleware_sets_token_for_sse(self):
         async def app(scope, receive, send):
@@ -845,12 +854,55 @@ class TestAuthCaptureMiddlewareWWWAuthenticate:
         async def send(message):
             sent_messages.append(message)
 
-        with patch("rootly_mcp_server.utils._MCP_SERVER_URL", "https://mcp.example.com"):
+        with (
+            patch("rootly_mcp_server.utils._MCP_SERVER_URL", "https://mcp.example.com"),
+            patch.object(middleware, "_validate_token_upstream", return_value=True),
+        ):
             await middleware(scope, receive, send)
 
         start_msg = sent_messages[0]
         header_dict = dict(start_msg["headers"])
         assert b"www-authenticate" not in header_dict
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_rejected_by_upstream_probe(self):
+        """Bearer token with valid format but rejected by upstream should get 401."""
+
+        async def app(scope, receive, send):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [],
+                }
+            )
+            await send({"type": "http.response.body", "body": b"OK"})
+
+        middleware = transport.AuthCaptureMiddleware(app)
+        scope = {
+            "type": "http",
+            "path": "/mcp",
+            "headers": [(b"authorization", b"Bearer invalid_token_12345")],
+        }
+
+        sent_messages = []
+
+        async def receive():
+            return {"type": "http.request"}
+
+        async def send(message):
+            sent_messages.append(message)
+
+        with (
+            patch("rootly_mcp_server.utils._MCP_SERVER_URL", "https://mcp.example.com"),
+            patch.object(middleware, "_validate_token_upstream", return_value=False),
+        ):
+            await middleware(scope, receive, send)
+
+        start_msg = sent_messages[0]
+        assert start_msg["status"] == 401
+        header_dict = dict(start_msg["headers"])
+        assert b"www-authenticate" in header_dict
 
     @pytest.mark.asyncio
     async def test_unauthenticated_mcp_request_returns_401(self):
