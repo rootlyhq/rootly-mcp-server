@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import hashlib
 import json
@@ -269,6 +270,8 @@ class AuthCaptureMiddleware:
         self._base_url = os.getenv("ROOTLY_BASE_URL", "https://api.rootly.com")
         # Maps token_hash -> (timestamp, is_valid)
         self._token_cache: dict[str, tuple[float, bool]] = {}
+        # In-flight probes keyed by token_hash to prevent cache stampede
+        self._inflight: dict[str, asyncio.Future[bool]] = {}
 
     async def _validate_token_upstream(self, auth_header: str) -> bool:
         """Probe the Rootly API to verify the Bearer token is valid."""
@@ -282,6 +285,28 @@ class AuthCaptureMiddleware:
             if (now - cached_at) < ttl:
                 return was_valid
 
+        existing = self._inflight.get(token_hash)
+        if existing is not None:
+            return await existing
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+        self._inflight[token_hash] = future
+
+        try:
+            is_valid = await self._probe_upstream(auth_header)
+            self._token_cache[token_hash] = (time.monotonic(), is_valid)
+            self._evict_cache(time.monotonic())
+            future.set_result(is_valid)
+            return is_valid
+        except Exception:
+            future.set_result(False)
+            return False
+        finally:
+            self._inflight.pop(token_hash, None)
+
+    async def _probe_upstream(self, auth_header: str) -> bool:
+        """Make the actual upstream validation request."""
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
@@ -291,14 +316,10 @@ class AuthCaptureMiddleware:
                         "Accept": "application/vnd.api+json",
                     },
                 )
-            is_valid = resp.is_success
+            return resp.is_success
         except Exception:
             logger.warning("Token validation probe failed, rejecting request")
-            is_valid = False
-
-        self._token_cache[token_hash] = (now, is_valid)
-        self._evict_cache(now)
-        return is_valid
+            return False
 
     def _evict_cache(self, now: float) -> None:
         """Remove expired entries then enforce hard size cap."""
