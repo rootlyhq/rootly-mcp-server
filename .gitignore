@@ -199,3 +199,4 @@ test_output/
 !CONTRIBUTING.md
 !CHANGELOG.md
 .beads/
+.claude/
