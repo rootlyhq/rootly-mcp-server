@@ -28,6 +28,7 @@ from .tools.resources import register_resource_handlers
 from .utils import (
     OAUTH_PROTECTED_RESOURCE_PATH,
     auth_header_state,
+    derive_oauth_server_url,
     is_mcp_server_url_static,
     resolve_mcp_server_url,
     sanitize_parameters_in_spec,
@@ -551,12 +552,11 @@ def create_rootly_mcp_server(
             return JSONResponse(
                 {
                     "resource": mcp_server_url,
-                    "authorization_servers": [base_url],
+                    "authorization_servers": [derive_oauth_server_url(base_url)],
                     "scopes_supported": [
                         "openid",
                         "profile",
                         "email",
-                        "all",
                     ],
                     "bearer_methods_supported": ["header"],
                 },

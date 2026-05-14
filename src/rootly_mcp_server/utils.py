@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,23 @@ def resolve_mcp_server_url(request) -> str:
 def is_mcp_server_url_static() -> bool:
     """Whether the MCP server URL comes from a fixed env var (vs. request headers)."""
     return bool(_MCP_SERVER_URL)
+
+
+def derive_oauth_server_url(api_base_url: str) -> str:
+    """Derive the OAuth authorization server URL from the API base URL.
+
+    OAuth endpoints (/oauth/authorize, /.well-known/openid-configuration) live
+    on the main domain (e.g. rootly.com), not the API subdomain (api.rootly.com).
+    """
+    parsed = urlparse(api_base_url)
+    host = parsed.hostname or ""
+    if host.startswith("api."):
+        host = host[4:]
+    if parsed.port:
+        netloc = f"{host}:{parsed.port}"
+    else:
+        netloc = host
+    return urlunparse((parsed.scheme, netloc, "", "", "", ""))
 
 
 def auth_header_state(auth_header: str) -> str:
