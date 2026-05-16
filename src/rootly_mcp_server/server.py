@@ -557,6 +557,8 @@ def create_rootly_mcp_server(
                         "openid",
                         "profile",
                         "email",
+                        "ir.incidents:read",
+                        "oc.alerts:read",
                     ],
                     "bearer_methods_supported": ["header"],
                 },
