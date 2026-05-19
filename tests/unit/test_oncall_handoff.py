@@ -78,6 +78,107 @@ class TestGetOncallHandoffSummary:
 
             assert "get_oncall_handoff_summary" in tool_names
 
+    @staticmethod
+    def _register_handoff() -> tuple[dict[str, Any], AsyncMock]:
+        mcp = FakeMCP()
+        request = AsyncMock()
+        register_oncall_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            mcp_error=FakeMCPError(),
+        )
+        return mcp.tools, request
+
+    @staticmethod
+    def _ok(payload: dict) -> Mock:
+        r = Mock()
+        r.status_code = 200
+        r.json.return_value = payload
+        return r
+
+    @staticmethod
+    def _schedule(schedule_id: str, name: str = "S") -> dict:
+        return {
+            "id": schedule_id,
+            "attributes": {"name": name, "owner_group_ids": []},
+        }
+
+    async def test_fetches_shifts_for_every_target_schedule(self):
+        """One shifts call per schedule, in addition to schedules + teams calls."""
+        tools, request = self._register_handoff()
+        schedules = [self._schedule(f"sched-{i}", f"S{i}") for i in range(3)]
+
+        async def responder(method, url, params=None, **_):
+            if url == "/v1/schedules":
+                return self._ok({"data": schedules, "meta": {"total_pages": 1}})
+            if url == "/v1/teams":
+                return self._ok({"data": []})
+            if url == "/v1/shifts":
+                return self._ok({"data": [], "included": []})
+            raise AssertionError(f"unexpected call: {url}")
+
+        request.side_effect = responder
+
+        result = await tools["get_oncall_handoff_summary"]()
+
+        assert result["success"] is True
+        # 1 schedules + 0 teams (no owner_group_ids) + 3 shifts = 4 total
+        shift_calls = [c for c in request.call_args_list if c[0][1] == "/v1/shifts"]
+        assert len(shift_calls) == 3
+        # Each schedule got its own shift fetch
+        seen_ids = {c[1]["params"]["schedule_ids[]"][0] for c in shift_calls}
+        assert seen_ids == {"sched-0", "sched-1", "sched-2"}
+
+    async def test_continues_when_one_shift_fetch_fails(self):
+        """A failed shift fetch for one schedule must not break the others."""
+        tools, request = self._register_handoff()
+        schedules = [self._schedule(f"sched-{i}") for i in range(3)]
+
+        async def responder(method, url, params=None, **_):
+            if url == "/v1/schedules":
+                return self._ok({"data": schedules, "meta": {"total_pages": 1}})
+            if url == "/v1/teams":
+                return self._ok({"data": []})
+            if url == "/v1/shifts":
+                assert params is not None
+                if params["schedule_ids[]"][0] == "sched-1":
+                    raise RuntimeError("upstream blip")
+                return self._ok({"data": [], "included": []})
+            raise AssertionError(f"unexpected call: {url}")
+
+        request.side_effect = responder
+        result = await tools["get_oncall_handoff_summary"]()
+
+        assert result["success"] is True
+        # Two surviving schedules processed; the failed one dropped silently.
+        ids = [s["schedule_id"] for s in result["schedules"]]
+        assert set(ids) == {"sched-0", "sched-2"}
+
+    async def test_fetches_remaining_schedule_pages_when_paginated(self):
+        """Multi-page schedule listings get all pages merged."""
+        tools, request = self._register_handoff()
+        page1 = [self._schedule(f"a-{i}") for i in range(2)]
+        page2 = [self._schedule(f"b-{i}") for i in range(2)]
+
+        async def responder(method, url, params=None, **_):
+            if url == "/v1/schedules":
+                assert params is not None
+                page = params["page[number]"]
+                data = page1 if page == 1 else page2
+                return self._ok({"data": data, "meta": {"total_pages": 2}})
+            if url == "/v1/teams":
+                return self._ok({"data": []})
+            if url == "/v1/shifts":
+                return self._ok({"data": [], "included": []})
+            raise AssertionError(f"unexpected call: {url}")
+
+        request.side_effect = responder
+        result = await tools["get_oncall_handoff_summary"]()
+
+        schedule_calls = [c for c in request.call_args_list if c[0][1] == "/v1/schedules"]
+        assert len(schedule_calls) == 2  # page 1 + page 2
+        assert len(result["schedules"]) == 4  # all four schedules end up processed
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio

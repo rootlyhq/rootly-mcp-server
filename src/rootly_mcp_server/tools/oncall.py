@@ -574,43 +574,49 @@ def register_oncall_tools(
                 except (ValueError, AttributeError):
                     return iso_string  # Return original if conversion fails
 
-            # Fetch schedules with team info (with pagination)
-            all_schedules = []
-            page = 1
+            # Fetch schedules with team info. Page 1 first to learn total_pages,
+            # then parallel-fetch any remaining pages with a small concurrency cap
+            # to avoid hammering the upstream API.
             max_pages = 5  # Schedules shouldn't have many pages
+            request_semaphore = asyncio.Semaphore(10)
 
-            while page <= max_pages:
-                schedules_response = await make_authenticated_request(
-                    "GET", "/v1/schedules", params={"page[size]": 100, "page[number]": page}
+            first_response = await make_authenticated_request(
+                "GET", "/v1/schedules", params={"page[size]": 100, "page[number]": 1}
+            )
+            if not first_response:
+                return mcp_error.tool_error(
+                    "Failed to fetch schedules - no response from API", "execution_error"
                 )
-                if not schedules_response:
-                    return mcp_error.tool_error(
-                        "Failed to fetch schedules - no response from API", "execution_error"
-                    )
+            if first_response.status_code != 200:
+                return mcp_error.tool_error(
+                    f"Failed to fetch schedules - API returned status {first_response.status_code}",
+                    "execution_error",
+                    details={"status_code": first_response.status_code},
+                )
 
-                if schedules_response.status_code != 200:
-                    return mcp_error.tool_error(
-                        f"Failed to fetch schedules - API returned status {schedules_response.status_code}",
-                        "execution_error",
-                        details={"status_code": schedules_response.status_code},
-                    )
+            first_data = first_response.json()
+            all_schedules = list(first_data.get("data", []))
+            total_pages = min(int(first_data.get("meta", {}).get("total_pages", 1)), max_pages)
 
-                schedules_data = schedules_response.json()
-                page_schedules = schedules_data.get("data", [])
+            if total_pages > 1:
 
-                if not page_schedules:
-                    break
+                async def _fetch_schedule_page(page_number: int) -> list[dict]:
+                    async with request_semaphore:
+                        page_response = await make_authenticated_request(
+                            "GET",
+                            "/v1/schedules",
+                            params={"page[size]": 100, "page[number]": page_number},
+                        )
+                    if not page_response or page_response.status_code != 200:
+                        return []
+                    return list(page_response.json().get("data", []))
 
-                all_schedules.extend(page_schedules)
-
-                # Check if there are more pages
-                meta = schedules_data.get("meta", {})
-                total_pages = meta.get("total_pages", 1)
-
-                if page >= total_pages:
-                    break
-
-                page += 1
+                rest_pages = await asyncio.gather(
+                    *(_fetch_schedule_page(p) for p in range(2, total_pages + 1)),
+                    return_exceptions=False,
+                )
+                for page_schedules in rest_pages:
+                    all_schedules.extend(page_schedules)
 
             # Build team mapping
             team_ids_set = set()
@@ -651,9 +657,38 @@ def register_oncall_tools(
 
                 target_schedules.append(schedule)
 
-            # Get current and upcoming shifts for each schedule
+            # Fetch shifts for all target schedules in parallel (capped by
+            # request_semaphore). Was: N sequential awaits, the dominant
+            # cost in this tool's p95 latency.
+            shifts_starts_gte = (now - timedelta(days=1)).isoformat()
+            shifts_starts_lte = (now + timedelta(days=7)).isoformat()
+
+            async def _fetch_shifts_for_schedule(schedule_id: str):
+                async with request_semaphore:
+                    return await make_authenticated_request(
+                        "GET",
+                        "/v1/shifts",
+                        params={
+                            "schedule_ids[]": [schedule_id],
+                            "filter[starts_at][gte]": shifts_starts_gte,
+                            "filter[starts_at][lte]": shifts_starts_lte,
+                            "include": "user,on_call_role",
+                            "page[size]": 50,
+                        },
+                    )
+
+            shift_responses = await asyncio.gather(
+                *(_fetch_shifts_for_schedule(s.get("id")) for s in target_schedules),
+                return_exceptions=True,
+            )
+
             handoff_data = []
-            for schedule in target_schedules:
+            for schedule, shifts_response in zip(
+                target_schedules, shift_responses, strict=True
+            ):
+                if isinstance(shifts_response, BaseException) or not shifts_response:
+                    continue
+
                 schedule_id = schedule.get("id")
                 schedule_attrs = schedule.get("attributes", {})
                 schedule_name = schedule_attrs.get("name", "Unknown Schedule")
@@ -665,22 +700,6 @@ def register_oncall_tools(
                     team_id = owner_group_ids[0]
                     team_attrs = teams_map.get(team_id, {}).get("attributes", {})
                     team_name = team_attrs.get("name", "Unknown Team")
-
-                # Query shifts for this schedule
-                shifts_response = await make_authenticated_request(
-                    "GET",
-                    "/v1/shifts",
-                    params={
-                        "schedule_ids[]": [schedule_id],
-                        "filter[starts_at][gte]": (now - timedelta(days=1)).isoformat(),
-                        "filter[starts_at][lte]": (now + timedelta(days=7)).isoformat(),
-                        "include": "user,on_call_role",
-                        "page[size]": 50,
-                    },
-                )
-
-                if not shifts_response:
-                    continue
 
                 shifts_data = shifts_response.json()
                 shifts = shifts_data.get("data", [])
@@ -837,17 +856,17 @@ def register_oncall_tools(
 
                 handoff_data = filtered_data
 
-            # Fetch incidents for each current shift (only if requested)
+            # Fetch incidents for each current shift in parallel when requested.
             if include_incidents:
-                for schedule_info in handoff_data:
-                    current_oncall = schedule_info.get("current_oncall")
-                    if current_oncall:
-                        shift_start = current_oncall["starts_at"]
-                        shift_end = current_oncall["ends_at"]
 
-                        incidents_result = await _fetch_shift_incidents_internal(
-                            start_time=shift_start,
-                            end_time=shift_end,
+                async def _fetch_shift_incidents_for(schedule_info: dict):
+                    current_oncall = schedule_info.get("current_oncall")
+                    if not current_oncall:
+                        return None
+                    async with request_semaphore:
+                        return await _fetch_shift_incidents_internal(
+                            start_time=current_oncall["starts_at"],
+                            end_time=current_oncall["ends_at"],
                             schedule_ids="",
                             severity="",
                             status="",
@@ -856,9 +875,18 @@ def register_oncall_tools(
                             max_incidents=25,
                         )
 
-                        schedule_info["shift_incidents"] = (
-                            incidents_result if incidents_result.get("success") else None
-                        )
+                incidents_results = await asyncio.gather(
+                    *(_fetch_shift_incidents_for(s) for s in handoff_data),
+                    return_exceptions=True,
+                )
+
+                for schedule_info, incidents_result in zip(
+                    handoff_data, incidents_results, strict=True
+                ):
+                    if isinstance(incidents_result, BaseException) or incidents_result is None:
+                        schedule_info["shift_incidents"] = None
+                    elif incidents_result.get("success"):
+                        schedule_info["shift_incidents"] = incidents_result
                     else:
                         schedule_info["shift_incidents"] = None
             else:
