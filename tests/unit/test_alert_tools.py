@@ -91,9 +91,7 @@ class TestGetAlertByShortId:
         tools, request = _register()
         request.return_value = _ok_response(_alert_payload(short_id="PhIQtP"))
 
-        result = await tools["get_alert_by_short_id"](
-            "https://rootly.com/account/alerts/PhIQtP"
-        )
+        result = await tools["get_alert_by_short_id"]("https://rootly.com/account/alerts/PhIQtP")
 
         args, _ = request.call_args
         assert args == ("GET", "/v1/alerts/PhIQtP")
