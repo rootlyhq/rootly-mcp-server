@@ -683,9 +683,7 @@ def register_oncall_tools(
             )
 
             handoff_data = []
-            for schedule, shifts_response in zip(
-                target_schedules, shift_responses, strict=True
-            ):
+            for schedule, shifts_response in zip(target_schedules, shift_responses, strict=True):
                 if isinstance(shifts_response, BaseException) or not shifts_response:
                     continue
 
