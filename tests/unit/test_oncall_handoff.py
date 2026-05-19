@@ -754,3 +754,88 @@ class TestLookupMapsHelper:
         # Three resources fetched once on the first call, zero on the second.
         assert first_lookup_calls == 3
         assert total_lookup_calls == 3
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestGetOncallShiftMetrics:
+    """Regression coverage for get_oncall_shift_metrics paginated schedules.
+
+    Before the fix, get_oncall_shift_metrics fetched only page 1 of
+    /v1/schedules (no pagination loop), so workspaces with more than 100
+    schedules silently truncated the schedule->team map. Filtering by a
+    team that owned schedules on page 2+ would drop all of them from the
+    metrics.
+    """
+
+    @staticmethod
+    def _register() -> tuple[dict[str, Any], AsyncMock]:
+        mcp = FakeMCP()
+        request = AsyncMock()
+        register_oncall_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            mcp_error=FakeMCPError(),
+        )
+        return mcp.tools, request
+
+    @staticmethod
+    def _ok(payload: dict[str, Any]) -> Mock:
+        r = Mock()
+        r.status_code = 200
+        r.raise_for_status.return_value = None
+        r.json.return_value = payload
+        return r
+
+    async def test_uses_paginated_schedules_for_team_filtering(self):
+        """A schedule owned by the filter team but living on schedules
+        page 2 must still appear in the resulting params."""
+        tools, request = self._register()
+
+        # Page 1: 100 schedules, all owned by team-other.
+        page1 = [
+            {
+                "id": f"sched-page1-{i}",
+                "attributes": {"name": f"S{i}", "owner_group_ids": ["team-other"]},
+            }
+            for i in range(100)
+        ]
+        # Page 2: the schedule we want, owned by the target team.
+        page2 = [
+            {
+                "id": "sched-on-page-2",
+                "attributes": {"name": "Target", "owner_group_ids": ["team-target"]},
+            }
+        ]
+
+        def responder(method, url, params=None, **_):
+            assert params is not None
+            if url == "/v1/schedules":
+                page = params.get("page[number]", 1)
+                if page == 1:
+                    return self._ok({"data": page1, "meta": {"total_pages": 2}})
+                return self._ok({"data": page2, "meta": {"total_pages": 2}})
+            if url == "/v1/users":
+                return self._ok({"data": [], "meta": {"total_pages": 1}})
+            if url == "/v1/teams":
+                return self._ok({"data": [], "meta": {"total_pages": 1}})
+            if url == "/v1/shifts":
+                return self._ok(
+                    {"data": [], "included": [], "meta": {"total_pages": 1}}
+                )
+            raise AssertionError(f"unexpected call: {url}")
+
+        request.side_effect = responder
+
+        await tools["get_oncall_shift_metrics"](
+            start_date="2026-05-01",
+            end_date="2026-05-31",
+            team_ids="team-target",
+        )
+
+        # The shifts call must include the page-2 schedule in its filter.
+        shifts_calls = [c for c in request.call_args_list if c.args[1] == "/v1/shifts"]
+        assert len(shifts_calls) >= 1
+        target_call = shifts_calls[0]
+        schedule_ids_param = target_call.kwargs["params"].get("schedule_ids[]", [])
+        assert "sched-on-page-2" in schedule_ids_param

@@ -157,37 +157,13 @@ def register_oncall_tools(
                 "to": end_date,
             }
 
-            # Fetch schedules (schedules don't have team relationship, they have owner_group_ids)
-            schedules_response = await make_authenticated_request(
-                "GET", "/v1/schedules", params={"page[size]": 100}
-            )
-
-            if schedules_response is None:
-                return mcp_error.tool_error(
-                    "Failed to get schedules: API request returned None", "execution_error"
-                )
-
-            schedules_response.raise_for_status()
-            schedules_data = schedules_response.json()
-
-            all_schedules = schedules_data.get("data", [])
-
-            # Collect all unique team IDs from schedules' owner_group_ids
-            team_ids_set = set()
-            for schedule in all_schedules:
-                owner_group_ids = schedule.get("attributes", {}).get("owner_group_ids", [])
-                team_ids_set.update(owner_group_ids)
-
-            # Fetch all teams
-            teams_map = {}
-            if team_ids_set:
-                teams_response = await make_authenticated_request(
-                    "GET", "/v1/teams", params={"page[size]": 100}
-                )
-                if teams_response and teams_response.status_code == 200:
-                    teams_data = teams_response.json()
-                    for team in teams_data.get("data", []):
-                        teams_map[team.get("id")] = team
+            # Fetch all schedules and teams via the shared paginated, cached
+            # helper. The previous direct call to /v1/schedules and /v1/teams
+            # fetched only page 1, silently truncating to 100 records each —
+            # which in workspaces with deeper history produced incomplete
+            # team filtering and missing entries in the schedule→team map.
+            _, schedules_map, teams_map = await _fetch_users_and_schedules_maps()
+            all_schedules = list(schedules_map.values())
 
             # Build schedule -> team mapping
             schedule_to_team_map = {}
