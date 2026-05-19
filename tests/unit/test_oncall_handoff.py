@@ -534,13 +534,9 @@ class TestLookupMapsHelper:
             raise AssertionError(f"unexpected call: {url}")
 
         request.side_effect = responder
-        await tools["list_shifts"](
-            from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z"
-        )
+        await tools["list_shifts"](from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z")
 
-        users_calls = [
-            c for c in request.call_args_list if c.args[1] == "/v1/users"
-        ]
+        users_calls = [c for c in request.call_args_list if c.args[1] == "/v1/users"]
         pages_fetched = sorted(c.kwargs["params"]["page[number]"] for c in users_calls)
         assert pages_fetched == [1, 2]
 
@@ -560,9 +556,7 @@ class TestLookupMapsHelper:
             raise AssertionError(f"unexpected call: {url}")
 
         request.side_effect = responder
-        await tools["list_shifts"](
-            from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z"
-        )
+        await tools["list_shifts"](from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z")
 
         users_calls = [c for c in request.call_args_list if c.args[1] == "/v1/users"]
         assert len(users_calls) == 1
@@ -581,18 +575,14 @@ class TestLookupMapsHelper:
 
         request.side_effect = responder
 
-        await tools["list_shifts"](
-            from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z"
-        )
+        await tools["list_shifts"](from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z")
         first_lookup_calls = sum(
             1
             for c in request.call_args_list
             if c.args[1] in ("/v1/users", "/v1/schedules", "/v1/teams")
         )
 
-        await tools["list_shifts"](
-            from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z"
-        )
+        await tools["list_shifts"](from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z")
         total_lookup_calls = sum(
             1
             for c in request.call_args_list
