@@ -5,6 +5,42 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.8] - Released 2026-05-19
+
+### Security
+
+- **Bearer Auth Enforcement on Hosted Transports**: Required Bearer authentication on MCP transport paths in hosted mode so unauthenticated requests are rejected before any tool dispatch
+- **Upstream Token Validation**: Validated Bearer tokens against the upstream Rootly API before granting MCP access, surfacing malformed or expired credentials at the edge with clearer errors
+- **Dependency Advisories**: Bumped `urllib3` (≥2.7.0), `python-multipart` (≥0.0.27), and `pip` (≥26.1) to resolve five open Dependabot advisories (urllib3 CVE-2026-44431/44432, python-multipart CVE-2026-42561, pip CVE-2026-6357/3219)
+
+### Performance
+
+- **`get_alert_by_short_id` Now O(1)**: Replaced the up-to-20-page sequential scan with a single direct `GET /v1/alerts/{short_id}` point lookup. P95 spikes of 41s on this tool collapse to ~200ms; not-found responses no longer cost 10+ seconds; workspaces with >2,000 alerts no longer silently fail
+- **`get_oncall_handoff_summary` Fan-Out Parallelized**: Replaced sequential per-schedule shift and incident fetches with `asyncio.gather` capped by a `Semaphore(10)`. Worst-case p95 of ~15s on populated workspaces drops to ~1–2s
+- **Lookup-Maps Helper Parallelized**: `_fetch_users_and_schedules_maps` (used by `list_shifts`, `check_responder_availability`, `check_oncall_health_risk`, `create_override_recommendation`, `find_related_incidents`) now runs the three independent resource fetches concurrently with intra-resource page fan-out. Cold-cache worst case drops from ~15s to ~1s — meaningfully more impactful since v2.3.7 made sessions stateless and the in-memory cache is repaid more often
+- **Shared `_fetch_all_pages` Helper Across Five Shift Tools**: `list_shifts`, `get_oncall_schedule_summary`, `check_responder_availability`, `create_override_recommendation`, and `check_oncall_health_risk` now all route through the same paginated, concurrency-capped helper instead of duplicating sequential pagination loops. Each tool saves 2–5s worst case under load
+
+### Fixed
+
+- **`get_oncall_shift_metrics` Silent Data Loss**: The function previously fetched only page 1 of schedules and teams (no pagination loop), causing team-id filtering to silently drop schedules whose teams lived past page 1. Now uses the shared paginated, cached helper so all schedules are considered
+- **OAuth Authorization Server Discovery**: Derived the OAuth authorization server URL from the API base URL so discovery works against staging and self-hosted Rootly instances
+- **OAuth Protected Resource Metadata**: Removed `scopes_supported` from the protected resource metadata, advertised only the granular scopes the resource actually accepts, and included resource-specific scopes for clients that key off them
+- **Pagination Resilience**: `asyncio.gather` callsites that fan out pages now use `return_exceptions=True` with an `isinstance(_, BaseException)` guard so a single transient httpx error on one page no longer aborts the entire handler
+- **Missing `total_pages` Metadata Fallback**: When upstream omits `meta.total_pages`, the helper now falls back to fetching up to `max_pages` (preserving the legacy "keep going until a short page" semantics) instead of silently truncating to page 1
+
+### Dependencies
+
+- **Routine Refresh**: Pulled in the latest minor and patch dependency updates from Dependabot
+- **CI Action Bump**: Updated `actions/dependency-review-action` from 4.9.0 to 5.0.0
+
+### Repo
+
+- **`.claude/` Ignored**: Stopped tracking transient `.claude/worktrees/` directories and added `.claude/` to `.gitignore` so local Claude Code state no longer pollutes diffs
+
+### Testing
+
+- New unit tests for the parallelized fan-out paths, the missing-`total_pages` fallback, exception-tolerance in `asyncio.gather`, the `get_oncall_shift_metrics` pagination regression, and the direct-GET path for `get_alert_by_short_id`
+
 ## [2.3.7] - Released 2026-05-08
 
 ### Features
