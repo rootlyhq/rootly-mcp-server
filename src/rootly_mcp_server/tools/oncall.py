@@ -2401,10 +2401,13 @@ def register_oncall_tools(
 
             def _merge_users_and_schedules(included: list[dict[str, Any]]) -> None:
                 for resource in included:
+                    rid = resource.get("id")
+                    if not isinstance(rid, str):
+                        continue
                     if resource.get("type") == "users":
-                        users_map[str(resource.get("id"))] = resource
+                        users_map[rid] = resource
                     elif resource.get("type") == "schedules":
-                        schedules_map[str(resource.get("id"))] = resource
+                        schedules_map[rid] = resource
 
             all_shifts.extend(
                 await _fetch_all_pages(
