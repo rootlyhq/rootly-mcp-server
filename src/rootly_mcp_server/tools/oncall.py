@@ -1334,7 +1334,7 @@ def register_oncall_tools(
                 )
             if not response or response.status_code != 200:
                 return None
-            return response.json()
+            return cast(dict[str, Any], response.json())
 
         rest = await asyncio.gather(
             *(_fetch_page(p) for p in range(2, total_pages + 1)),
