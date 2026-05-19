@@ -1241,10 +1241,13 @@ def register_oncall_tools(
     }
     _lookup_maps_lock = asyncio.Lock()
 
-    # Helper function to fetch users and schedules for enrichment
+    # Helper function to fetch a paginated JSON:API resource concurrently.
     async def _fetch_all_pages(
         path: str,
         semaphore: asyncio.Semaphore,
+        *,
+        extra_params: dict[str, Any] | None = None,
+        on_included: Callable[[list[dict[str, Any]]], None] | None = None,
         max_pages: int = 10,
     ) -> list[dict[str, Any]]:
         """Fetch up to ``max_pages`` of a paginated JSON:API resource.
@@ -1252,14 +1255,30 @@ def register_oncall_tools(
         Page 1 is awaited first so we can read ``meta.total_pages``; any
         remaining pages within ``max_pages`` are fetched concurrently
         through ``semaphore``. Returns the aggregated ``data`` array.
+
+        ``extra_params`` is merged into every page request alongside the
+        helper-managed ``page[size]`` and ``page[number]`` keys, letting
+        callers pass filters (``from``, ``to``, ``include``, ``filter[…]``,
+        etc.) without re-implementing pagination.
+
+        ``on_included`` is invoked with each page's ``included`` array as
+        it arrives, so callers can merge sideloaded relationships into
+        their own lookup maps.
         """
-        first = await make_authenticated_request(
-            "GET", path, params={"page[size]": 100, "page[number]": 1}
-        )
+
+        def _params_for(page_number: int) -> dict[str, Any]:
+            merged = dict(extra_params or {})
+            merged["page[size]"] = 100
+            merged["page[number]"] = page_number
+            return merged
+
+        first = await make_authenticated_request("GET", path, params=_params_for(1))
         if not first or first.status_code != 200:
             return []
         first_data = first.json()
         items: list[dict[str, Any]] = list(first_data.get("data", []))
+        if on_included:
+            on_included(list(first_data.get("included", [])))
 
         # Don't fan out if the first page is short - matches the legacy
         # "< 100 items means we're done" termination signal.
@@ -1284,26 +1303,26 @@ def register_oncall_tools(
         if total_pages <= 1:
             return items
 
-        async def _fetch_page(page_number: int) -> list[dict[str, Any]]:
+        async def _fetch_page(page_number: int) -> dict[str, Any] | None:
             async with semaphore:
                 response = await make_authenticated_request(
-                    "GET",
-                    path,
-                    params={"page[size]": 100, "page[number]": page_number},
+                    "GET", path, params=_params_for(page_number)
                 )
             if not response or response.status_code != 200:
-                return []
-            return list(response.json().get("data", []))
+                return None
+            return cast(dict[str, Any], response.json())
 
         rest = await asyncio.gather(
             *(_fetch_page(p) for p in range(2, total_pages + 1)),
             return_exceptions=True,
         )
-        for page_items in rest:
-            if isinstance(page_items, BaseException):
+        for page_payload in rest:
+            if isinstance(page_payload, BaseException) or page_payload is None:
                 # One transient page error shouldn't drop the whole resource.
                 continue
-            items.extend(page_items)
+            items.extend(page_payload.get("data", []))
+            if on_included:
+                on_included(list(page_payload.get("included", [])))
         return items
 
     async def _fetch_users_and_schedules_maps() -> tuple[
@@ -1437,12 +1456,11 @@ def register_oncall_tools(
                     "validation_error",
                     details={"page_number": page_number},
                 )
-            # Build query parameters
+            # Build query parameters (page[size] / page[number] handled by helper)
             params: dict[str, Any] = {
                 "from": from_date,
                 "to": to_date,
                 "include": "user,on_call_role,schedule_rotation",
-                "page[size]": 100,
             }
 
             if schedule_ids:
@@ -1469,39 +1487,21 @@ def register_oncall_tools(
                         "team_name": team.get("attributes", {}).get("name", "Unknown Team"),
                     }
 
-            # Fetch all shifts with pagination
-            all_shifts = []
-            page = 1
-            while page <= 10:
-                params["page[number]"] = page
-                shifts_response = await make_authenticated_request(
-                    "GET", "/v1/shifts", params=params
-                )
-
-                if shifts_response is None:
-                    break
-
-                shifts_response.raise_for_status()
-                shifts_data = shifts_response.json()
-
-                shifts = shifts_data.get("data", [])
-                included = shifts_data.get("included", [])
-
-                # Update users_map from included data
+            # Fetch all shifts with concurrent pagination; merge included
+            # users into users_map as each page arrives.
+            def _merge_users(included: list[dict[str, Any]]) -> None:
                 for resource in included:
                     if resource.get("type") == "users":
-                        users_map[resource.get("id")] = resource
+                        uid = resource.get("id")
+                        if isinstance(uid, str):
+                            users_map[uid] = resource
 
-                if not shifts:
-                    break
-
-                all_shifts.extend(shifts)
-
-                meta = shifts_data.get("meta", {})
-                total_pages = meta.get("total_pages", 1)
-                if page >= total_pages:
-                    break
-                page += 1
+            all_shifts = await _fetch_all_pages(
+                "/v1/shifts",
+                asyncio.Semaphore(10),
+                extra_params=params,
+                on_included=_merge_users,
+            )
 
             # Process and filter shifts
             enriched_shifts = []
@@ -1680,46 +1680,26 @@ def register_oncall_tools(
             if not schedule_id_filter and not team_id_filter:
                 filtered_schedule_ids = set(schedules_map.keys())
 
-            # Fetch shifts
-            params: dict[str, Any] = {
+            # Fetch shifts (concurrent pagination via _fetch_all_pages)
+            shift_params: dict[str, Any] = {
                 "from": f"{start_date}T00:00:00Z" if "T" not in start_date else start_date,
                 "to": f"{end_date}T23:59:59Z" if "T" not in end_date else end_date,
                 "include": "user,on_call_role",
-                "page[size]": 100,
             }
 
-            all_shifts = []
-            page = 1
-            while page <= 10:
-                params["page[number]"] = page
-                shifts_response = await make_authenticated_request(
-                    "GET", "/v1/shifts", params=params
-                )
-
-                if shifts_response is None:
-                    break
-
-                shifts_response.raise_for_status()
-                shifts_data = shifts_response.json()
-
-                shifts = shifts_data.get("data", [])
-                included = shifts_data.get("included", [])
-
-                # Update users_map from included data
+            def _merge_users(included: list[dict[str, Any]]) -> None:
                 for resource in included:
                     if resource.get("type") == "users":
-                        users_map[resource.get("id")] = resource
+                        uid = resource.get("id")
+                        if isinstance(uid, str):
+                            users_map[uid] = resource
 
-                if not shifts:
-                    break
-
-                all_shifts.extend(shifts)
-
-                meta = shifts_data.get("meta", {})
-                total_pages = meta.get("total_pages", 1)
-                if page >= total_pages:
-                    break
-                page += 1
+            all_shifts = await _fetch_all_pages(
+                "/v1/shifts",
+                asyncio.Semaphore(10),
+                extra_params=shift_params,
+                on_included=_merge_users,
+            )
 
             # Aggregate by schedule and user
             schedule_coverage: dict[str, dict] = defaultdict(
@@ -1936,46 +1916,26 @@ def register_oncall_tools(
                         "team_name": team.get("attributes", {}).get("name", "Unknown Team"),
                     }
 
-            # Fetch shifts
-            params: dict[str, Any] = {
+            # Fetch shifts (concurrent pagination via _fetch_all_pages)
+            shift_params: dict[str, Any] = {
                 "from": f"{start_date}T00:00:00Z" if "T" not in start_date else start_date,
                 "to": f"{end_date}T23:59:59Z" if "T" not in end_date else end_date,
                 "include": "user,on_call_role",
-                "page[size]": 100,
             }
 
-            all_shifts = []
-            page = 1
-            while page <= 10:
-                params["page[number]"] = page
-                shifts_response = await make_authenticated_request(
-                    "GET", "/v1/shifts", params=params
-                )
-
-                if shifts_response is None:
-                    break
-
-                shifts_response.raise_for_status()
-                shifts_data = shifts_response.json()
-
-                shifts = shifts_data.get("data", [])
-                included = shifts_data.get("included", [])
-
-                # Update users_map from included data
+            def _merge_users(included: list[dict[str, Any]]) -> None:
                 for resource in included:
                     if resource.get("type") == "users":
-                        users_map[resource.get("id")] = resource
+                        uid = resource.get("id")
+                        if isinstance(uid, str):
+                            users_map[uid] = resource
 
-                if not shifts:
-                    break
-
-                all_shifts.extend(shifts)
-
-                meta = shifts_data.get("meta", {})
-                total_pages = meta.get("total_pages", 1)
-                if page >= total_pages:
-                    break
-                page += 1
+            all_shifts = await _fetch_all_pages(
+                "/v1/shifts",
+                asyncio.Semaphore(10),
+                extra_params=shift_params,
+                on_included=_merge_users,
+            )
 
             # Group shifts by user
             user_shifts: dict[str, list] = {uid: [] for uid in user_id_list}
@@ -2140,8 +2100,6 @@ def register_oncall_tools(
             )
 
             if schedule_response and schedule_response.status_code == 200:
-                import asyncio
-
                 schedule_data = schedule_response.json()
                 schedule_obj = schedule_data.get("data", {})
                 relationships = schedule_obj.get("relationships", {})
@@ -2180,44 +2138,26 @@ def register_oncall_tools(
                                     rotation_users.add(str(user_id))
 
             # Fetch shifts to calculate current load for rotation users
-            params: dict[str, Any] = {
+            # (concurrent pagination via _fetch_all_pages).
+            shift_params: dict[str, Any] = {
                 "from": f"{start_date}T00:00:00Z" if "T" not in start_date else start_date,
                 "to": f"{end_date}T23:59:59Z" if "T" not in end_date else end_date,
                 "include": "user",
-                "page[size]": 100,
             }
 
-            all_shifts = []
-            page = 1
-            while page <= 10:
-                params["page[number]"] = page
-                shifts_response = await make_authenticated_request(
-                    "GET", "/v1/shifts", params=params
-                )
-
-                if shifts_response is None:
-                    break
-
-                shifts_response.raise_for_status()
-                shifts_data = shifts_response.json()
-
-                shifts = shifts_data.get("data", [])
-                included = shifts_data.get("included", [])
-
+            def _merge_users(included: list[dict[str, Any]]) -> None:
                 for resource in included:
                     if resource.get("type") == "users":
-                        users_map[resource.get("id")] = resource
+                        uid = resource.get("id")
+                        if isinstance(uid, str):
+                            users_map[uid] = resource
 
-                if not shifts:
-                    break
-
-                all_shifts.extend(shifts)
-
-                meta = shifts_data.get("meta", {})
-                total_pages = meta.get("total_pages", 1)
-                if page >= total_pages:
-                    break
-                page += 1
+            all_shifts = await _fetch_all_pages(
+                "/v1/shifts",
+                asyncio.Semaphore(10),
+                extra_params=shift_params,
+                on_included=_merge_users,
+            )
 
             # Calculate load per user
             user_load: dict[str, float] = {}
@@ -2426,48 +2366,33 @@ def register_oncall_tools(
             users_map.update({str(k): v for k, v in lookup_users.items()})
             schedules_map.update({str(k): v for k, v in lookup_schedules.items()})
 
-            # Fetch shifts
-            page = 1
-            while page <= 10:
-                shifts_response = await make_authenticated_request(
-                    "GET",
-                    "/v1/shifts",
-                    params={
-                        "filter[starts_at_lte]": (
-                            end_date if "T" in end_date else f"{end_date}T23:59:59Z"
-                        ),
-                        "filter[ends_at_gte]": (
-                            start_date if "T" in start_date else f"{start_date}T00:00:00Z"
-                        ),
-                        "page[size]": 100,
-                        "page[number]": page,
-                        "include": "user,schedule",
-                    },
-                )
-                if shifts_response is None:
-                    break
-                shifts_response.raise_for_status()
-                shifts_data = shifts_response.json()
+            # Fetch shifts (concurrent pagination via _fetch_all_pages)
+            shift_params: dict[str, Any] = {
+                "filter[starts_at_lte]": (end_date if "T" in end_date else f"{end_date}T23:59:59Z"),
+                "filter[ends_at_gte]": (
+                    start_date if "T" in start_date else f"{start_date}T00:00:00Z"
+                ),
+                "include": "user,schedule",
+            }
 
-                shifts = shifts_data.get("data", [])
-                included = shifts_data.get("included", [])
-
+            def _merge_users_and_schedules(included: list[dict[str, Any]]) -> None:
                 for resource in included:
+                    rid = resource.get("id")
+                    if not isinstance(rid, str):
+                        continue
                     if resource.get("type") == "users":
-                        users_map[str(resource.get("id"))] = resource
+                        users_map[rid] = resource
                     elif resource.get("type") == "schedules":
-                        schedules_map[str(resource.get("id"))] = resource
+                        schedules_map[rid] = resource
 
-                if not shifts:
-                    break
-
-                all_shifts.extend(shifts)
-
-                meta = shifts_data.get("meta", {})
-                total_pages = meta.get("total_pages", 1)
-                if page >= total_pages:
-                    break
-                page += 1
+            all_shifts.extend(
+                await _fetch_all_pages(
+                    "/v1/shifts",
+                    asyncio.Semaphore(10),
+                    extra_params=shift_params,
+                    on_included=_merge_users_and_schedules,
+                )
+            )
 
             # 5. Correlate: which at-risk users are scheduled?
             at_risk_scheduled = []
