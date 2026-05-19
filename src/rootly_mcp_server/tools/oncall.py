@@ -1261,11 +1261,20 @@ def register_oncall_tools(
         if len(items) < 100:
             return items
 
+        # Trust meta.total_pages when provided. When the field is missing
+        # or unparseable, fall back to fetching up to max_pages — preserves
+        # the legacy "keep going until a short page" semantics for APIs
+        # that don't return pagination metadata. Pages past the real end
+        # just come back empty, harmlessly.
         meta = first_data.get("meta") or {}
-        try:
-            total_pages = int(meta.get("total_pages") or 1)
-        except (TypeError, ValueError):
-            total_pages = 1
+        total_pages_raw = meta.get("total_pages")
+        if total_pages_raw is None:
+            total_pages = max_pages
+        else:
+            try:
+                total_pages = int(total_pages_raw)
+            except (TypeError, ValueError):
+                total_pages = max_pages
         total_pages = min(max(total_pages, 1), max_pages)
         if total_pages <= 1:
             return items
@@ -1283,9 +1292,12 @@ def register_oncall_tools(
 
         rest = await asyncio.gather(
             *(_fetch_page(p) for p in range(2, total_pages + 1)),
-            return_exceptions=False,
+            return_exceptions=True,
         )
         for page_items in rest:
+            if isinstance(page_items, BaseException):
+                # One transient page error shouldn't drop the whole resource.
+                continue
             items.extend(page_items)
         return items
 

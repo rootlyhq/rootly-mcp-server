@@ -540,6 +540,67 @@ class TestLookupMapsHelper:
         pages_fetched = sorted(c.kwargs["params"]["page[number]"] for c in users_calls)
         assert pages_fetched == [1, 2]
 
+    async def test_falls_back_to_max_pages_when_meta_total_pages_missing(self):
+        """If page 1 is full but meta omits total_pages, we must still
+        keep fetching — matches the legacy 'keep going until a short
+        page' semantics so APIs without pagination metadata aren't
+        silently truncated."""
+        tools, request = self._register()
+
+        def responder(method, url, params=None, **_):
+            assert params is not None
+            if url == "/v1/users":
+                page = params["page[number]"]
+                if page == 1:
+                    # Full page, but no meta.total_pages — old behaviour
+                    # would keep fetching; new behaviour must too.
+                    return self._ok({"data": [{"id": f"u-{i}"} for i in range(100)]})
+                # Later pages return short → real end of data.
+                return self._ok({"data": [{"id": f"u-page{page}"}]})
+            if url in ("/v1/schedules", "/v1/teams"):
+                return self._ok({"data": [], "meta": {"total_pages": 1}})
+            if url == "/v1/shifts":
+                return self._ok({"data": [], "included": [], "meta": {"total_pages": 1}})
+            raise AssertionError(f"unexpected call: {url}")
+
+        request.side_effect = responder
+        await tools["list_shifts"](from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z")
+
+        users_calls = [c for c in request.call_args_list if c.args[1] == "/v1/users"]
+        # Must have fetched more than just page 1.
+        assert len(users_calls) > 1
+
+    async def test_continues_when_one_page_fetch_raises(self):
+        """A transient error on any non-first page must not bring down
+        the whole resource fetch — surviving pages are still merged."""
+        tools, request = self._register()
+
+        def responder(method, url, params=None, **_):
+            assert params is not None
+            if url == "/v1/users":
+                page = params["page[number]"]
+                if page == 1:
+                    return self._ok(
+                        {"data": [{"id": f"u-{i}"} for i in range(100)], "meta": {"total_pages": 3}}
+                    )
+                if page == 2:
+                    raise RuntimeError("upstream blip")
+                # page 3
+                return self._ok({"data": [{"id": "u-200"}]})
+            if url in ("/v1/schedules", "/v1/teams"):
+                return self._ok({"data": [], "meta": {"total_pages": 1}})
+            if url == "/v1/shifts":
+                return self._ok({"data": [], "included": [], "meta": {"total_pages": 1}})
+            raise AssertionError(f"unexpected call: {url}")
+
+        request.side_effect = responder
+        # Should not raise even though page 2 errored.
+        result = await tools["list_shifts"](
+            from_date="2026-02-09T00:00:00Z", to_date="2026-02-12T00:00:00Z"
+        )
+        # Got a normal-shaped response, not a tool error.
+        assert "error" not in result or result.get("error") is not True
+
     async def test_does_not_fetch_additional_pages_when_first_page_is_short(self):
         """A short first page (<100 items) must NOT trigger any followup
         fetches. Preserves the legacy termination signal."""
