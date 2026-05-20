@@ -85,9 +85,11 @@ class ContainerClient:
         # based on the Rootly API spec.
 
         # These are the tools that should be available based on our OpenAPI filtering
+        # and curated tool registrations.
         expected_tools = [
-            "search_incidents",  # Our custom tool
-            "listIncidents",  # OpenAPI generated
+            "search_incidents",  # Curated tool
+            "list_incidents",  # Curated tool (canonical name for listing incidents)
+            "listIncidents",  # Curated deprecated proxy forwarding to list_incidents
             "createIncident",
             "listTeams",
             "listAlerts",
@@ -238,8 +240,9 @@ class TestContainerServerEssentials:
         # Verify critical tools that users depend on
         assert "search_incidents" in tool_names, "search_incidents tool missing"
 
-        # Verify some standard OpenAPI tools
-        expected_tools = ["listIncidents", "listTeams"]
+        # Verify canonical curated incident tool and a standard OpenAPI tool.
+        # `listIncidents` is also exposed as a deprecated proxy for backward compat.
+        expected_tools = ["list_incidents", "listTeams"]
         for tool in expected_tools:
             assert tool in tool_names, f"Expected tool {tool} not found"
 

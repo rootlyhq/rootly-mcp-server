@@ -648,6 +648,77 @@ class TestStructuredListIncidentsTool:
         assert "list_incidents" in tools
 
     @pytest.mark.asyncio
+    async def test_list_incidents_legacy_proxy_is_registered(self):
+        """The deprecated `listIncidents` name must remain callable as a proxy
+        until the deprecation window closes — see IMPLEMENTATION_PLAN posture A."""
+        tools, _ = self._register_tools()
+
+        assert "listIncidents" in tools, (
+            "listIncidents proxy must be registered alongside list_incidents to keep "
+            "legacy callers working during the deprecation window"
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_incidents_legacy_proxy_forwards_to_canonical(self):
+        """Calling the deprecated `listIncidents` should produce the same upstream
+        request as calling `list_incidents` with equivalent args."""
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {}}
+        request.return_value = response
+
+        await tools["listIncidents"](
+            status="open",
+            severity="critical",
+            page_size=5,
+            page_number=2,
+        )
+
+        request.assert_awaited_once()
+        await_args = request.await_args
+        assert await_args is not None
+        method, url = await_args.args
+        params = await_args.kwargs["params"]
+        assert method == "GET"
+        assert url == "/v1/incidents"
+        # Curated list_incidents converts these to filter[...] / page[...] form
+        assert params["filter[status]"] == "open"
+        assert params["filter[severity]"] == "critical"
+        assert params["page[size]"] == 5
+        assert params["page[number]"] == 2
+
+    @pytest.mark.asyncio
+    async def test_list_incidents_legacy_proxy_maps_filter_aliases(self):
+        """Legacy `filter_*` autogen-style kwargs should be mapped to curated names
+        when the curated equivalent isn't supplied."""
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {}}
+        request.return_value = response
+
+        await tools["listIncidents"](
+            filter_status="investigating",
+            filter_severity="high",
+            filter_started_at_gte="2026-01-01T00:00:00Z",
+            fields_incidents="this,should,be,ignored",
+            include="should,also,be,ignored",
+        )
+
+        request.assert_awaited_once()
+        await_args = request.await_args
+        assert await_args is not None
+        params = await_args.kwargs["params"]
+        assert params["filter[status]"] == "investigating"
+        assert params["filter[severity]"] == "high"
+        assert params["filter[started_at][gte]"] == "2026-01-01T00:00:00Z"
+        # Deprecated params must NOT leak through to the upstream request — the
+        # curated tool's internal sparse-fieldset value is what should win.
+        assert "this,should,be,ignored" not in params.get("fields[incidents]", "")
+        assert "should,also,be,ignored" not in params.get("include", "")
+
+    @pytest.mark.asyncio
     async def test_list_incidents_passes_structured_filters_and_returns_compact_results(self):
         tools, request = self._register_tools()
         response = Mock()

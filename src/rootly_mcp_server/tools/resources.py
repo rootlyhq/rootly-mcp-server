@@ -214,7 +214,7 @@ Updated: {attributes.get("updated_at", "N/A")}"""
         guide_content = """🎯 ROOTLY WORKFLOW GUIDE
 
 🚨 INCIDENT RESPONSE WORKFLOW:
-1️⃣ Check ongoing incidents: listIncidents(status="open,investigating")
+1️⃣ Check ongoing incidents: list_incidents(status="open,investigating")
 2️⃣ Create new incident: createIncident(title="...", summary="...")
 3️⃣ Find similar past incidents: find_related_incidents(incident_description="...")
 4️⃣ Get solution suggestions: suggest_solutions(incident_id="...")

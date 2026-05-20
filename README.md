@@ -380,7 +380,7 @@ With 150+ tools available, you may want to configure focused subsets for optimal
 *Essential tools for emergency responders and incident commanders*
 
 ```bash
-ROOTLY_MCP_ENABLED_TOOLS="listIncidents,getIncident,createIncident,updateIncident,search_incidents,find_related_incidents,suggest_solutions,createIncidentActionItem,listIncidentActionItems,updateIncidentFormFieldSelection,listTeams,getCurrentUser,listServices,listSeverities,getAlert,listAlerts,updateAlert,listEscalationPolicies,getEscalationPolicy,listOnCallRoles,listSchedules,getScheduleShifts,get_oncall_handoff_summary,get_shift_incidents,list_endpoints"
+ROOTLY_MCP_ENABLED_TOOLS="list_incidents,getIncident,createIncident,updateIncident,search_incidents,find_related_incidents,suggest_solutions,createIncidentActionItem,listIncidentActionItems,updateIncidentFormFieldSelection,listTeams,getCurrentUser,listServices,listSeverities,getAlert,listAlerts,updateAlert,listEscalationPolicies,getEscalationPolicy,listOnCallRoles,listSchedules,getScheduleShifts,get_oncall_handoff_summary,get_shift_incidents,list_endpoints"
 ```
 
 ### 📅 On-Call Management (35 tools)  
@@ -408,7 +408,7 @@ ROOTLY_MCP_ENABLED_TOOLS="getIncident,updateIncident,find_related_incidents,sugg
 *For leadership and metrics teams (read-only focus)*
 
 ```bash
-ROOTLY_MCP_ENABLED_TOOLS="listIncidents,search_incidents,collect_incidents,listTeams,listServices,listSchedules,get_oncall_shift_metrics,get_shift_incidents,listDashboards,getDashboard,listAlerts,listHeartbeats,listPulses,getCurrentUser,list_endpoints"
+ROOTLY_MCP_ENABLED_TOOLS="list_incidents,search_incidents,collect_incidents,listTeams,listServices,listSchedules,get_oncall_shift_metrics,get_shift_incidents,listDashboards,getDashboard,listAlerts,listHeartbeats,listPulses,getCurrentUser,list_endpoints"
 ```
 
 ### Multiple MCP Instances for Different Teams
@@ -422,7 +422,7 @@ You can run multiple MCP instances with different tool subsets:
       "command": "uvx", "args": ["--from", "rootly-mcp-server", "rootly-mcp-server"],
       "env": {
         "ROOTLY_API_TOKEN": "<token>",
-        "ROOTLY_MCP_ENABLED_TOOLS": "listIncidents,getIncident,createIncident,find_related_incidents,suggest_solutions..."
+        "ROOTLY_MCP_ENABLED_TOOLS": "list_incidents,getIncident,createIncident,find_related_incidents,suggest_solutions..."
       }
     },
     "rootly-oncall-management": {
@@ -566,7 +566,7 @@ listIncidentActionItems
 listIncidentAlerts
 listIncidentFormFieldSelections
 listIncident_Types
-listIncidents
+listIncidents  (deprecated alias — use `list_incidents`)
 listOnCallRoles
 listOnCallShadows
 listOverrideShifts
