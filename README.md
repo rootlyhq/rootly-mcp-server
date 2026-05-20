@@ -21,7 +21,21 @@ Use the hosted MCP server. No local installation required.
 
 ### General Remote Setup
 
-Default remote config (HTTP streamable):
+**With OAuth2 (recommended):**
+
+```json
+{
+  "mcpServers": {
+    "rootly": {
+      "url": "https://mcp.rootly.com/mcp"
+    }
+  }
+}
+```
+
+Your MCP client handles OAuth2 login automatically — a browser window opens for you to authenticate with Rootly. No API token needed.
+
+**With API Token:**
 
 ```json
 {
@@ -42,10 +56,7 @@ SSE (alternative):
 {
   "mcpServers": {
     "rootly": {
-      "url": "https://mcp.rootly.com/sse",
-      "headers": {
-        "Authorization": "Bearer YOUR_ROOTLY_API_TOKEN"
-      }
+      "url": "https://mcp.rootly.com/sse"
     }
   }
 }
@@ -57,10 +68,7 @@ Code Mode:
 {
   "mcpServers": {
     "rootly": {
-      "url": "https://mcp.rootly.com/mcp-codemode",
-      "headers": {
-        "Authorization": "Bearer YOUR_ROOTLY_API_TOKEN"
-      }
+      "url": "https://mcp.rootly.com/mcp-codemode"
     }
   }
 }
@@ -73,46 +81,34 @@ Code Mode:
 
 <br>
 
-**Streamable HTTP**
+**With OAuth2 (recommended):**
+
+```bash
+claude mcp add --transport http rootly https://mcp.rootly.com/mcp
+
+# Code Mode:
+claude mcp add --transport http rootly-codemode https://mcp.rootly.com/mcp-codemode
+```
+
+**With API Token:**
 
 ```bash
 claude mcp add --transport http rootly https://mcp.rootly.com/mcp \
   --header "Authorization: Bearer YOUR_ROOTLY_API_TOKEN"
 ```
 
-Code Mode:
-
-```bash
-claude mcp add rootly-codemode --transport http https://mcp.rootly.com/mcp-codemode \
-  --header "Authorization: Bearer YOUR_ROOTLY_API_TOKEN"
-```
-
-SSE (alternative):
-
-```bash
-claude mcp add --transport sse rootly-sse https://mcp.rootly.com/sse \
-  --header "Authorization: Bearer YOUR_ROOTLY_API_TOKEN"
-```
-
-**Manual Configuration**
-
-Create `.mcp.json` in your project root:
+**Manual Configuration** — Create `.mcp.json` in your project root:
 
 ```json
 {
   "mcpServers": {
     "rootly": {
       "type": "http",
-      "url": "https://mcp.rootly.com/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_ROOTLY_API_TOKEN"
-      }
+      "url": "https://mcp.rootly.com/mcp"
     }
   }
 }
 ```
-
-Restart Claude Code after updating the config.
 
 </details>
 
@@ -152,6 +148,20 @@ Or configure manually in `~/.gemini/settings.json`:
 
 Add to `.cursor/mcp.json` or `~/.cursor/mcp.json`:
 
+**With OAuth2 (recommended):**
+
+```json
+{
+  "mcpServers": {
+    "rootly": {
+      "url": "https://mcp.rootly.com/mcp"
+    }
+  }
+}
+```
+
+**With API Token:**
+
 ```json
 {
   "mcpServers": {
@@ -173,6 +183,20 @@ Add to `.cursor/mcp.json` or `~/.cursor/mcp.json`:
 <br>
 
 Add to `~/.codeium/windsurf/mcp_config.json`:
+
+**With OAuth2 (recommended):**
+
+```json
+{
+  "mcpServers": {
+    "rootly": {
+      "serverUrl": "https://mcp.rootly.com/mcp"
+    }
+  }
+}
+```
+
+**With API Token:**
 
 ```json
 {
@@ -196,6 +220,15 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 Add to `~/.codex/config.toml`:
 
+**With OAuth2 (recommended):**
+
+```toml
+[mcp_servers.rootly]
+url = "https://mcp.rootly.com/mcp"
+```
+
+**With API Token:**
+
 ```toml
 [mcp_servers.rootly]
 url = "https://mcp.rootly.com/mcp"
@@ -209,9 +242,23 @@ bearer_token_env_var = "ROOTLY_API_TOKEN"
 
 <br>
 
+**With OAuth2 (recommended):**
+
 Add to `claude_desktop_config.json`:
 
-> **Note:** The `--transport http` flag ensures HTTP streamable transport is used instead of auto-falling back to SSE.
+```json
+{
+  "mcpServers": {
+    "rootly": {
+      "url": "https://mcp.rootly.com/mcp"
+    }
+  }
+}
+```
+
+Claude Desktop handles OAuth2 login automatically.
+
+**With API Token (via mcp-remote):**
 
 ```json
 {
