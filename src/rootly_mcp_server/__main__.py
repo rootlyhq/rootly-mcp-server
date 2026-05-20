@@ -96,8 +96,10 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
             "ROOTLY_MCPCAT_PROJECT_ID is set but mcpcat is not installed; skipping MCPcat tracking"
         )
         return
-
-    mcpcat.track(server, project_id)
+    try:
+        mcpcat.track(server, project_id)
+    except Exception:
+        logger.warning("MCPcat tracking could not be enabled; skipping", exc_info=True)
 
 
 def parse_args():

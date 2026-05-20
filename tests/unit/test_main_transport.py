@@ -137,6 +137,21 @@ def test_maybe_enable_mcpcat_tracking_tracks_when_available():
     mcpcat_module.track.assert_called_once_with(server, "proj_test_123")
 
 
+def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
+    server = object()
+    logger = Mock()
+    mcpcat_module = SimpleNamespace(track=Mock(side_effect=RuntimeError("boom")))
+
+    with patch("rootly_mcp_server.__main__.importlib.import_module", return_value=mcpcat_module):
+        maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
+
+    mcpcat_module.track.assert_called_once_with(server, "proj_test_123")
+    logger.warning.assert_called_once_with(
+        "MCPcat tracking could not be enabled; skipping",
+        exc_info=True,
+    )
+
+
 @pytest.mark.asyncio
 async def test_get_sorted_tool_names_returns_sorted_names():
     server = SimpleNamespace(
