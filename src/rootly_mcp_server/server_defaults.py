@@ -33,6 +33,50 @@ def _parse_csv_set(raw: str | None) -> set[str] | None:
     return parsed or None
 
 
+# Legacy tool names that have been replaced by curated equivalents.
+# Kept callable via proxy registration; allowlists referencing the legacy name
+# are transparently resolved to the canonical name with a deprecation warning.
+LEGACY_TOOL_ALIASES: dict[str, str] = {
+    "listIncidents": "list_incidents",
+}
+
+
+# OpenAPI operationIds that must be removed from the autogen spec because a
+# curated `@mcp.tool(name=...)` registration provides the implementation for
+# that exact name. Without this exclusion, FastMCP's OpenAPIProvider and
+# LocalProvider would each register a tool under the same name, producing
+# duplicate entries in `tools/list`.
+CURATED_OVERRIDE_OPERATION_IDS: frozenset[str] = frozenset(
+    {
+        "listIncidents",  # overridden by the deprecated proxy in tools/incidents.py
+    }
+)
+
+
+def canonicalize_tool_names(enabled_tools: set[str]) -> set[str]:
+    """Expand legacy tool names in an allowlist to also include their canonical replacements.
+
+    Under posture A (deprecated-proxy) the legacy name remains callable; we keep it
+    in the allowlist alongside the canonical so both the proxy and the new tool stay
+    exposed. A deprecation warning is emitted per legacy name encountered.
+    """
+    if not enabled_tools:
+        return enabled_tools
+    resolved: set[str] = set(enabled_tools)
+    for name in enabled_tools:
+        canonical = LEGACY_TOOL_ALIASES.get(name)
+        if canonical:
+            logger.warning(
+                "ROOTLY_MCP_ENABLED_TOOLS entry %r is deprecated; %r will be exposed alongside it. "
+                "Update your configuration to use %r directly — the legacy name will be removed in a future release.",
+                name,
+                canonical,
+                canonical,
+            )
+            resolved.add(canonical)
+    return resolved
+
+
 def _generate_recommendation(solution_data: dict) -> str:
     """Generate a high-level recommendation based on solution analysis."""
     solutions = solution_data.get("solutions", [])
@@ -79,15 +123,33 @@ def write_tools_enabled_from_env(default: bool = False) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def collect_operation_ids(paths: dict) -> set[str]:
+    """Return the set of operationIds defined in an OpenAPI paths object."""
+    op_ids: set[str] = set()
+    for path_data in paths.values():
+        if not isinstance(path_data, dict):
+            continue
+        for method_data in path_data.values():
+            if isinstance(method_data, dict) and (operation_id := method_data.get("operationId")):
+                op_ids.add(operation_id)
+    return op_ids
+
+
 def validate_tool_names(
-    enabled_tools: set[str], available_operations: dict
+    enabled_tools: set[str],
+    available_operations: dict,
+    extra_known_tools: set[str] | None = None,
 ) -> tuple[set[str], list[str]]:
     """
-    Validate tool names against available OpenAPI operations.
+    Validate tool names against available OpenAPI operations and any curated extras.
 
     Args:
         enabled_tools: Set of tool names to validate
         available_operations: OpenAPI paths dict from swagger spec
+        extra_known_tools: Additional valid tool names registered outside the OpenAPI
+            spec (e.g. curated `@mcp.tool()` registrations). Curated tools won't have
+            an operationId in the spec, so they must be passed in here to avoid being
+            flagged as invalid.
 
     Returns:
         tuple: (valid_tools, invalid_tools)
@@ -95,12 +157,9 @@ def validate_tool_names(
     if not enabled_tools:
         return set(), []
 
-    # Extract all available operation IDs from OpenAPI spec
-    available_tool_names = set()
-    for path_data in available_operations.values():
-        for method_data in path_data.values():
-            if isinstance(method_data, dict) and (operation_id := method_data.get("operationId")):
-                available_tool_names.add(operation_id)
+    available_tool_names = collect_operation_ids(available_operations)
+    if extra_known_tools:
+        available_tool_names |= extra_known_tools
 
     valid_tools = enabled_tools & available_tool_names
     invalid_tools = list(enabled_tools - available_tool_names)

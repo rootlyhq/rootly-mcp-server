@@ -77,6 +77,37 @@ DEFAULT_WRITE_ALLOWED_PATHS = server_defaults.DEFAULT_WRITE_ALLOWED_PATHS
 RootlyMCPServer = legacy_server.RootlyMCPServer
 
 
+def _strip_curated_override_operations(
+    spec: dict[str, Any], override_ids: frozenset[str] | set[str]
+) -> None:
+    """Remove operations from `spec.paths` whose operationId is in `override_ids`.
+
+    Mutates the spec in place. Paths that end up with no operations are also removed.
+    """
+    if not override_ids:
+        return
+    paths = spec.get("paths", {})
+    paths_to_drop: list[str] = []
+    for path, path_item in paths.items():
+        if not isinstance(path_item, dict):
+            continue
+        methods_to_drop = [
+            method
+            for method, op in path_item.items()
+            if method.lower() in ("get", "post", "put", "patch", "delete")
+            and isinstance(op, dict)
+            and op.get("operationId") in override_ids
+        ]
+        for method in methods_to_drop:
+            path_item.pop(method, None)
+        if not any(
+            m.lower() in ("get", "post", "put", "patch", "delete") for m in path_item
+        ):
+            paths_to_drop.append(path)
+    for path in paths_to_drop:
+        del paths[path]
+
+
 def _fingerprint_auth_header(auth_header: str) -> str:
     """Hash auth header token for non-reversible identity correlation."""
     if not auth_header:
@@ -408,6 +439,8 @@ def create_rootly_mcp_server(
         enable_write_tools = server_defaults.write_tools_enabled_from_env(default=True)
     if enabled_tools is None:
         enabled_tools = server_defaults.enabled_tools_from_env()
+    if enabled_tools:
+        enabled_tools = server_defaults.canonicalize_tool_names(enabled_tools)
     if delete_allowed_paths is None:
         delete_allowed_paths = []
     if write_allowed_paths is None:
@@ -430,6 +463,15 @@ def create_rootly_mcp_server(
     swagger_spec = _load_swagger_spec(swagger_path)
     logger.info(f"Loaded Swagger spec with {len(swagger_spec.get('paths', {}))} total paths")
 
+    # When an allowlist is provided, restrict the OpenAPI spec filter to entries that
+    # are real operationIds. Curated tool names (registered later via @mcp.tool) won't
+    # appear in the spec — we let them through to the post-registration validation step
+    # below instead of wiping the autogen spec to empty here.
+    autogen_allowlist: set[str] | None = None
+    if enabled_tools:
+        all_op_ids = server_defaults.collect_operation_ids(swagger_spec.get("paths", {}))
+        autogen_allowlist = enabled_tools & all_op_ids
+
     # Filter the OpenAPI spec to only include allowed paths
     filtered_spec = _filter_openapi_spec(
         swagger_spec,
@@ -437,47 +479,16 @@ def create_rootly_mcp_server(
         delete_allowed_paths=delete_allowed_paths_v1,
         write_allowed_paths=write_allowed_paths_v1,
         enable_write_tools=enable_write_tools,
-        enabled_operation_ids=enabled_tools,
+        enabled_operation_ids=autogen_allowlist,
     )
 
-    # Validate enabled tools against the filtered spec (after path filtering)
-    if enabled_tools:
-        valid_tools, invalid_tools = server_defaults.validate_tool_names(
-            enabled_tools, filtered_spec.get("paths", {})
-        )
+    # Drop operations whose operationId is provided by a curated `@mcp.tool(name=...)`
+    # registration. Without this, FastMCP's OpenAPIProvider would register an autogen
+    # tool with the same name as our curated tool, producing duplicate entries.
+    _strip_curated_override_operations(
+        filtered_spec, server_defaults.CURATED_OVERRIDE_OPERATION_IDS
+    )
 
-        if invalid_tools:
-            audit.audit.log_configuration_error(
-                "invalid_tool_names",
-                f"Invalid tool names in allowlist after filtering: {', '.join(invalid_tools)}",
-                {"invalid_tools": invalid_tools, "valid_tools": list(valid_tools)},
-            )
-            logger.warning(
-                "Invalid tool names in allowlist (will be ignored): %s. "
-                "Use --list-tools to see available options.",
-                ", ".join(sorted(invalid_tools)),
-            )
-
-        if not valid_tools and enabled_tools:
-            error_msg = "No valid tools found in allowlist after path filtering"
-            audit.audit.log_configuration_error(
-                "no_valid_tools", error_msg, {"requested_tools": list(enabled_tools)}
-            )
-            raise ValueError(error_msg)
-
-        # Log validation results
-        audit.audit.log_tool_validation(enabled_tools, valid_tools, invalid_tools)
-
-        # Update the filtered spec to only include valid tools
-        if valid_tools != enabled_tools:
-            filtered_spec = _filter_openapi_spec(
-                swagger_spec,
-                allowed_paths_v1,
-                delete_allowed_paths=delete_allowed_paths_v1,
-                write_allowed_paths=write_allowed_paths_v1,
-                enable_write_tools=enable_write_tools,
-                enabled_operation_ids=valid_tools,
-            )
     logger.info(f"Filtered spec to {len(filtered_spec.get('paths', {}))} allowed paths")
 
     # Log server configuration for audit trail
@@ -742,18 +753,65 @@ def create_rootly_mcp_server(
         mcp_error=MCPError,
     )
 
+    # Validate the allowlist against the fully-registered tool set (autogen + curated).
+    # This must happen after all register_*_tools() calls so curated tool names — which
+    # aren't OpenAPI operationIds — are recognized as valid.
     if enabled_tools is not None:
-        component_names = [
-            component.name
-            for component_key, component in mcp._local_provider._components.items()  # noqa: SLF001
-            if component_key.startswith("tool:") and getattr(component, "name", None)
-        ]
-        for tool_name in component_names:
-            if tool_name not in enabled_tools:
+        registered_names: set[str] = set()
+        for provider in mcp.providers:
+            # LocalProvider stores curated tools in `_components` keyed `tool:<name>`.
+            components = getattr(provider, "_components", None)
+            if components:
+                for component_key, component in components.items():
+                    if component_key.startswith("tool:") and getattr(component, "name", None):
+                        registered_names.add(component.name)
+            # OpenAPIProvider stores autogen tools in `_tools` keyed by name.
+            autogen_tools = getattr(provider, "_tools", None)
+            if isinstance(autogen_tools, dict):
+                registered_names.update(autogen_tools.keys())
+
+        valid_tools = enabled_tools & registered_names
+        invalid_tools = sorted(enabled_tools - registered_names)
+
+        if invalid_tools:
+            audit.audit.log_configuration_error(
+                "invalid_tool_names",
+                f"Invalid tool names in allowlist: {', '.join(invalid_tools)}",
+                {"invalid_tools": invalid_tools, "valid_tools": sorted(valid_tools)},
+            )
+            logger.warning(
+                "Invalid tool names in allowlist (will be ignored): %s. "
+                "Use --list-tools to see available options.",
+                ", ".join(invalid_tools),
+            )
+
+        if not valid_tools:
+            error_msg = "No valid tools found in allowlist"
+            audit.audit.log_configuration_error(
+                "no_valid_tools", error_msg, {"requested_tools": sorted(enabled_tools)}
+            )
+            raise ValueError(error_msg)
+
+        audit.audit.log_tool_validation(enabled_tools, valid_tools, invalid_tools)
+
+        # `remove_tool` operates on the LocalProvider only — curated tools live there.
+        # Autogen OpenAPI tools were already constrained by `enabled_operation_ids` at
+        # spec-filter time, so they shouldn't appear here outside `valid_tools`. If one
+        # does (e.g. a future code path adds tools via another provider), skip it
+        # rather than crash on KeyError from a provider that doesn't own the name.
+        for tool_name in registered_names:
+            if tool_name in valid_tools:
+                continue
+            try:
                 mcp.local_provider.remove_tool(tool_name)
+            except KeyError:
+                logger.debug(
+                    "Skipping removal of %r — not owned by LocalProvider",
+                    tool_name,
+                )
         logger.info(
             "Applied MCP tool allowlist: %s",
-            ", ".join(sorted(enabled_tools)),
+            ", ".join(sorted(valid_tools)),
         )
 
     # In hosted HTTP modes, configure ASGI middleware for auth token capture.

@@ -4,7 +4,9 @@ from unittest.mock import patch
 
 from rootly_mcp_server.server_defaults import (
     DEFAULT_ALLOWED_PATHS,
+    LEGACY_TOOL_ALIASES,
     _generate_recommendation,
+    canonicalize_tool_names,
     enabled_tools_from_env,
 )
 
@@ -91,3 +93,24 @@ class TestServerDefaultsModule:
             clear=True,
         ):
             assert enabled_tools_from_env() == {"list_incidents", "getIncident", "listTeams"}
+
+    def test_canonicalize_passes_through_canonical_names(self):
+        assert canonicalize_tool_names({"list_incidents", "getIncident"}) == {
+            "list_incidents",
+            "getIncident",
+        }
+
+    def test_canonicalize_expands_legacy_to_include_canonical(self):
+        # Posture A: legacy name stays in the set (so the proxy remains exposed)
+        # AND the canonical name is added (so new clients also see it).
+        assert canonicalize_tool_names({"listIncidents"}) == {"listIncidents", "list_incidents"}
+
+    def test_canonicalize_handles_mixed_allowlist(self):
+        result = canonicalize_tool_names({"listIncidents", "getIncident", "listTeams"})
+        assert result == {"listIncidents", "list_incidents", "getIncident", "listTeams"}
+
+    def test_canonicalize_empty_set(self):
+        assert canonicalize_tool_names(set()) == set()
+
+    def test_legacy_aliases_contains_list_incidents(self):
+        assert LEGACY_TOOL_ALIASES.get("listIncidents") == "list_incidents"

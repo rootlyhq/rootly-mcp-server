@@ -457,14 +457,15 @@ def _filter_openapi_spec(
                                 }
                             )
 
-                # Add sparse fieldsets for incidents endpoints to reduce payload size
+                # Add sparse fieldsets for incidents endpoints to reduce payload size.
+                # Optional with a default so LLMs aren't pushed to override it — the default
+                # already produces a compact payload.
                 if "incident" in path.lower():
-                    # Add fields[incidents] parameter with essential fields only - make it required with default
                     operation["parameters"].append(
                         {
                             "name": "fields[incidents]",
                             "in": "query",
-                            "required": True,
+                            "required": False,
                             "schema": {
                                 "type": "string",
                                 "default": "id,title,summary,status,severity,created_at,updated_at,url,started_at",
@@ -473,9 +474,9 @@ def _filter_openapi_spec(
                         }
                     )
 
-                # Add include parameter for incidents endpoints to minimize relationships
+                # Add include parameter for incidents endpoints to minimize relationships.
+                # Optional with an empty default — relationships are heavy and rarely needed.
                 if "incident" in path.lower():
-                    # Check if include parameter already exists
                     include_param_exists = any(
                         param.get("name") == "include" for param in operation["parameters"]
                     )
@@ -484,7 +485,7 @@ def _filter_openapi_spec(
                             {
                                 "name": "include",
                                 "in": "query",
-                                "required": True,
+                                "required": False,
                                 "schema": {
                                     "type": "string",
                                     "default": "",

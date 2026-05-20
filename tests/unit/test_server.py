@@ -452,6 +452,56 @@ class TestBundledIncidentFormFieldSelectionTools:
 
         assert tool_names == {"listTeams", "listSeverities"}
 
+    async def test_list_incidents_canonical_name_in_allowlist_does_not_raise(
+        self, mock_environment_token
+    ):
+        """Regression: `ROOTLY_MCP_ENABLED_TOOLS=list_incidents` used to raise
+        ValueError because validation ran against OpenAPI operationIds before the
+        curated tool registered. The allowlist now validates against the full
+        registry post-registration."""
+        server = create_rootly_mcp_server(
+            hosted=False,
+            enabled_tools={"list_incidents"},
+        )
+
+        tools = await server.list_tools()
+        tool_names = {tool.name for tool in tools}
+
+        assert "list_incidents" in tool_names
+
+    async def test_list_incidents_legacy_allowlist_exposes_both_names(
+        self, mock_environment_token
+    ):
+        """Posture A: legacy `listIncidents` in the allowlist must keep both
+        the proxy and the canonical name exposed during the deprecation window."""
+        server = create_rootly_mcp_server(
+            hosted=False,
+            enabled_tools={"listIncidents"},
+        )
+
+        tools = await server.list_tools()
+        tool_names = {tool.name for tool in tools}
+
+        assert "list_incidents" in tool_names
+        assert "listIncidents" in tool_names
+
+    async def test_single_incident_list_tool_invariant(self, mock_environment_token):
+        """Regression: only one canonical incident-list tool should exist.
+        The autogen `listIncidents` is overwritten by the curated proxy; no
+        third copy should sneak in. (`list_incidents` is a separately-named
+        curated tool and is the canonical surface.)"""
+        server = create_rootly_mcp_server(hosted=False)
+
+        tools = await server.list_tools()
+        tool_names = sorted(tool.name for tool in tools)
+
+        # Expect exactly these two names targeting GET /incidents:
+        list_variants = [n for n in tool_names if n in ("list_incidents", "listIncidents")]
+        assert list_variants == ["listIncidents", "list_incidents"], (
+            f"Unexpected incident-list tool surface: {list_variants}. "
+            "Should be exactly ['listIncidents', 'list_incidents'] under posture A."
+        )
+
 
 @pytest.mark.unit
 class TestAuthenticatedHTTPXClient:
