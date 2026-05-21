@@ -190,15 +190,15 @@ def test_build_mcpcat_identify_callback_returns_authenticated_user_identity():
         "rootly_mcp_server.__main__.get_hosted_authenticated_user",
         return_value={
             "id": "user_123",
-            "email": "spencer@example.com",
-            "name": "Spencer Cheng",
-            "full_name_with_team": "[FailWhale Tales] Spencer Cheng",
+            "email": "example.user@example.test",
+            "name": "Example User",
+            "full_name_with_team": "[Acme Reliability] Example User",
         },
     ):
         identity = callback({}, SimpleNamespace())
 
     assert identity.user_id == "user_123"
-    assert identity.user_name == "[FailWhale Tales] Spencer Cheng"
+    assert identity.user_name == "[Acme Reliability] Example User"
     assert identity.user_data is None
 
 

@@ -16,7 +16,7 @@ class TestTransportModule:
         with patch.object(
             transport.AuthCaptureMiddleware,
             "_validate_token_upstream",
-            return_value={"id": "user_123", "email": "spencer@example.com"},
+            return_value={"id": "user_123", "email": "example.user@example.test"},
         ):
             yield
 
@@ -50,7 +50,7 @@ class TestTransportModule:
         assert transport._session_mcp_mode.get() == "classic"
         assert transport._session_authenticated_user.get() == {
             "id": "user_123",
-            "email": "spencer@example.com",
+            "email": "example.user@example.test",
         }
 
     @pytest.mark.asyncio
@@ -253,9 +253,9 @@ class TestTransportModule:
             "data": {
                 "id": "user_123",
                 "attributes": {
-                    "email": "spencer@example.com",
-                    "full_name": "Spencer Cheng",
-                    "full_name_with_team": "[FailWhale Tales] Spencer Cheng",
+                    "email": "example.user@example.test",
+                    "full_name": "Example User",
+                    "full_name_with_team": "[Acme Reliability] Example User",
                 },
             }
         }
@@ -264,13 +264,13 @@ class TestTransportModule:
 
         assert user == {
             "id": "user_123",
-            "email": "spencer@example.com",
-            "full_name_with_team": "[FailWhale Tales] Spencer Cheng",
-            "name": "Spencer Cheng",
+            "email": "example.user@example.test",
+            "full_name_with_team": "[Acme Reliability] Example User",
+            "name": "Example User",
         }
 
     def test_extract_rootly_user_identity_returns_none_without_id(self):
-        payload = {"data": {"attributes": {"email": "spencer@example.com"}}}
+        payload = {"data": {"attributes": {"email": "example.user@example.test"}}}
 
         assert transport._extract_rootly_user_identity(payload) is None
         assert (
@@ -683,8 +683,8 @@ class TestTransportModule:
                     "id": "u-1",
                     "type": "users",
                     "attributes": {
-                        "full_name": "Spencer Cheng",
-                        "email": "spencer@example.com",
+                        "full_name": "Example User",
+                        "email": "example.user@example.test",
                         "time_zone": "UTC",
                         "created_at": "2026-03-18T00:00:00Z",
                         "updated_at": "2026-03-18T01:00:00Z",
@@ -710,8 +710,8 @@ class TestTransportModule:
 
         result = transport.strip_heavy_user_data(data)
         attrs = result["data"][0]["attributes"]
-        assert attrs["full_name"] == "Spencer Cheng"
-        assert attrs["email"] == "spencer@example.com"
+        assert attrs["full_name"] == "Example User"
+        assert attrs["email"] == "example.user@example.test"
         assert "avatar_url" not in attrs
         assert result["data"][0]["relationships"]["email_addresses"] == {"count": 2}
         assert result["data"][0]["relationships"]["role"] == {
@@ -786,8 +786,8 @@ class TestTransportModule:
                     "id": "u-1",
                     "type": "users",
                     "attributes": {
-                        "full_name": "Spencer Cheng",
-                        "email": "spencer@example.com",
+                        "full_name": "Example User",
+                        "email": "example.user@example.test",
                         "time_zone": "UTC",
                         "avatar_url": "https://example.com/avatar.png",
                     },
@@ -803,8 +803,8 @@ class TestTransportModule:
         assert sorted(result["data"][0]["relationships"]) == ["shift_override", "user"]
         included_user = result["included"][0]
         assert included_user["attributes"] == {
-            "full_name": "Spencer Cheng",
-            "email": "spencer@example.com",
+            "full_name": "Example User",
+            "email": "example.user@example.test",
             "time_zone": "UTC",
         }
 
@@ -895,7 +895,7 @@ class TestAuthCaptureMiddlewareWWWAuthenticate:
             patch.object(
                 middleware,
                 "_validate_token_upstream",
-                return_value={"id": "user_123", "email": "spencer@example.com"},
+                return_value={"id": "user_123", "email": "example.user@example.test"},
             ),
         ):
             await middleware(scope, receive, send)
