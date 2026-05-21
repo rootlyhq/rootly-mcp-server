@@ -118,7 +118,11 @@ def build_mcpcat_identify_callback(user_identity_cls: type[Any]):
 
         return user_identity_cls(
             user_id=user["id"],
-            user_name=user.get("email") or user.get("name"),
+            user_name=(
+                user.get("full_name_with_team")
+                or user.get("name")
+                or user.get("email")
+            ),
             user_data=None,
         )
 

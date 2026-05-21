@@ -255,6 +255,7 @@ class TestTransportModule:
                 "attributes": {
                     "email": "spencer@example.com",
                     "full_name": "Spencer Cheng",
+                    "full_name_with_team": "[FailWhale Tales] Spencer Cheng",
                 },
             }
         }
@@ -264,6 +265,7 @@ class TestTransportModule:
         assert user == {
             "id": "user_123",
             "email": "spencer@example.com",
+            "full_name_with_team": "[FailWhale Tales] Spencer Cheng",
             "name": "Spencer Cheng",
         }
 

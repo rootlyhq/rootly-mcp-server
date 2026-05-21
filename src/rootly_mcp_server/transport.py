@@ -149,6 +149,10 @@ def _extract_rootly_user_identity(payload: Any) -> dict[str, str] | None:
     if isinstance(email, str) and email:
         user["email"] = email
 
+    full_name_with_team = attrs.get("full_name_with_team")
+    if isinstance(full_name_with_team, str) and full_name_with_team:
+        user["full_name_with_team"] = full_name_with_team
+
     name = attrs.get("full_name") or attrs.get("name")
     if isinstance(name, str) and name:
         user["name"] = name
