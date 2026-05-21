@@ -10,6 +10,7 @@ from rootly_mcp_server.__main__ import (
     _get_sorted_tool_names,
     get_server,
     main,
+    maybe_enable_mcpcat_tracking,
     normalize_transport,
     streamable_http_stateless_enabled,
 )
@@ -99,6 +100,56 @@ def test_streamable_http_respects_explicit_fastmcp_setting():
 
     with patch.dict("os.environ", {"FASTMCP_STATELESS_HTTP": "true"}, clear=True):
         assert streamable_http_stateless_enabled(hosted=False, fastmcp_stateless_http=True) is True
+
+
+def test_maybe_enable_mcpcat_tracking_is_noop_without_project_id():
+    server = object()
+    logger = Mock()
+
+    with patch("rootly_mcp_server.__main__.importlib.import_module") as mock_import:
+        maybe_enable_mcpcat_tracking(server, None, logger)
+
+    mock_import.assert_not_called()
+
+
+def test_maybe_enable_mcpcat_tracking_logs_when_package_missing():
+    server = object()
+    logger = Mock()
+
+    with patch(
+        "rootly_mcp_server.__main__.importlib.import_module",
+        side_effect=ImportError,
+    ) as mock_import:
+        maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
+
+    mock_import.assert_called_once_with("mcpcat")
+    logger.warning.assert_called_once()
+
+
+def test_maybe_enable_mcpcat_tracking_tracks_when_available():
+    server = object()
+    logger = Mock()
+    mcpcat_module = SimpleNamespace(track=Mock())
+
+    with patch("rootly_mcp_server.__main__.importlib.import_module", return_value=mcpcat_module):
+        maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
+
+    mcpcat_module.track.assert_called_once_with(server, "proj_test_123")
+
+
+def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
+    server = object()
+    logger = Mock()
+    mcpcat_module = SimpleNamespace(track=Mock(side_effect=RuntimeError("boom")))
+
+    with patch("rootly_mcp_server.__main__.importlib.import_module", return_value=mcpcat_module):
+        maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
+
+    mcpcat_module.track.assert_called_once_with(server, "proj_test_123")
+    logger.warning.assert_called_once_with(
+        "MCPcat tracking could not be enabled; skipping",
+        exc_info=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -191,3 +242,45 @@ def test_main_hosted_streamable_http_passes_stateless_default():
     fake_server.run.assert_called_once()
     assert fake_server.run.call_args.kwargs["transport"] == "streamable-http"
     assert fake_server.run.call_args.kwargs["stateless_http"] is True
+
+
+def test_main_tracks_main_and_code_mode_servers_when_mcpcat_project_id_set():
+    args = SimpleNamespace(
+        swagger_path=None,
+        log_level="ERROR",
+        name="Rootly",
+        transport="both",
+        debug=False,
+        base_url=None,
+        allowed_paths=None,
+        hosted=True,
+        enable_code_mode=True,
+        enable_write_tools=True,
+        enabled_tools=None,
+        list_tools=False,
+        code_mode_path=None,
+        host=False,
+    )
+    main_server = SimpleNamespace()
+    code_mode_server = SimpleNamespace()
+
+    with patch.dict("os.environ", {"ROOTLY_MCPCAT_PROJECT_ID": "proj_test_123"}, clear=True):
+        with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
+            with patch("rootly_mcp_server.__main__.setup_logging"):
+                with patch(
+                    "rootly_mcp_server.__main__.create_rootly_mcp_server",
+                    return_value=main_server,
+                ):
+                    with patch(
+                        "rootly_mcp_server.__main__.create_rootly_codemode_server",
+                        return_value=code_mode_server,
+                    ):
+                        with patch("rootly_mcp_server.__main__.run_dual_http_server"):
+                            with patch(
+                                "rootly_mcp_server.__main__.maybe_enable_mcpcat_tracking"
+                            ) as mock_track:
+                                main()
+
+    assert len(mock_track.call_args_list) == 2
+    assert mock_track.call_args_list[0].args[:2] == (main_server, "proj_test_123")
+    assert mock_track.call_args_list[1].args[:2] == (code_mode_server, "proj_test_123")

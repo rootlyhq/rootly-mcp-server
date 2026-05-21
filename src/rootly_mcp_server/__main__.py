@@ -7,6 +7,7 @@ This module provides the main entry point for the Rootly MCP Server.
 
 import argparse
 import asyncio
+import importlib
 import logging
 import os
 import sys
@@ -75,6 +76,30 @@ def streamable_http_stateless_enabled(*, hosted: bool, fastmcp_stateless_http: b
     if "FASTMCP_STATELESS_HTTP" in os.environ:
         return fastmcp_stateless_http
     return hosted
+
+
+def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging.Logger) -> None:
+    """Enable MCPcat tracking when configured and available.
+
+    The Python MCPcat package is currently deployed separately from the core
+    server dependency set, so we load it lazily and only when a project ID is
+    configured. This keeps the base server behavior unchanged for self-hosted
+    users and local development environments that do not install MCPcat.
+    """
+    if not project_id:
+        return
+
+    try:
+        mcpcat = importlib.import_module("mcpcat")
+    except ImportError:
+        logger.warning(
+            "ROOTLY_MCPCAT_PROJECT_ID is set but mcpcat is not installed; skipping MCPcat tracking"
+        )
+        return
+    try:
+        mcpcat.track(server, project_id)
+    except Exception:
+        logger.warning("MCPcat tracking could not be enabled; skipping", exc_info=True)
 
 
 def parse_args():
@@ -434,6 +459,7 @@ def main():
             if args.code_mode_path
             else code_mode_path_from_env()
         )
+        mcpcat_project_id = os.getenv("ROOTLY_MCPCAT_PROJECT_ID")
         server = create_rootly_mcp_server(
             swagger_path=args.swagger_path,
             name=args.name,
@@ -470,6 +496,10 @@ def main():
                     enabled_tools=enabled_tools,
                 )
                 logger.info("Code Mode enabled at path: %s", code_mode_path)
+
+        maybe_enable_mcpcat_tracking(server, mcpcat_project_id, logger)
+        if code_mode_server is not None:
+            maybe_enable_mcpcat_tracking(code_mode_server, mcpcat_project_id, logger)
 
         logger.info(f"Running server with transport: {normalized_transport}...")
         direct_streamable_stateless_http = streamable_http_stateless_enabled(
