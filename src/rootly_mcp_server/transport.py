@@ -38,6 +38,9 @@ _session_transport: contextvars.ContextVar[str] = contextvars.ContextVar(
 _session_mcp_mode: contextvars.ContextVar[str] = contextvars.ContextVar(
     "_session_mcp_mode", default=""
 )
+_session_authenticated_user: contextvars.ContextVar[dict[str, str] | None] = (
+    contextvars.ContextVar("_session_authenticated_user", default=None)
+)
 _session_error_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "_session_error_context", default=None
 )
@@ -117,6 +120,40 @@ def _merge_error_context(context: dict[str, Any] | None) -> None:
     }
     current.update(mask_sensitive_data(sanitized))
     _session_error_context.set(current)
+
+
+def get_hosted_authenticated_user() -> dict[str, str] | None:
+    """Return the current hosted request's authenticated Rootly user, if available."""
+    user = _session_authenticated_user.get()
+    return dict(user) if user else None
+
+
+def _extract_rootly_user_identity(payload: Any) -> dict[str, str] | None:
+    """Extract a lightweight Rootly user identity from a JSON:API /users/me payload."""
+    if not isinstance(payload, dict):
+        return None
+
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+
+    user_id = data.get("id")
+    if not isinstance(user_id, str) or not user_id:
+        return None
+
+    attributes = data.get("attributes")
+    attrs = attributes if isinstance(attributes, dict) else {}
+
+    user: dict[str, str] = {"id": user_id}
+    email = attrs.get("email")
+    if isinstance(email, str) and email:
+        user["email"] = email
+
+    name = attrs.get("full_name") or attrs.get("name")
+    if isinstance(name, str) and name:
+        user["name"] = name
+
+    return user
 
 
 def _extract_upstream_url_fields(url: Any) -> tuple[str, str]:
@@ -268,44 +305,44 @@ class AuthCaptureMiddleware:
             self._code_mode_path,
         }
         self._base_url = os.getenv("ROOTLY_BASE_URL", "https://api.rootly.com")
-        # Maps token_hash -> (timestamp, is_valid)
-        self._token_cache: dict[str, tuple[float, bool]] = {}
+        # Maps token_hash -> (timestamp, authenticated user or None if invalid)
+        self._token_cache: dict[str, tuple[float, dict[str, str] | None]] = {}
         # In-flight probes keyed by token_hash to prevent cache stampede
-        self._inflight: dict[str, asyncio.Future[bool]] = {}
+        self._inflight: dict[str, asyncio.Future[dict[str, str] | None]] = {}
 
-    async def _validate_token_upstream(self, auth_header: str) -> bool:
-        """Probe the Rootly API to verify the Bearer token is valid."""
+    async def _validate_token_upstream(self, auth_header: str) -> dict[str, str] | None:
+        """Probe the Rootly API to verify the Bearer token and extract user identity."""
         token_hash = hashlib.sha256(auth_header.encode()).hexdigest()
         now = time.monotonic()
 
         cached = self._token_cache.get(token_hash)
         if cached is not None:
-            cached_at, was_valid = cached
-            ttl = self._POSITIVE_CACHE_TTL if was_valid else self._NEGATIVE_CACHE_TTL
+            cached_at, authenticated_user = cached
+            ttl = self._POSITIVE_CACHE_TTL if authenticated_user else self._NEGATIVE_CACHE_TTL
             if (now - cached_at) < ttl:
-                return was_valid
+                return dict(authenticated_user) if authenticated_user else None
 
         existing = self._inflight.get(token_hash)
         if existing is not None:
             return await existing
 
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[bool] = loop.create_future()
+        future: asyncio.Future[dict[str, str] | None] = loop.create_future()
         self._inflight[token_hash] = future
 
         try:
-            is_valid = await self._probe_upstream(auth_header)
-            self._token_cache[token_hash] = (time.monotonic(), is_valid)
+            authenticated_user = await self._probe_upstream(auth_header)
+            self._token_cache[token_hash] = (time.monotonic(), authenticated_user)
             self._evict_cache(time.monotonic())
-            future.set_result(is_valid)
-            return is_valid
+            future.set_result(authenticated_user)
+            return authenticated_user
         except Exception:
-            future.set_result(False)
-            return False
+            future.set_result(None)
+            return None
         finally:
             self._inflight.pop(token_hash, None)
 
-    async def _probe_upstream(self, auth_header: str) -> bool:
+    async def _probe_upstream(self, auth_header: str) -> dict[str, str] | None:
         """Make the actual upstream validation request."""
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -316,19 +353,26 @@ class AuthCaptureMiddleware:
                         "Accept": "application/vnd.api+json",
                     },
                 )
-            return resp.is_success
+            if not resp.is_success:
+                return None
+            return _extract_rootly_user_identity(resp.json())
         except Exception:
             logger.warning("Token validation probe failed, rejecting request")
-            return False
+            return None
 
     def _evict_cache(self, now: float) -> None:
         """Remove expired entries then enforce hard size cap."""
         if len(self._token_cache) <= self._MAX_CACHE_SIZE:
             return
         self._token_cache = {
-            k: (ts, valid)
-            for k, (ts, valid) in self._token_cache.items()
-            if (now - ts) < (self._POSITIVE_CACHE_TTL if valid else self._NEGATIVE_CACHE_TTL)
+            k: (ts, authenticated_user)
+            for k, (ts, authenticated_user) in self._token_cache.items()
+            if (now - ts)
+            < (
+                self._POSITIVE_CACHE_TTL
+                if authenticated_user is not None
+                else self._NEGATIVE_CACHE_TTL
+            )
         }
         if len(self._token_cache) > self._MAX_CACHE_SIZE:
             sorted_entries = sorted(self._token_cache.items(), key=lambda x: x[1][0])
@@ -359,6 +403,7 @@ class AuthCaptureMiddleware:
                 _session_transport.set(effective_transport)
             if mcp_mode:
                 _session_mcp_mode.set(mcp_mode)
+            _session_authenticated_user.set(None)
             auth = request.headers.get("authorization", "")
             if auth:
                 _session_auth_token.set(auth)
@@ -386,7 +431,10 @@ class AuthCaptureMiddleware:
             # Reject unauthenticated, malformed, or invalid tokens on MCP
             # transport paths before FastMCP processes the protocol message.
             auth_state = auth_header_state(auth)
-            if auth_state != "bearer" or not await self._validate_token_upstream(auth):
+            authenticated_user = (
+                await self._validate_token_upstream(auth) if auth_state == "bearer" else None
+            )
+            if auth_state != "bearer" or not authenticated_user:
                 await send(
                     {
                         "type": "http.response.start",
@@ -408,6 +456,7 @@ class AuthCaptureMiddleware:
                     }
                 )
                 return
+            _session_authenticated_user.set(authenticated_user)
 
             async def _send_with_www_authenticate(message):
                 if message.get("type") == "http.response.start" and message.get("status") == 401:

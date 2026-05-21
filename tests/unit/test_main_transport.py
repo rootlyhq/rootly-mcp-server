@@ -8,6 +8,7 @@ import pytest
 
 from rootly_mcp_server.__main__ import (
     _get_sorted_tool_names,
+    build_mcpcat_identify_callback,
     get_server,
     main,
     maybe_enable_mcpcat_tracking,
@@ -130,26 +131,75 @@ def test_maybe_enable_mcpcat_tracking_tracks_when_available():
     server = object()
     logger = Mock()
     mcpcat_module = SimpleNamespace(track=Mock())
+    mcpcat_types_module = SimpleNamespace(
+        MCPCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+    )
 
-    with patch("rootly_mcp_server.__main__.importlib.import_module", return_value=mcpcat_module):
+    def import_side_effect(module_name: str):
+        if module_name == "mcpcat":
+            return mcpcat_module
+        if module_name == "mcpcat.types":
+            return mcpcat_types_module
+        raise ImportError(module_name)
+
+    with patch("rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect):
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
-    mcpcat_module.track.assert_called_once_with(server, "proj_test_123")
+    mcpcat_module.track.assert_called_once()
+    call = mcpcat_module.track.call_args
+    assert call.args[:2] == (server, "proj_test_123")
+    assert callable(call.args[2].identify)
 
 
 def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
     server = object()
     logger = Mock()
     mcpcat_module = SimpleNamespace(track=Mock(side_effect=RuntimeError("boom")))
+    mcpcat_types_module = SimpleNamespace(
+        MCPCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+    )
 
-    with patch("rootly_mcp_server.__main__.importlib.import_module", return_value=mcpcat_module):
+    def import_side_effect(module_name: str):
+        if module_name == "mcpcat":
+            return mcpcat_module
+        if module_name == "mcpcat.types":
+            return mcpcat_types_module
+        raise ImportError(module_name)
+
+    with patch("rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect):
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
-    mcpcat_module.track.assert_called_once_with(server, "proj_test_123")
+    assert mcpcat_module.track.call_args.args[:2] == (server, "proj_test_123")
     logger.warning.assert_called_once_with(
         "MCPcat tracking could not be enabled; skipping",
         exc_info=True,
     )
+
+
+def test_build_mcpcat_identify_callback_returns_authenticated_user_identity():
+    user_identity_cls = Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs))
+    callback = build_mcpcat_identify_callback(user_identity_cls)
+
+    with patch(
+        "rootly_mcp_server.__main__.get_hosted_authenticated_user",
+        return_value={"id": "user_123", "email": "spencer@example.com"},
+    ):
+        identity = callback({}, SimpleNamespace())
+
+    assert identity.user_id == "user_123"
+    assert identity.user_name == "spencer@example.com"
+    assert identity.user_data is None
+
+
+def test_build_mcpcat_identify_callback_returns_none_without_authenticated_user():
+    callback = build_mcpcat_identify_callback(SimpleNamespace)
+
+    with patch("rootly_mcp_server.__main__.get_hosted_authenticated_user", return_value=None):
+        identity = callback({}, SimpleNamespace())
+
+    assert identity is None
 
 
 @pytest.mark.asyncio
