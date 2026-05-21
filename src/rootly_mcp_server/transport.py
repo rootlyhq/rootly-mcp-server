@@ -38,8 +38,8 @@ _session_transport: contextvars.ContextVar[str] = contextvars.ContextVar(
 _session_mcp_mode: contextvars.ContextVar[str] = contextvars.ContextVar(
     "_session_mcp_mode", default=""
 )
-_session_authenticated_user: contextvars.ContextVar[dict[str, str] | None] = (
-    contextvars.ContextVar("_session_authenticated_user", default=None)
+_session_authenticated_user: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
+    "_session_authenticated_user", default=None
 )
 _session_error_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "_session_error_context", default=None

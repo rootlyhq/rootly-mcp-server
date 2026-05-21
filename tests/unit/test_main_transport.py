@@ -143,7 +143,9 @@ def test_maybe_enable_mcpcat_tracking_tracks_when_available():
             return mcpcat_types_module
         raise ImportError(module_name)
 
-    with patch("rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect):
+    with patch(
+        "rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect
+    ):
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
     mcpcat_module.track.assert_called_once()
@@ -168,7 +170,9 @@ def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
             return mcpcat_types_module
         raise ImportError(module_name)
 
-    with patch("rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect):
+    with patch(
+        "rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect
+    ):
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
     assert mcpcat_module.track.call_args.args[:2] == (server, "proj_test_123")
