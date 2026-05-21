@@ -353,7 +353,14 @@ Choose one transport per server process:
 - **SSE** endpoint path: `/sse`
 - **Code Mode (experimental)** endpoint path: `/mcp-codemode` in hosted dual-transport mode
 
-Both hosted and self-hosted deployments expose the same curated tool surface by default, including the default write-enabled tools. To restrict that surface to read-only tools, start the server with `--no-enable-write-tools` or set `ROOTLY_MCP_ENABLE_WRITE_TOOLS=false`.
+Hosted and self-hosted deployments now have different defaults:
+
+- Hosted defaults to a slim core profile of about 50-60 high-usage tools for better MCP client performance.
+- Self-hosted keeps the full tool surface by default.
+
+To restrict either deployment to read-only tools, start the server with `--no-enable-write-tools` or set `ROOTLY_MCP_ENABLE_WRITE_TOOLS=false`.
+
+To override the hosted default core profile, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names. When that variable is set, it fully replaces the default hosted selection.
 
 To expose only a specific subset of MCP tools on a self-hosted deployment, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names, for example `list_incidents,getIncident,get_server_version`.
 
@@ -421,7 +428,7 @@ docker run -p 8000:8000 \
 
 ## Workflow-Focused Tool Subsets
 
-With 150+ tools available, you may want to configure focused subsets for optimal AI agent performance. Use `ROOTLY_MCP_ENABLED_TOOLS` to activate specific workflows:
+The full self-hosted surface exposes 200+ tools, while hosted defaults to a slim core profile. If you want even tighter workflow-specific subsets, use `ROOTLY_MCP_ENABLED_TOOLS`:
 
 ### 🚨 Incident Response (25 tools)
 *Essential tools for emergency responders and incident commanders*
@@ -517,7 +524,10 @@ You can run multiple MCP instances with different tool subsets:
 
 ## Supported Tools
 
-The default server configuration exposes **150+ tools**.
+The default tool surface depends on deployment mode:
+
+- Hosted default: about **56 tools**
+- Self-hosted default: about **218 tools**
 
 ### Custom Agentic Tools
 

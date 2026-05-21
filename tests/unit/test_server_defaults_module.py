@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from rootly_mcp_server.server_defaults import (
     DEFAULT_ALLOWED_PATHS,
+    DEFAULT_HOSTED_ENABLED_TOOLS,
     LEGACY_TOOL_ALIASES,
     _generate_recommendation,
     canonicalize_tool_names,
@@ -93,6 +94,14 @@ class TestServerDefaultsModule:
             clear=True,
         ):
             assert enabled_tools_from_env() == {"list_incidents", "getIncident", "listTeams"}
+
+    def test_enabled_tools_from_env_defaults_to_hosted_core_allowlist(self):
+        with patch.dict("os.environ", {}, clear=True):
+            assert enabled_tools_from_env(hosted=True) == set(DEFAULT_HOSTED_ENABLED_TOOLS)
+
+    def test_enabled_tools_from_env_local_mode_keeps_full_surface_by_default(self):
+        with patch.dict("os.environ", {}, clear=True):
+            assert enabled_tools_from_env(hosted=False) is None
 
     def test_canonicalize_passes_through_canonical_names(self):
         assert canonicalize_tool_names({"list_incidents", "getIncident"}) == {

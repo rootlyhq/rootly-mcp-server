@@ -41,6 +41,72 @@ LEGACY_TOOL_ALIASES: dict[str, str] = {
 }
 
 
+# Default hosted tool surface tuned from one month of production popularity data.
+# This keeps the default remote/serverless profile near 50-60 tools while still
+# covering the overwhelming majority of observed requests. Operators can always
+# override this with ROOTLY_MCP_ENABLED_TOOLS for a narrower or broader surface.
+DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
+    {
+        "ListWorkflowRuns",
+        "collect_incidents",
+        "createIncidentActionItem",
+        "createOverrideShift",
+        "find_related_incidents",
+        "getAlert",
+        "getAlertEvent",
+        "getCurrentUser",
+        "getEscalationLevel",
+        "getEscalationPolicy",
+        "getFunctionality",
+        "getIncident",
+        "getService",
+        "getSchedule",
+        "getScheduleShifts",
+        "getTeam",
+        "getUser",
+        "get_alert_by_short_id",
+        "get_oncall_handoff_summary",
+        "get_oncall_schedule_summary",
+        "get_server_version",
+        "get_shift_incidents",
+        "listAlertEvents",
+        "listAlertRoutingRules",
+        "listAlertUrgencies",
+        "listAlerts",
+        "listAlertsSources",
+        "listAllIncidentActionItems",
+        "listEscalationLevels",
+        "listEscalationPaths",
+        "listEscalationPolicies",
+        "listFunctionalities",
+        "listIncidentActionItems",
+        "listIncidentAlerts",
+        "listIncidentEvents",
+        "listIncidentFormFieldSelections",
+        "listIncidentTypes",
+        "listIncidents",
+        "listScheduleRotationActiveDays",
+        "listScheduleRotationUsers",
+        "listScheduleRotations",
+        "listSchedules",
+        "listServices",
+        "listSeverities",
+        "listShifts",
+        "listTeams",
+        "listUsers",
+        "listWorkflowTasks",
+        "listWorkflows",
+        "list_endpoints",
+        "list_incidents",
+        "list_shifts",
+        "search_incidents",
+        "suggest_solutions",
+        "updateIncident",
+        "updateService",
+    }
+)
+
+
 # OpenAPI operationIds that must be removed from the autogen spec because a
 # curated `@mcp.tool(name=...)` registration provides the implementation for
 # that exact name. Without this exclusion, FastMCP's OpenAPIProvider and
@@ -135,9 +201,20 @@ def collect_operation_ids(paths: dict) -> set[str]:
     return op_ids
 
 
-def enabled_tools_from_env() -> set[str] | None:
-    """Return an optional explicit allowlist of MCP tool names to expose."""
-    return _parse_csv_set(os.getenv(EnvVars.ENABLED_TOOLS))
+def enabled_tools_from_env(*, hosted: bool = False) -> set[str] | None:
+    """Return the configured MCP tool allowlist.
+
+    Precedence:
+    1. Explicit ROOTLY_MCP_ENABLED_TOOLS env var
+    2. Hosted default core allowlist
+    3. None (expose full tool surface)
+    """
+    configured = _parse_csv_set(os.getenv(EnvVars.ENABLED_TOOLS))
+    if configured is not None:
+        return configured
+    if hosted:
+        return set(DEFAULT_HOSTED_ENABLED_TOOLS)
+    return None
 
 
 # Default allowed API paths

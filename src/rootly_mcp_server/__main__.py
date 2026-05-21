@@ -242,7 +242,7 @@ def get_server():
     base_url = os.getenv("ROOTLY_BASE_URL")
     transport = normalize_transport_or_default(os.getenv("ROOTLY_TRANSPORT", "stdio"))
     enable_write_tools = write_tools_enabled_from_env(default=True)
-    enabled_tools = enabled_tools_from_env()
+    enabled_tools = enabled_tools_from_env(hosted=hosted)
 
     # Parse allowed paths from environment variable
     allowed_paths = None
@@ -444,7 +444,7 @@ def main():
         enabled_tools = (
             {tool.strip() for tool in args.enabled_tools.split(",") if tool.strip()}
             if args.enabled_tools
-            else enabled_tools_from_env()
+            else enabled_tools_from_env(hosted=hosted_mode)
         )
 
         logger.info(f"Initializing server with name: {args.name}")

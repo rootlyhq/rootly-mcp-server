@@ -436,7 +436,7 @@ def create_rootly_mcp_server(
     if enable_write_tools is None:
         enable_write_tools = server_defaults.write_tools_enabled_from_env(default=True)
     if enabled_tools is None:
-        enabled_tools = server_defaults.enabled_tools_from_env()
+        enabled_tools = server_defaults.enabled_tools_from_env(hosted=hosted)
     if enabled_tools:
         enabled_tools = server_defaults.canonicalize_tool_names(enabled_tools)
     if delete_allowed_paths is None:

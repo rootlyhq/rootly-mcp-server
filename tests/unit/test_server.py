@@ -432,11 +432,12 @@ class TestBundledIncidentFormFieldSelectionTools:
         tools = await server.list_tools()
         tool_names = {tool.name for tool in tools}
 
-        assert "createWorkflowTask" in tool_names
-        assert "updateWorkflowTask" in tool_names
+        assert 50 <= len(tool_names) <= 60
         assert "createIncidentActionItem" in tool_names
-        assert "createIncidentFormFieldSelection" in tool_names
-        assert "updateIncidentFormFieldSelection" in tool_names
+        assert "updateIncident" in tool_names
+        assert "search_incidents" in tool_names
+        assert "createWorkflowTask" not in tool_names
+        assert "updateWorkflowTask" not in tool_names
         assert "deleteWorkflowTask" not in tool_names
 
     async def test_enabled_tools_allowlist_filters_generated_and_custom_tools(
