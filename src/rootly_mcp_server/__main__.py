@@ -13,7 +13,7 @@ import os
 import sys
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from .code_mode import (
     code_mode_enabled_from_env,
@@ -25,6 +25,7 @@ from .exceptions import RootlyConfigurationError, RootlyMCPError
 from .security import validate_api_token
 from .server import create_rootly_mcp_server, get_hosted_auth_middleware
 from .server_defaults import enabled_tools_from_env, write_tools_enabled_from_env
+from .transport import get_hosted_authenticated_user
 
 TransportName = Literal["stdio", "sse", "streamable-http", "both"]
 TRANSPORT_ALIASES: dict[str, TransportName] = {
@@ -91,15 +92,37 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
 
     try:
         mcpcat = importlib.import_module("mcpcat")
+        mcpcat_types = importlib.import_module("mcpcat.types")
     except ImportError:
         logger.warning(
             "ROOTLY_MCPCAT_PROJECT_ID is set but mcpcat is not installed; skipping MCPcat tracking"
         )
         return
+
     try:
-        mcpcat.track(server, project_id)
+        options = mcpcat_types.MCPCatOptions(
+            identify=build_mcpcat_identify_callback(mcpcat_types.UserIdentity),
+        )
+        mcpcat.track(server, project_id, options)
     except Exception:
         logger.warning("MCPcat tracking could not be enabled; skipping", exc_info=True)
+
+
+def build_mcpcat_identify_callback(user_identity_cls: type[Any]):
+    """Build a lightweight MCPcat identify callback from hosted auth context."""
+
+    def identify(_request: dict[str, Any], _context: Any) -> Any:
+        user = get_hosted_authenticated_user()
+        if not user:
+            return None
+
+        return user_identity_cls(
+            user_id=user["id"],
+            user_name=user.get("email") or user.get("name"),
+            user_data=None,
+        )
+
+    return identify
 
 
 def parse_args():

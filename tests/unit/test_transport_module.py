@@ -16,7 +16,7 @@ class TestTransportModule:
         with patch.object(
             transport.AuthCaptureMiddleware,
             "_validate_token_upstream",
-            return_value=True,
+            return_value={"id": "user_123", "email": "spencer@example.com"},
         ):
             yield
 
@@ -36,6 +36,7 @@ class TestTransportModule:
         transport._session_auth_token.set("")
         transport._session_transport.set("")
         transport._session_mcp_mode.set("")
+        transport._session_authenticated_user.set(None)
 
         async def receive():
             return {"type": "http.request"}
@@ -47,6 +48,10 @@ class TestTransportModule:
         assert transport._session_auth_token.get() == "Bearer test-token"
         assert transport._session_transport.get() == "sse"
         assert transport._session_mcp_mode.get() == "classic"
+        assert transport._session_authenticated_user.get() == {
+            "id": "user_123",
+            "email": "spencer@example.com",
+        }
 
     @pytest.mark.asyncio
     async def test_auth_capture_middleware_sets_token_for_streamable_http(self):
@@ -63,6 +68,7 @@ class TestTransportModule:
         transport._session_auth_token.set("")
         transport._session_transport.set("")
         transport._session_mcp_mode.set("")
+        transport._session_authenticated_user.set(None)
 
         async def receive():
             return {"type": "http.request"}
@@ -90,6 +96,7 @@ class TestTransportModule:
         transport._session_auth_token.set("")
         transport._session_transport.set("")
         transport._session_mcp_mode.set("")
+        transport._session_authenticated_user.set(None)
 
         async def receive():
             return {"type": "http.request"}
@@ -117,6 +124,7 @@ class TestTransportModule:
         transport._session_auth_token.set("")
         transport._session_transport.set("")
         transport._session_mcp_mode.set("")
+        transport._session_authenticated_user.set(None)
 
         async def receive():
             return {"type": "http.request"}
@@ -144,6 +152,7 @@ class TestTransportModule:
         transport._session_auth_token.set("")
         transport._session_transport.set("")
         transport._session_mcp_mode.set("")
+        transport._session_authenticated_user.set(None)
 
         async def receive():
             return {"type": "http.request"}
@@ -175,6 +184,7 @@ class TestTransportModule:
         transport._session_auth_token.set("")
         transport._session_transport.set("")
         transport._session_mcp_mode.set("")
+        transport._session_authenticated_user.set(None)
 
         async def receive():
             return {"type": "http.request"}
@@ -237,6 +247,30 @@ class TestTransportModule:
             )
             == "streamable-http"
         )
+
+    def test_extract_rootly_user_identity_returns_lightweight_user(self):
+        payload = {
+            "data": {
+                "id": "user_123",
+                "attributes": {
+                    "email": "spencer@example.com",
+                    "full_name": "Spencer Cheng",
+                },
+            }
+        }
+
+        user = transport._extract_rootly_user_identity(payload)
+
+        assert user == {
+            "id": "user_123",
+            "email": "spencer@example.com",
+            "name": "Spencer Cheng",
+        }
+
+    def test_extract_rootly_user_identity_returns_none_without_id(self):
+        payload = {"data": {"attributes": {"email": "spencer@example.com"}}}
+
+        assert transport._extract_rootly_user_identity(payload) is None
         assert (
             transport._infer_transport_from_path(
                 "/healthz", "/sse", "/messages", "/mcp", "/mcp-codemode"
@@ -856,7 +890,11 @@ class TestAuthCaptureMiddlewareWWWAuthenticate:
 
         with (
             patch("rootly_mcp_server.utils._MCP_SERVER_URL", "https://mcp.example.com"),
-            patch.object(middleware, "_validate_token_upstream", return_value=True),
+            patch.object(
+                middleware,
+                "_validate_token_upstream",
+                return_value={"id": "user_123", "email": "spencer@example.com"},
+            ),
         ):
             await middleware(scope, receive, send)
 
@@ -895,7 +933,7 @@ class TestAuthCaptureMiddlewareWWWAuthenticate:
 
         with (
             patch("rootly_mcp_server.utils._MCP_SERVER_URL", "https://mcp.example.com"),
-            patch.object(middleware, "_validate_token_upstream", return_value=False),
+            patch.object(middleware, "_validate_token_upstream", return_value=None),
         ):
             await middleware(scope, receive, send)
 
