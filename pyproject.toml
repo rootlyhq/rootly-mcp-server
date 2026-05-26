@@ -36,13 +36,13 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
-    "fastmcp[code-mode]==3.2.4",  # Pin to patched version with Code Mode support
+    "fastmcp[code-mode]==3.3.1",  # Pin to patched version with Code Mode support
     "authlib>=1.6.11",  # Override vulnerable transitive authlib (GHSA-jj8c-mmj3-mmgv)
     "python-dotenv>=1.2.2",  # Override vulnerable transitive python-dotenv (GHSA-m8f7-34r5-grfg)
     "python-multipart>=0.0.26",  # Override vulnerable transitive python-multipart (CVE-2026-40347)
     "cryptography>=46.0.7",  # Override vulnerable transitive cryptography
     "Pygments>=2.20.0",  # Override vulnerable transitive Pygments
-    "requests==2.34.0", # Pin to patched version
+    "requests==2.34.2", # Pin to patched version
     "httpx==0.28.1",   # Pin to specific version
     "pydantic==2.13.4",  # Pin to specific version
     "brotli>=1.2.0",    # For Brotli compression support in httpx
