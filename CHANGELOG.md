@@ -5,6 +5,17 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.10] - Released 2026-05-26
+
+### Fixed
+
+- **Blank Query Param Forwarding**: The MCP transport now drops empty string, whitespace-only, and empty collection query parameters before forwarding requests upstream, preventing optional blank filters from corrupting pagination or other serialized query values
+- **Alerts Pagination Corruption Guard**: Hardened the shared request path used by OpenAPI-generated tools so requests that include blank optional filters no longer risk serializing `page[size]` incorrectly when valid pagination values are provided
+
+### Testing
+
+- Added focused transport regression coverage for dropping blank query params in both direct parameter transforms and rebuilt outbound request URLs
+
 ## [2.3.9] - Released 2026-05-21
 
 ### Performance
