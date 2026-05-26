@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
+import httpx
 import mcp.types as mt
 import pytest
 
@@ -501,6 +502,63 @@ class TestBundledIncidentFormFieldSelectionTools:
             f"Unexpected incident-list tool surface: {list_variants}. "
             "Should be exactly ['listIncidents', 'list_incidents'] under posture A."
         )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestListAlertsParamSerialization:
+    """Regression for empty optional params corrupting the upstream request.
+
+    Calling listAlerts with empty-string optional filters alongside a valid
+    page_size must drop the blanks and forward the real page[size] value. A
+    forwarded blank like ``filter[status]=`` makes the Rootly API 500 (and echo
+    a bogus ``page[size]=0`` self-link), so the request must omit it entirely.
+    """
+
+    @staticmethod
+    def _find_openapi_tool(server, name):
+        for provider in server.providers:
+            tools = getattr(provider, "_tools", None)
+            if isinstance(tools, dict) and name in tools:
+                return tools[name]
+        return None
+
+    async def test_empty_optional_params_preserve_page_size(self, mock_environment_token):
+        server = create_rootly_mcp_server(hosted=False)
+        tool = self._find_openapi_tool(server, "listAlerts")
+        assert tool is not None, "listAlerts tool should be generated from the spec"
+
+        captured: dict[str, Any] = {}
+
+        async def fake_send(request, **kwargs):
+            captured["url"] = str(request.url)
+            captured["params"] = dict(request.url.params)
+            return httpx.Response(200, request=request, content=b'{"data":[]}')
+
+        # Patch the inner httpx client so we capture the final, fully-serialized
+        # request after the wrapper's parameter transformation runs.
+        tool._client.client.send = fake_send
+
+        await tool.run(
+            {
+                "page_number": 1,
+                "page_size": 20,
+                "filter_status": "",
+                "filter_source": "",
+                "page_after": "",
+            }
+        )
+
+        params = captured["params"]
+        # The valid page size must survive untouched.
+        assert params.get("page[size]") == "20"
+        assert params.get("page[number]") == "1"
+        # Blank optional filters must not be forwarded at all.
+        assert "filter[status]" not in params
+        assert "filter[source]" not in params
+        assert "page[after]" not in params
+        assert "filter[status]" not in captured["url"]
+        assert "page[size]=0" not in captured["url"]
 
 
 @pytest.mark.unit

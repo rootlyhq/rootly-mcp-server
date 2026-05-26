@@ -822,8 +822,13 @@ class AuthenticatedHTTPXClient:
         return value
 
     def _transform_params(self, params: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Transform sanitized parameter names back to original names."""
-        if not params or not self.parameter_mapping:
+        """Transform sanitized parameter names back to original names.
+
+        Empty-string and null values are dropped regardless of whether a name
+        mapping exists, so that only meaningful values are forwarded upstream
+        (Rootly returns 500s for blank filters like ``filter[status]=``).
+        """
+        if not params:
             return params
 
         transformed = {}

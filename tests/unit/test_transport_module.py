@@ -682,6 +682,7 @@ class TestTransportModule:
                     "filter_status": "filter[status]",
                     "filter_source": "filter[source]",
                     "page_number": "page[number]",
+                    "page_size": "page[size]",
                 },
             )
             client.client.send = AsyncMock(return_value=response)
@@ -689,7 +690,8 @@ class TestTransportModule:
             request = httpx.Request(
                 "GET",
                 "https://api.rootly.com/v1/alerts"
-                "?filter_status=&filter_source=%20%20%20&include=alert_urgency&page_number=1",
+                "?filter_status=&filter_source=%20%20%20&include=alert_urgency"
+                "&page_number=1&page_size=20",
             )
 
             await client.send(request)
@@ -701,6 +703,8 @@ class TestTransportModule:
             assert "filter[source]" not in sent_params
             assert sent_params["include"] == "alert_urgency"
             assert sent_params["page[number]"] == "1"
+            # A valid page size must be forwarded untouched (not corrupted to 0).
+            assert sent_params["page[size]"] == "20"
 
     def test_sanitize_log_excerpt_redacts_tokens_and_paths(self):
         excerpt = transport._sanitize_log_excerpt(
