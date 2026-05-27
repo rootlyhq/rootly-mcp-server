@@ -428,19 +428,30 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "deleteEscalationLevel" not in tool_names
         assert "deleteWorkflowTask" not in tool_names
 
-    async def test_hosted_server_keeps_curated_write_tools_by_default(self, mock_environment_token):
+    async def test_hosted_server_exposes_full_surface_by_default(self, mock_environment_token):
         server = create_rootly_mcp_server(hosted=True)
 
         tools = await server.list_tools()
         tool_names = {tool.name for tool in tools}
 
-        assert tool_names == set(DEFAULT_HOSTED_ENABLED_TOOLS)
+        assert len(tool_names) > len(DEFAULT_HOSTED_ENABLED_TOOLS)
         assert "createIncidentActionItem" in tool_names
         assert "updateIncident" in tool_names
         assert "search_incidents" in tool_names
-        assert "createWorkflowTask" not in tool_names
-        assert "updateWorkflowTask" not in tool_names
+        assert "createWorkflowTask" in tool_names
+        assert "updateWorkflowTask" in tool_names
         assert "deleteWorkflowTask" not in tool_names
+
+    async def test_hosted_slim_profile_matches_curated_allowlist(self, mock_environment_token):
+        server = create_rootly_mcp_server(
+            hosted=True,
+            enabled_tools=set(DEFAULT_HOSTED_ENABLED_TOOLS),
+        )
+
+        tools = await server.list_tools()
+        tool_names = {tool.name for tool in tools}
+
+        assert tool_names == set(DEFAULT_HOSTED_ENABLED_TOOLS)
 
     async def test_enabled_tools_allowlist_filters_generated_and_custom_tools(
         self, mock_environment_token

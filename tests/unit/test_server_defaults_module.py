@@ -5,10 +5,14 @@ from unittest.mock import patch
 from rootly_mcp_server.server_defaults import (
     DEFAULT_ALLOWED_PATHS,
     DEFAULT_HOSTED_ENABLED_TOOLS,
+    HOSTED_TOOL_PROFILE_FULL,
+    HOSTED_TOOL_PROFILE_SLIM,
     LEGACY_TOOL_ALIASES,
     _generate_recommendation,
     canonicalize_tool_names,
     enabled_tools_from_env,
+    hosted_tool_profile_from_env,
+    normalize_hosted_tool_profile,
 )
 
 
@@ -95,13 +99,33 @@ class TestServerDefaultsModule:
         ):
             assert enabled_tools_from_env() == {"list_incidents", "getIncident", "listTeams"}
 
-    def test_enabled_tools_from_env_defaults_to_hosted_core_allowlist(self):
+    def test_enabled_tools_from_env_defaults_to_hosted_full_surface(self):
         with patch.dict("os.environ", {}, clear=True):
-            assert enabled_tools_from_env(hosted=True) == set(DEFAULT_HOSTED_ENABLED_TOOLS)
+            assert enabled_tools_from_env(hosted=True) is None
+
+    def test_enabled_tools_from_env_returns_slim_hosted_profile_when_requested(self):
+        with patch.dict("os.environ", {}, clear=True):
+            assert enabled_tools_from_env(
+                hosted=True,
+                hosted_tool_profile=HOSTED_TOOL_PROFILE_SLIM,
+            ) == set(DEFAULT_HOSTED_ENABLED_TOOLS)
+
+    def test_default_hosted_enabled_tools_targets_curated_70_tool_profile(self):
+        assert len(DEFAULT_HOSTED_ENABLED_TOOLS) >= 60
 
     def test_enabled_tools_from_env_local_mode_keeps_full_surface_by_default(self):
         with patch.dict("os.environ", {}, clear=True):
             assert enabled_tools_from_env(hosted=False) is None
+
+    def test_normalize_hosted_tool_profile_accepts_aliases(self):
+        assert normalize_hosted_tool_profile("slim") == HOSTED_TOOL_PROFILE_SLIM
+        assert normalize_hosted_tool_profile("core") == HOSTED_TOOL_PROFILE_SLIM
+        assert normalize_hosted_tool_profile("default") == HOSTED_TOOL_PROFILE_FULL
+        assert normalize_hosted_tool_profile("all") == HOSTED_TOOL_PROFILE_FULL
+
+    def test_hosted_tool_profile_from_env_defaults_to_full(self):
+        with patch.dict("os.environ", {}, clear=True):
+            assert hosted_tool_profile_from_env() == HOSTED_TOOL_PROFILE_FULL
 
     def test_canonicalize_passes_through_canonical_names(self):
         assert canonicalize_tool_names({"list_incidents", "getIncident"}) == {

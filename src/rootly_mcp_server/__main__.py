@@ -11,10 +11,12 @@ import importlib
 import logging
 import os
 import sys
+from collections.abc import Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from . import server_defaults
 from .code_mode import (
     code_mode_enabled_from_env,
     code_mode_path_from_env,
@@ -40,6 +42,8 @@ TRANSPORT_ALIASES: dict[str, TransportName] = {
     "streamable+sse": "both",
     "sse+streamable": "both",
 }
+HOSTED_TOOL_PROFILE_QUERY_PARAM = "tool_profile"
+HOSTED_TOOL_PROFILE_HEADER = "x-rootly-tool-profile"
 
 
 def normalize_transport(value: str) -> TransportName:
@@ -77,6 +81,21 @@ def streamable_http_stateless_enabled(*, hosted: bool, fastmcp_stateless_http: b
     if "FASTMCP_STATELESS_HTTP" in os.environ:
         return fastmcp_stateless_http
     return hosted
+
+
+def resolve_requested_hosted_tool_profile(
+    *,
+    query_params: Mapping[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
+    default: str = server_defaults.HOSTED_TOOL_PROFILE_FULL,
+) -> str:
+    """Resolve the hosted tool profile requested by the MCP client."""
+    raw = None
+    if query_params:
+        raw = query_params.get(HOSTED_TOOL_PROFILE_QUERY_PARAM)
+    if not raw and headers:
+        raw = headers.get(HOSTED_TOOL_PROFILE_HEADER)
+    return server_defaults.normalize_hosted_tool_profile(raw, default=default)
 
 
 def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging.Logger) -> None:
@@ -264,8 +283,12 @@ def get_server():
     hosted = os.getenv("ROOTLY_HOSTED", "false").lower() in ("true", "1", "yes")
     base_url = os.getenv("ROOTLY_BASE_URL")
     transport = normalize_transport_or_default(os.getenv("ROOTLY_TRANSPORT", "stdio"))
+    hosted_tool_profile = server_defaults.hosted_tool_profile_from_env()
     enable_write_tools = write_tools_enabled_from_env(default=True)
-    enabled_tools = enabled_tools_from_env(hosted=hosted)
+    enabled_tools = enabled_tools_from_env(
+        hosted=hosted,
+        hosted_tool_profile=hosted_tool_profile,
+    )
 
     # Parse allowed paths from environment variable
     allowed_paths = None
@@ -304,6 +327,9 @@ def run_dual_http_server(
     middleware: list | None = None,
     code_mode_server=None,
     code_mode_path: str | None = None,
+    profiled_servers: dict[str, Any] | None = None,
+    profiled_code_mode_servers: dict[str, Any] | None = None,
+    default_tool_profile: str = server_defaults.HOSTED_TOOL_PROFILE_FULL,
 ) -> None:
     """Run SSE and streamable-http together on one ASGI server."""
     import fastmcp
@@ -314,7 +340,7 @@ def run_dual_http_server(
     from starlette.middleware import Middleware
     from starlette.requests import Request
     from starlette.responses import Response
-    from starlette.routing import Mount, Route
+    from starlette.routing import BaseRoute, Mount, Route
 
     logger = logging.getLogger(__name__)
 
@@ -329,48 +355,106 @@ def run_dual_http_server(
     )
 
     sse_transport = SseServerTransport(message_path)
+    profiled_servers = profiled_servers or {default_tool_profile: server}
+    profiled_code_mode_servers = profiled_code_mode_servers or (
+        {default_tool_profile: code_mode_server} if code_mode_server is not None else {}
+    )
 
-    async def handle_sse(scope, receive, send) -> Response:
+    def _profile_for_request(
+        request: Request, available_profiles: set[str], *, default_profile: str
+    ) -> str:
+        profile = resolve_requested_hosted_tool_profile(
+            query_params=request.query_params,
+            headers=request.headers,
+            default=default_profile,
+        )
+        return profile if profile in available_profiles else default_profile
+
+    async def handle_sse(scope, receive, send, selected_server) -> Response:
         async with sse_transport.connect_sse(scope, receive, send) as streams:
-            await server._mcp_server.run(  # noqa: SLF001
+            await selected_server._mcp_server.run(  # noqa: SLF001
                 streams[0],
                 streams[1],
-                server._mcp_server.create_initialization_options(),  # noqa: SLF001
+                selected_server._mcp_server.create_initialization_options(),  # noqa: SLF001
             )
         return Response()
 
     async def sse_endpoint(request: Request) -> Response:
-        return await handle_sse(request.scope, request.receive, request._send)  # noqa: SLF001
+        selected_profile = _profile_for_request(
+            request,
+            set(profiled_servers),
+            default_profile=default_tool_profile,
+        )
+        selected_server = profiled_servers[selected_profile]
+        return await handle_sse(  # noqa: SLF001
+            request.scope, request.receive, request._send, selected_server
+        )
 
-    session_manager = StreamableHTTPSessionManager(
-        app=server._mcp_server,  # noqa: SLF001
-        event_store=None,
-        retry_interval=None,
-        json_response=fastmcp.settings.json_response,
-        stateless=stateless_http,
-    )
-    streamable_http_app = StreamableHTTPASGIApp(session_manager)
-    # Always allow POST for streamable HTTP - stateless mode only affects session persistence
-    streamable_methods = ["POST", "DELETE"]
-
-    routes = [
-        Route(sse_path, endpoint=sse_endpoint, methods=["GET"]),
-        Mount(message_path, app=sse_transport.handle_post_message),
-        Route(streamable_path, endpoint=streamable_http_app, methods=streamable_methods),
-    ]
-
-    code_mode_session_manager = None
-    if code_mode_server is not None and code_mode_path:
-        code_mode_session_manager = StreamableHTTPSessionManager(
-            app=code_mode_server._mcp_server,  # noqa: SLF001
+    session_managers = {
+        profile: StreamableHTTPSessionManager(
+            app=profiled_server._mcp_server,  # noqa: SLF001
             event_store=None,
             retry_interval=None,
             json_response=fastmcp.settings.json_response,
             stateless=stateless_http,
         )
-        code_mode_http_app = StreamableHTTPASGIApp(code_mode_session_manager)
+        for profile, profiled_server in profiled_servers.items()
+    }
+    streamable_http_apps = {
+        profile: StreamableHTTPASGIApp(session_manager)
+        for profile, session_manager in session_managers.items()
+    }
+
+    async def streamable_http_endpoint(request: Request) -> Response:
+        selected_profile = _profile_for_request(
+            request,
+            set(streamable_http_apps),
+            default_profile=default_tool_profile,
+        )
+        selected_app = streamable_http_apps[selected_profile]
+        await selected_app(request.scope, request.receive, request._send)  # noqa: SLF001
+        return Response()
+
+    # Always allow POST for streamable HTTP - stateless mode only affects session persistence
+    streamable_methods = ["POST", "DELETE"]
+
+    routes: list[BaseRoute] = [
+        Route(sse_path, endpoint=sse_endpoint, methods=["GET"]),
+        Mount(message_path, app=sse_transport.handle_post_message),
+        Route(streamable_path, endpoint=streamable_http_endpoint, methods=streamable_methods),
+    ]
+
+    code_mode_session_managers: dict[str, Any] = {}
+    code_mode_http_apps: dict[str, Any] = {}
+    if profiled_code_mode_servers and code_mode_path:
+        code_mode_session_managers = {
+            profile: StreamableHTTPSessionManager(
+                app=profiled_server._mcp_server,  # noqa: SLF001
+                event_store=None,
+                retry_interval=None,
+                json_response=fastmcp.settings.json_response,
+                stateless=stateless_http,
+            )
+            for profile, profiled_server in profiled_code_mode_servers.items()
+            if profiled_server is not None
+        }
+        code_mode_http_apps = {
+            profile: StreamableHTTPASGIApp(session_manager)
+            for profile, session_manager in code_mode_session_managers.items()
+        }
+
+        async def code_mode_endpoint(request: Request) -> Response:
+            selected_profile = _profile_for_request(
+                request,
+                set(code_mode_http_apps),
+                default_profile=default_tool_profile,
+            )
+            selected_app = code_mode_http_apps[selected_profile]
+            await selected_app(request.scope, request.receive, request._send)  # noqa: SLF001
+            return Response()
+
         routes.append(
-            Route(code_mode_path, endpoint=code_mode_http_app, methods=streamable_methods)
+            Route(code_mode_path, endpoint=code_mode_endpoint, methods=streamable_methods)
         )
 
     routes.extend(server._get_additional_http_routes())  # noqa: SLF001
@@ -378,12 +462,19 @@ def run_dual_http_server(
     @asynccontextmanager
     async def lifespan(app):
         async with AsyncExitStack() as stack:
-            await stack.enter_async_context(server._lifespan_manager())  # noqa: SLF001
-            await stack.enter_async_context(session_manager.run())
-            if code_mode_server is not None:
-                await stack.enter_async_context(code_mode_server._lifespan_manager())  # noqa: SLF001
-            if code_mode_session_manager is not None:
-                await stack.enter_async_context(code_mode_session_manager.run())
+            started_server_ids: set[int] = set()
+            for profiled_server in list(profiled_servers.values()) + list(
+                profiled_code_mode_servers.values()
+            ):
+                if profiled_server is None or id(profiled_server) in started_server_ids:
+                    continue
+                started_server_ids.add(id(profiled_server))
+                await stack.enter_async_context(profiled_server._lifespan_manager())  # noqa: SLF001
+
+            for session_manager in session_managers.values():
+                await stack.enter_async_context(session_manager.run())
+            for session_manager in code_mode_session_managers.values():
+                await stack.enter_async_context(session_manager.run())
             yield
 
     app_middleware = cast(list[Middleware], middleware or [])
@@ -441,6 +532,101 @@ def run_dual_http_server(
     uvicorn.Server(config).run()
 
 
+def run_profiled_streamable_http_server(
+    server,
+    log_level: str,
+    middleware: list | None = None,
+    profiled_servers: dict[str, Any] | None = None,
+    default_tool_profile: str = server_defaults.HOSTED_TOOL_PROFILE_FULL,
+) -> None:
+    """Run streamable HTTP with hosted tool-profile selection."""
+    import fastmcp
+    import uvicorn
+    from fastmcp.server.http import StreamableHTTPASGIApp, create_base_app
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from starlette.middleware import Middleware
+    from starlette.requests import Request
+    from starlette.responses import Response
+    from starlette.routing import BaseRoute, Route
+
+    logger = logging.getLogger(__name__)
+
+    streamable_path = fastmcp.settings.streamable_http_path
+    stateless_http = streamable_http_stateless_enabled(
+        hosted=True, fastmcp_stateless_http=fastmcp.settings.stateless_http
+    )
+    logger.info(
+        "Streamable HTTP configured in %s mode", "stateless" if stateless_http else "stateful"
+    )
+
+    profiled_servers = profiled_servers or {default_tool_profile: server}
+    session_managers = {
+        profile: StreamableHTTPSessionManager(
+            app=profiled_server._mcp_server,  # noqa: SLF001
+            event_store=None,
+            retry_interval=None,
+            json_response=fastmcp.settings.json_response,
+            stateless=stateless_http,
+        )
+        for profile, profiled_server in profiled_servers.items()
+    }
+    streamable_http_apps = {
+        profile: StreamableHTTPASGIApp(session_manager)
+        for profile, session_manager in session_managers.items()
+    }
+
+    async def streamable_http_endpoint(request: Request) -> Response:
+        profile = resolve_requested_hosted_tool_profile(
+            query_params=request.query_params,
+            headers=request.headers,
+            default=default_tool_profile,
+        )
+        selected_profile = profile if profile in streamable_http_apps else default_tool_profile
+        selected_app = streamable_http_apps[selected_profile]
+        await selected_app(request.scope, request.receive, request._send)  # noqa: SLF001
+        return Response()
+
+    routes: list[BaseRoute] = [
+        Route(streamable_path, endpoint=streamable_http_endpoint, methods=["POST", "DELETE"])
+    ]
+    routes.extend(server._get_additional_http_routes())  # noqa: SLF001
+
+    @asynccontextmanager
+    async def lifespan(app):
+        async with AsyncExitStack() as stack:
+            started_server_ids: set[int] = set()
+            for profiled_server in profiled_servers.values():
+                if id(profiled_server) in started_server_ids:
+                    continue
+                started_server_ids.add(id(profiled_server))
+                await stack.enter_async_context(profiled_server._lifespan_manager())  # noqa: SLF001
+            for session_manager in session_managers.values():
+                await stack.enter_async_context(session_manager.run())
+            yield
+
+    app_middleware = cast(list[Middleware], middleware or [])
+    app = create_base_app(
+        routes=routes,
+        middleware=app_middleware,
+        debug=fastmcp.settings.debug,
+        lifespan=lifespan,
+    )
+    app.state.fastmcp_server = server
+    app.state.path = streamable_path
+    app.state.transport_type = "streamable-http"
+
+    config = uvicorn.Config(
+        app,
+        host=fastmcp.settings.host,
+        port=fastmcp.settings.port,
+        timeout_graceful_shutdown=30,
+        lifespan="on",
+        ws="websockets-sansio",
+        log_level=(log_level or fastmcp.settings.log_level).lower(),
+    )
+    uvicorn.Server(config).run()
+
+
 def main():
     """Main entry point for the Rootly MCP Server."""
     args = parse_args()
@@ -464,10 +650,17 @@ def main():
         allowed_paths = None
         if args.allowed_paths:
             allowed_paths = [path.strip() for path in args.allowed_paths.split(",")]
+        explicit_enabled_tools = bool(args.enabled_tools) or (
+            os.getenv(server_defaults.EnvVars.ENABLED_TOOLS) is not None
+        )
+        default_hosted_tool_profile = server_defaults.hosted_tool_profile_from_env()
         enabled_tools = (
             {tool.strip() for tool in args.enabled_tools.split(",") if tool.strip()}
             if args.enabled_tools
-            else enabled_tools_from_env(hosted=hosted_mode)
+            else enabled_tools_from_env(
+                hosted=hosted_mode,
+                hosted_tool_profile=default_hosted_tool_profile,
+            )
         )
 
         logger.info(f"Initializing server with name: {args.name}")
@@ -493,6 +686,8 @@ def main():
             enable_write_tools=enable_write_tools,
             enabled_tools=enabled_tools,
         )
+        profiled_servers: dict[str, Any] = {default_hosted_tool_profile: server}
+        profiled_code_mode_servers: dict[str, Any] = {}
 
         if args.list_tools:
             for tool_name in asyncio.run(_get_sorted_tool_names(server)):
@@ -500,6 +695,7 @@ def main():
             return
 
         code_mode_server = None
+        alternate_server = None
         if code_mode_enabled:
             if not hosted_mode:
                 logger.warning("Code Mode endpoint requested without hosted mode; ignoring")
@@ -520,9 +716,55 @@ def main():
                 )
                 logger.info("Code Mode enabled at path: %s", code_mode_path)
 
+        if (
+            hosted_mode
+            and not explicit_enabled_tools
+            and normalized_transport in {"both", "streamable-http"}
+        ):
+            alternate_profile = (
+                server_defaults.HOSTED_TOOL_PROFILE_SLIM
+                if default_hosted_tool_profile == server_defaults.HOSTED_TOOL_PROFILE_FULL
+                else server_defaults.HOSTED_TOOL_PROFILE_FULL
+            )
+            alternate_enabled_tools = enabled_tools_from_env(
+                hosted=True,
+                hosted_tool_profile=alternate_profile,
+            )
+            alternate_server = create_rootly_mcp_server(
+                swagger_path=args.swagger_path,
+                name=args.name,
+                allowed_paths=allowed_paths,
+                hosted=hosted_mode,
+                base_url=args.base_url,
+                transport=normalized_transport,
+                enable_write_tools=enable_write_tools,
+                enabled_tools=alternate_enabled_tools,
+            )
+            profiled_servers[alternate_profile] = alternate_server
+
+            if code_mode_server is not None:
+                profiled_code_mode_servers[default_hosted_tool_profile] = code_mode_server
+                profiled_code_mode_servers[alternate_profile] = create_rootly_codemode_server(
+                    swagger_path=args.swagger_path,
+                    name=f"{args.name} Code Mode",
+                    allowed_paths=allowed_paths,
+                    hosted=hosted_mode,
+                    base_url=args.base_url,
+                    enable_write_tools=enable_write_tools,
+                    enabled_tools=alternate_enabled_tools,
+                )
+        elif code_mode_server is not None:
+            profiled_code_mode_servers[default_hosted_tool_profile] = code_mode_server
+
         maybe_enable_mcpcat_tracking(server, mcpcat_project_id, logger)
+        if alternate_server is not None:
+            maybe_enable_mcpcat_tracking(alternate_server, mcpcat_project_id, logger)
         if code_mode_server is not None:
             maybe_enable_mcpcat_tracking(code_mode_server, mcpcat_project_id, logger)
+        for _profile, profiled_code_mode_server in profiled_code_mode_servers.items():
+            if profiled_code_mode_server is code_mode_server:
+                continue
+            maybe_enable_mcpcat_tracking(profiled_code_mode_server, mcpcat_project_id, logger)
 
         logger.info(f"Running server with transport: {normalized_transport}...")
         direct_streamable_stateless_http = streamable_http_stateless_enabled(
@@ -537,20 +779,36 @@ def main():
                 middleware=get_hosted_auth_middleware(),
                 code_mode_server=code_mode_server,
                 code_mode_path=code_mode_path if code_mode_server is not None else None,
+                profiled_servers=profiled_servers,
+                profiled_code_mode_servers=profiled_code_mode_servers,
+                default_tool_profile=default_hosted_tool_profile,
             )
         elif normalized_transport == "stdio":
             server.run(transport=normalized_transport)
         else:
-            run_kwargs = {
-                "transport": normalized_transport,
-                "middleware": get_hosted_auth_middleware(),
-                # Override FastMCP's default of 0s to allow active SSE connections
-                # to finish gracefully during deployments (avoids 502s).
-                "uvicorn_config": {"timeout_graceful_shutdown": 30},
-            }
-            if normalized_transport == "streamable-http":
-                run_kwargs["stateless_http"] = direct_streamable_stateless_http
-            server.run(**run_kwargs)
+            if (
+                normalized_transport == "streamable-http"
+                and hosted_mode
+                and not explicit_enabled_tools
+            ):
+                run_profiled_streamable_http_server(
+                    server=server,
+                    log_level=args.log_level,
+                    middleware=get_hosted_auth_middleware(),
+                    profiled_servers=profiled_servers,
+                    default_tool_profile=default_hosted_tool_profile,
+                )
+            else:
+                run_kwargs = {
+                    "transport": normalized_transport,
+                    "middleware": get_hosted_auth_middleware(),
+                    # Override FastMCP's default of 0s to allow active SSE connections
+                    # to finish gracefully during deployments (avoids 502s).
+                    "uvicorn_config": {"timeout_graceful_shutdown": 30},
+                }
+                if normalized_transport == "streamable-http":
+                    run_kwargs["stateless_http"] = direct_streamable_stateless_http
+                server.run(**run_kwargs)
 
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")

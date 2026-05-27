@@ -8,6 +8,16 @@ import os
 # Set up logger
 logger = logging.getLogger(__name__)
 
+HOSTED_TOOL_PROFILE_SLIM = "slim"
+HOSTED_TOOL_PROFILE_FULL = "full"
+_HOSTED_TOOL_PROFILE_ALIASES = {
+    "core": HOSTED_TOOL_PROFILE_SLIM,
+    "default": HOSTED_TOOL_PROFILE_FULL,
+    "slim": HOSTED_TOOL_PROFILE_SLIM,
+    "full": HOSTED_TOOL_PROFILE_FULL,
+    "all": HOSTED_TOOL_PROFILE_FULL,
+}
+
 
 # Environment variable constants
 class EnvVars:
@@ -17,6 +27,7 @@ class EnvVars:
     BASE_URL = "ROOTLY_BASE_URL"
     SERVER_NAME = "ROOTLY_SERVER_NAME"
     HOSTED = "ROOTLY_HOSTED"
+    HOSTED_TOOL_PROFILE = "ROOTLY_MCP_HOSTED_TOOL_PROFILE"
     ENABLE_WRITE_TOOLS = "ROOTLY_MCP_ENABLE_WRITE_TOOLS"
     ENABLED_TOOLS = "ROOTLY_MCP_ENABLED_TOOLS"
     TRANSPORT = "ROOTLY_TRANSPORT"
@@ -42,15 +53,18 @@ LEGACY_TOOL_ALIASES: dict[str, str] = {
 
 
 # Default hosted tool surface tuned from one month of production popularity data.
-# This keeps the default remote/serverless profile near 50-60 tools while still
+# This keeps the slim remote/serverless profile near 70 tools while still
 # covering the overwhelming majority of observed requests. Operators can always
 # override this with ROOTLY_MCP_ENABLED_TOOLS for a narrower or broader surface.
 DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
     {
         "ListWorkflowRuns",
         "collect_incidents",
+        "createIncident",
         "createIncidentActionItem",
         "createOverrideShift",
+        "createWorkflow",
+        "createWorkflowTask",
         "find_related_incidents",
         "getAlert",
         "getAlertEvent",
@@ -100,8 +114,20 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "list_shifts",
         "search_incidents",
         "suggest_solutions",
+        "listOverrideShifts",
+        "updateEscalationLevel",
+        "updateEscalationPath",
+        "updateEscalationPolicy",
         "updateIncident",
+        "updateIncidentType",
+        "updateOverrideShift",
+        "updateSchedule",
+        "updateScheduleRotation",
+        "updateSeverity",
         "updateService",
+        "updateTeam",
+        "updateWorkflow",
+        "updateWorkflowTask",
     }
 )
 
@@ -188,6 +214,29 @@ def write_tools_enabled_from_env(default: bool = False) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def normalize_hosted_tool_profile(
+    raw: str | None, *, default: str = HOSTED_TOOL_PROFILE_FULL
+) -> str:
+    """Normalize hosted tool profile values to `full` or `slim`."""
+    if not raw:
+        return default
+    return _HOSTED_TOOL_PROFILE_ALIASES.get(raw.strip().lower(), default)
+
+
+def hosted_tool_profile_from_env(default: str = HOSTED_TOOL_PROFILE_FULL) -> str:
+    """Return the hosted tool profile requested by the operator environment."""
+    raw = os.getenv(EnvVars.HOSTED_TOOL_PROFILE)
+    normalized = normalize_hosted_tool_profile(raw, default=default)
+    if raw and raw.strip().lower() not in _HOSTED_TOOL_PROFILE_ALIASES:
+        logger.warning(
+            "Unknown %s=%r; falling back to %r",
+            EnvVars.HOSTED_TOOL_PROFILE,
+            raw,
+            normalized,
+        )
+    return normalized
+
+
 def collect_operation_ids(paths: dict) -> set[str]:
     """Return the set of operationIds defined in an OpenAPI paths object."""
     op_ids: set[str] = set()
@@ -200,18 +249,24 @@ def collect_operation_ids(paths: dict) -> set[str]:
     return op_ids
 
 
-def enabled_tools_from_env(*, hosted: bool = False) -> set[str] | None:
+def enabled_tools_from_env(
+    *,
+    hosted: bool = False,
+    hosted_tool_profile: str = HOSTED_TOOL_PROFILE_FULL,
+) -> set[str] | None:
     """Return the configured MCP tool allowlist.
 
     Precedence:
     1. Explicit ROOTLY_MCP_ENABLED_TOOLS env var
-    2. Hosted default core allowlist
+    2. Hosted default profile allowlist
     3. None (expose full tool surface)
     """
     configured = _parse_csv_set(os.getenv(EnvVars.ENABLED_TOOLS))
     if configured is not None:
         return configured
     if hosted:
+        if hosted_tool_profile == HOSTED_TOOL_PROFILE_FULL:
+            return None
         return set(DEFAULT_HOSTED_ENABLED_TOOLS)
     return None
 
