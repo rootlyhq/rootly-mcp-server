@@ -5,6 +5,29 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.11] - Released 2026-05-27
+
+### Features
+
+- **Hosted Full Tool Surface by Default**: Hosted MCP deployments now expose the full tool surface by default again, so remote clients no longer miss create/update workflows that were absent from the slimmer hosted profile
+- **Hosted Slim Profile Selector**: Added a slimmer hosted profile of about 70 high-usage tools that clients can opt into with `?tool_profile=slim`, `X-Rootly-Tool-Profile: slim`, or the `ROOTLY_MCP_HOSTED_TOOL_PROFILE` server setting
+
+### Configuration
+
+- **Profile Override Precedence**: `ROOTLY_MCP_ENABLED_TOOLS` remains the highest-precedence override, so operators can still replace either hosted profile with an exact custom allowlist when needed
+
+### Documentation
+
+- **Hosted Profile Guidance**: Updated the README to document full-vs-slim hosted usage options, server-wide profile defaults, and exact allowlist overrides
+
+### Dependencies
+
+- **Lockfile Sync**: Regenerated `uv.lock` so the lockfile matches the current pinned package versions in `pyproject.toml`, including `fastmcp==3.3.1` and `requests==2.34.2`
+
+### Testing
+
+- **Hosted Routing Coverage**: Added coverage for hosted profile resolution, profiled streamable HTTP routing, explicit allowlist bypass behavior, and unknown profile fallback handling
+
 ## [2.3.10] - Released 2026-05-26
 
 ### Fixed

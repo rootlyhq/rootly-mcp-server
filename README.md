@@ -23,6 +23,9 @@ Hosted tool profiles:
 
 - **Full (default):** use the URLs above as-is
 - **Slim (~70 tools):** add `?tool_profile=slim` to the hosted URL, for example `https://mcp.rootly.com/mcp?tool_profile=slim`
+- **Header alternative:** send `X-Rootly-Tool-Profile: slim`
+- **Server-wide default:** set `ROOTLY_MCP_HOSTED_TOOL_PROFILE=full|slim`
+- **Exact custom override:** set `ROOTLY_MCP_ENABLED_TOOLS=...`
 
 ### General Remote Setup
 
