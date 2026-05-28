@@ -954,6 +954,7 @@ class AuthenticatedHTTPXClient:
             method, url, response
         )
         response = self._maybe_annotate_404_response(method, url, response)
+        response = self._maybe_annotate_alert_routing_deprecation(method, url, response)
 
         return response
 
@@ -1034,6 +1035,50 @@ class AuthenticatedHTTPXClient:
             response._content = json.dumps(body).encode()  # noqa: SLF001
         except Exception:  # nosec B110 - Safe fallback; annotation is best-effort
             pass
+        return response
+
+    @staticmethod
+    def _maybe_annotate_alert_routing_deprecation(
+        method: str, url: str, response: httpx.Response
+    ) -> httpx.Response:
+        """Translate the 403 from `/alert_routing_rules` into a model-actionable hint.
+
+        Tenants with the Advanced Alert Routing feature enabled get a 403 on the
+        legacy endpoint with a long-form message pointing to `/alert_routes`.
+        We surface a structured `_use_tool` field so the calling model can
+        switch tools without re-reading the prose.
+        """
+        if response.status_code != 403:
+            return response
+        path = AuthenticatedHTTPXClient._path_for_url(url)
+        if not path.startswith("/v1/alert_routing_rules"):
+            return response
+        try:
+            body = response.json()
+        except Exception:  # nosec B110 - best-effort annotation
+            return response
+        if not isinstance(body, dict):
+            return response
+        errors = body.get("errors")
+        first_title = ""
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            first_title = str(errors[0].get("title", ""))
+        if "advanced alert routing" not in first_title.lower():
+            return response
+        replacement = "listAlertRoutes" if method.upper() == "GET" else "the Alert Routes endpoint"
+        body.setdefault(
+            "_use_tool",
+            {
+                "instead_of": "listAlertRoutingRules",
+                "use": replacement,
+                "reason": (
+                    "This tenant has Advanced Alert Routing enabled. The legacy "
+                    "/v1/alert_routing_rules endpoint is locked; use /v1/alert_routes "
+                    "(operationId listAlertRoutes / getAlertRoute) instead."
+                ),
+            },
+        )
+        response._content = json.dumps(body).encode()  # noqa: SLF001
         return response
 
     @staticmethod
@@ -1266,6 +1311,9 @@ class AuthenticatedHTTPXClient:
         response = self._maybe_strip_alert_response(request.method, str(request.url), response)
         response = self._maybe_strip_collection_response(request.method, str(request.url), response)
         response = self._maybe_normalize_incident_form_field_selection_response(
+            request.method, str(request.url), response
+        )
+        response = self._maybe_annotate_alert_routing_deprecation(
             request.method, str(request.url), response
         )
         return response

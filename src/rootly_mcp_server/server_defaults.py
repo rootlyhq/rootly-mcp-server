@@ -84,6 +84,7 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_server_version",
         "get_shift_incidents",
         "listAlertEvents",
+        "listAlertRoutes",
         "listAlertRoutingRules",
         "listAlertUrgencies",
         "listAlerts",
@@ -329,6 +330,12 @@ DEFAULT_ALLOWED_PATHS = [
     "/alert_groups/{id}",
     "/alert_routing_rules",
     "/alert_routing_rules/{id}",
+    # Advanced alert routing — the successor to alert_routing_rules.  When a
+    # tenant has the Advanced Alert Routing feature enabled, `/alert_routing_rules`
+    # returns 403 and this endpoint is the replacement.  Both are exposed so the
+    # model can fall back automatically based on the per-tenant feature flag.
+    "/alert_routes",
+    "/alert_routes/{id}",
     "/alert_sources",
     "/alert_sources/{id}",
     "/alert_urgencies",

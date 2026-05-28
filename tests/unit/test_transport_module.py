@@ -662,6 +662,54 @@ class TestTransportModule:
             "include": "alert_urgency",
         }
 
+    def test_alert_routing_rules_403_gets_use_tool_hint(self):
+        """403 from /alert_routing_rules with advanced-routing message gets a _use_tool field."""
+        response = httpx.Response(
+            403,
+            request=httpx.Request(
+                "GET", "https://api.rootly.com/v1/alert_routing_rules?page%5Bsize%5D=20"
+            ),
+            content=(
+                b'{"errors":[{"title":"Advanced alert routing features are enabled '
+                b'for your team. Please use the Alert Routes endpoint instead for '
+                b'enhanced alert routing functionality.","status":"403"}]}'
+            ),
+        )
+        annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_alert_routing_deprecation(
+            "GET",
+            "https://api.rootly.com/v1/alert_routing_rules?page%5Bsize%5D=20",
+            response,
+        )
+        body = annotated.json()
+        assert body["_use_tool"]["use"] == "listAlertRoutes"
+        assert body["_use_tool"]["instead_of"] == "listAlertRoutingRules"
+
+    def test_alert_routing_rules_non_advanced_403_not_annotated(self):
+        """Other 403 reasons (auth failure, etc.) must not get the use_tool hint."""
+        response = httpx.Response(
+            403,
+            request=httpx.Request(
+                "GET", "https://api.rootly.com/v1/alert_routing_rules"
+            ),
+            content=b'{"errors":[{"title":"Forbidden","status":"403"}]}',
+        )
+        annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_alert_routing_deprecation(
+            "GET", "https://api.rootly.com/v1/alert_routing_rules", response
+        )
+        assert "_use_tool" not in annotated.json()
+
+    def test_unrelated_403_not_annotated(self):
+        """A 403 on an endpoint other than /alert_routing_rules is left alone."""
+        response = httpx.Response(
+            403,
+            request=httpx.Request("GET", "https://api.rootly.com/v1/schedules"),
+            content=b'{"errors":[{"title":"Forbidden","status":"403"}]}',
+        )
+        annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_alert_routing_deprecation(
+            "GET", "https://api.rootly.com/v1/schedules", response
+        )
+        assert "_use_tool" not in annotated.json()
+
     @pytest.mark.asyncio
     async def test_authenticated_client_request_blocks_unfilled_path_template(self):
         """`{id}` left in the URL must raise before hitting the upstream API."""
