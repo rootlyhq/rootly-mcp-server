@@ -127,16 +127,20 @@ class TestServerDefaultsModule:
         with patch.dict("os.environ", {}, clear=True):
             assert hosted_tool_profile_from_env() == HOSTED_TOOL_PROFILE_FULL
 
-    def test_canonicalize_passes_through_canonical_names(self):
-        assert canonicalize_tool_names({"list_incidents", "getIncident"}) == {
-            "list_incidents",
-            "getIncident",
-        }
+    def test_canonicalize_passes_through_unaliased_names(self):
+        # `getIncident` has no alias, so it stays as-is.
+        assert canonicalize_tool_names({"getIncident"}) == {"getIncident"}
 
     def test_canonicalize_expands_legacy_to_include_canonical(self):
         # Posture A: legacy name stays in the set (so the proxy remains exposed)
         # AND the canonical name is added (so new clients also see it).
         assert canonicalize_tool_names({"listIncidents"}) == {"listIncidents", "list_incidents"}
+
+    def test_canonicalize_expands_canonical_to_include_legacy(self):
+        # Reverse direction: an allowlist with only the canonical name must
+        # still expose the legacy proxy, otherwise models calling the legacy
+        # name get "Unknown tool" errors.
+        assert canonicalize_tool_names({"list_incidents"}) == {"listIncidents", "list_incidents"}
 
     def test_canonicalize_handles_mixed_allowlist(self):
         result = canonicalize_tool_names({"listIncidents", "getIncident", "listTeams"})

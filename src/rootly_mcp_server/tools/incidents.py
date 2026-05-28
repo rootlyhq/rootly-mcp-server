@@ -732,7 +732,12 @@ def register_incident_tools(
         max_results: Annotated[
             int,
             Field(
-                description="Maximum total results when fetching all pages (ignored if page_number > 0)",
+                description=(
+                    "Maximum total results when fetching all pages "
+                    "(ignored if page_number > 0). CAPPED AT 10 — passing a larger "
+                    "value raises a validation error. For larger result sets, use "
+                    "page_number > 0 and paginate explicitly."
+                ),
                 ge=1,
                 le=10,
             ),
@@ -743,6 +748,8 @@ def register_incident_tools(
 
         Use page_number=0 to fetch all matching results across multiple pages up to max_results.
         Use page_number>0 to fetch a specific page.
+
+        Argument caps: page_size <= 20, max_results <= 10.
         """
         # Single page mode
         if page_number > 0:
@@ -850,7 +857,12 @@ def register_incident_tools(
         incident_id: Annotated[
             str,
             Field(
-                description="Incident reference to retrieve: UUID, bare number like 4460, #4460, or INC-4460"
+                description=(
+                    "Incident reference to retrieve. "
+                    "ARGUMENT NAME IS `incident_id` (not `id`). "
+                    "Accepts: UUID (`7e83d9f4-6bc1-...`), bare sequential number "
+                    "(`4460`), `#4460`, or `INC-4460`."
+                )
             ),
         ],
     ) -> JsonDict:

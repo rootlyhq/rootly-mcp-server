@@ -443,6 +443,8 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "deleteWorkflowTask" not in tool_names
 
     async def test_hosted_slim_profile_matches_curated_allowlist(self, mock_environment_token):
+        from rootly_mcp_server.server_defaults import canonicalize_tool_names
+
         server = create_rootly_mcp_server(
             hosted=True,
             enabled_tools=set(DEFAULT_HOSTED_ENABLED_TOOLS),
@@ -451,7 +453,11 @@ class TestBundledIncidentFormFieldSelectionTools:
         tools = await server.list_tools()
         tool_names = {tool.name for tool in tools}
 
-        assert tool_names == set(DEFAULT_HOSTED_ENABLED_TOOLS)
+        # The surfaced set is the canonical allowlist expanded through the
+        # bidirectional legacy/canonical alias map — e.g., `list_incidents` in
+        # the slim profile also brings `listIncidents` along so models that
+        # pick either name find the tool.
+        assert tool_names == canonicalize_tool_names(set(DEFAULT_HOSTED_ENABLED_TOOLS))
 
     async def test_enabled_tools_allowlist_filters_generated_and_custom_tools(
         self, mock_environment_token

@@ -10,14 +10,22 @@ import logging
 import os
 import re
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
+from .exceptions import RootlyValidationError
 from .security import mask_sensitive_data
 from .utils import OAUTH_PROTECTED_RESOURCE_PATH, auth_header_state, resolve_mcp_server_url
 
 logger = logging.getLogger(__name__)
+
+# Detects unfilled OpenAPI path templates like `{id}` or `{schedule_id}` that
+# leaked into a URL because a required path argument was missing or misnamed.
+# Without this check the literal `{id}` gets URL-encoded to `%7Bid%7D` and the
+# Rootly API returns a misleading 404 instead of a clear param-missing error.
+_UNFILLED_PATH_PARAM_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}|%7B[A-Za-z_][A-Za-z0-9_]*%7D")
 
 # ContextVar to hold the auth token for the current hosted HTTP session/request.
 # Set by AuthCaptureMiddleware on MCP transport paths (e.g. /sse, /mcp),
@@ -797,6 +805,111 @@ class AuthenticatedHTTPXClient:
             return None
         return api_token
 
+    # Date-range caps enforced by the Rootly shift endpoints. The upstream API
+    # returns 422 with "Datetime range exceeds N month(s)" when a request
+    # exceeds these limits; pre-flighting the check here turns a confusing
+    # upstream error into an actionable client-side validation error.
+    #
+    # `/v1/shifts`         → listShifts: 2 months cap
+    # `/v1/schedules/{id}/shifts` → getScheduleShifts: 1 month cap
+    _LIST_SHIFTS_LIMIT_DAYS = 62
+    _SCHEDULE_SHIFTS_LIMIT_DAYS = 31
+
+    @staticmethod
+    def _parse_iso_date(value: Any) -> datetime | None:
+        if not isinstance(value, str) or not value:
+            return None
+        candidate = value.strip()
+        if not candidate:
+            return None
+        # httpx/upstream accept both date-only (`2026-05-28`) and ISO datetime.
+        normalized = candidate.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            try:
+                parsed = datetime.strptime(candidate, "%Y-%m-%d")
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+
+    @classmethod
+    def _check_shift_date_range(cls, method: str, url: Any, params: dict[str, Any] | None) -> None:
+        """Reject shift queries whose `from`/`to` span exceeds the API's cap."""
+        if method.upper() != "GET":
+            return
+        url_str = str(url)
+        path = cls._path_for_url(url_str).rstrip("/")
+        # The path must END in `/shifts` to be a real shift-list endpoint, which
+        # excludes lookalikes like `/v1/override_shifts/{id}` or
+        # `/v1/schedules/{id}/override_shifts` (no `/shifts` suffix).
+        if not path.endswith("/shifts"):
+            return
+        if path == "/v1/shifts":
+            limit_days = cls._LIST_SHIFTS_LIMIT_DAYS
+        else:
+            # Anything else ending in `/shifts` is the per-schedule endpoint.
+            limit_days = cls._SCHEDULE_SHIFTS_LIMIT_DAYS
+        # Pull `from`/`to` from either explicit kwargs or the URL query string.
+        from_raw: Any = None
+        to_raw: Any = None
+        if params:
+            from_raw = params.get("from")
+            to_raw = params.get("to")
+        if from_raw is None or to_raw is None:
+            try:
+                query_params = httpx.URL(url_str).params
+                if from_raw is None:
+                    from_raw = query_params.get("from")
+                if to_raw is None:
+                    to_raw = query_params.get("to")
+            except Exception:
+                return
+        from_dt = cls._parse_iso_date(from_raw)
+        to_dt = cls._parse_iso_date(to_raw)
+        if from_dt is None or to_dt is None:
+            return  # Let upstream handle malformed dates with its own 422.
+        span_days = (to_dt - from_dt).total_seconds() / 86400
+        if span_days <= limit_days:
+            return
+        raise RootlyValidationError(
+            f"Date range from={from_raw} to={to_raw} spans {span_days:.1f} days, "
+            f"which exceeds the Rootly API's {limit_days}-day cap for {path}. "
+            f"Split the query into smaller chunks (each <= {limit_days} days) and "
+            f"combine the results."
+        )
+
+    @staticmethod
+    def _check_for_unfilled_path_params(method: str, url: Any) -> None:
+        """Block requests whose URL PATH still contains unfilled `{param}` templates.
+
+        FastMCP's OpenAPI integration substitutes path parameters from tool
+        arguments. When the model calls a tool with the wrong parameter name
+        (e.g. `schedule_id` instead of `id`), the placeholder remains in the URL
+        and gets sent upstream, producing a misleading 404. This guard catches
+        that earlier with a clear, actionable error.
+
+        The check is restricted to the URL path (not the query string or
+        fragment) so that legitimate query values containing literal braces or
+        URL-encoded braces don't trigger a false positive.
+        """
+        url_str = str(url)
+        # Extract the path portion only; everything from `?` onward is query.
+        path = AuthenticatedHTTPXClient._path_for_url(url_str)
+        matches = _UNFILLED_PATH_PARAM_RE.findall(path)
+        if not matches:
+            return
+        # Normalize URL-encoded matches (`%7Bid%7D`) back to `{id}` for the message.
+        missing = sorted({m.replace("%7B", "{").replace("%7D", "}") for m in matches})
+        raise RootlyValidationError(
+            f"Cannot call {method} {url_str}: the upstream URL still contains "
+            f"unfilled path parameter(s) {missing}. This usually means a required "
+            f"path argument was missing or passed under the wrong name. "
+            f"Check the tool's input schema for the exact parameter names."
+        )
+
     @staticmethod
     def _normalize_query_param_value(value: Any) -> Any:
         """Drop blank query values while preserving meaningful falsey values.
@@ -846,9 +959,11 @@ class AuthenticatedHTTPXClient:
 
     async def request(self, method: str, url: str, **kwargs):
         """Override request to transform parameters and ensure correct headers."""
+        self._check_for_unfilled_path_params(method, url)
         # Transform query parameters
         if "params" in kwargs:
             kwargs["params"] = self._transform_params(kwargs["params"])
+        self._check_shift_date_range(method, url, kwargs.get("params"))
         if "json" in kwargs:
             kwargs["json"] = self._normalize_request_json_payload(method, kwargs["json"])
 
@@ -921,6 +1036,7 @@ class AuthenticatedHTTPXClient:
             method, url, response
         )
         response = self._maybe_annotate_404_response(method, url, response)
+        response = self._maybe_annotate_alert_routing_deprecation(method, url, response)
 
         return response
 
@@ -1001,6 +1117,53 @@ class AuthenticatedHTTPXClient:
             response._content = json.dumps(body).encode()  # noqa: SLF001
         except Exception:  # nosec B110 - Safe fallback; annotation is best-effort
             pass
+        return response
+
+    @staticmethod
+    def _maybe_annotate_alert_routing_deprecation(
+        method: str, url: str, response: httpx.Response
+    ) -> httpx.Response:
+        """Translate the 403 from `/alert_routing_rules` into a model-actionable hint.
+
+        Tenants with the Advanced Alert Routing feature enabled get a 403 on the
+        legacy endpoint with a long-form message pointing to `/alert_routes`.
+        We surface a structured `_use_tool` field so the calling model can
+        switch tools without re-reading the prose.
+        """
+        if response.status_code != 403:
+            return response
+        path = AuthenticatedHTTPXClient._path_for_url(url)
+        # Match `/v1/alert_routing_rules` and `/v1/alert_routing_rules/{id}` only;
+        # a hypothetical `/v1/alert_routing_rules_v2` would slip through a plain
+        # startswith. Anchor on a `/` boundary instead.
+        if path != "/v1/alert_routing_rules" and not path.startswith("/v1/alert_routing_rules/"):
+            return response
+        try:
+            body = response.json()
+        except Exception:  # nosec B110 - best-effort annotation
+            return response
+        if not isinstance(body, dict):
+            return response
+        errors = body.get("errors")
+        first_title = ""
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            first_title = str(errors[0].get("title", ""))
+        if "advanced alert routing" not in first_title.lower():
+            return response
+        replacement = "listAlertRoutes" if method.upper() == "GET" else "the Alert Routes endpoint"
+        body.setdefault(
+            "_use_tool",
+            {
+                "instead_of": "listAlertRoutingRules",
+                "use": replacement,
+                "reason": (
+                    "This tenant has Advanced Alert Routing enabled. The legacy "
+                    "/v1/alert_routing_rules endpoint is locked; use /v1/alert_routes "
+                    "(operationId listAlertRoutes / getAlertRoute) instead."
+                ),
+            },
+        )
+        response._content = json.dumps(body).encode()  # noqa: SLF001
         return response
 
     @staticmethod
@@ -1178,6 +1341,7 @@ class AuthenticatedHTTPXClient:
         Headers are enforced by the event hook, so we just delegate to the inner client.
         Alert response stripping is also applied here for forward compatibility.
         """
+        self._check_for_unfilled_path_params(request.method, request.url)
         # In hosted mode, ensure Authorization header is present in the request.
         # The _session_auth_token ContextVar is set by AuthCaptureMiddleware
         # on MCP transport paths (/sse, /mcp).
@@ -1220,6 +1384,8 @@ class AuthenticatedHTTPXClient:
             )
             request = new_request
 
+        self._check_shift_date_range(request.method, request.url, None)
+
         try:
             response = await self.client.send(request, **kwargs)
         except Exception as exc:
@@ -1232,6 +1398,9 @@ class AuthenticatedHTTPXClient:
         response = self._maybe_strip_alert_response(request.method, str(request.url), response)
         response = self._maybe_strip_collection_response(request.method, str(request.url), response)
         response = self._maybe_normalize_incident_form_field_selection_response(
+            request.method, str(request.url), response
+        )
+        response = self._maybe_annotate_alert_routing_deprecation(
             request.method, str(request.url), response
         )
         return response

@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from rootly_mcp_server import transport
+from rootly_mcp_server.exceptions import RootlyValidationError
 
 
 class TestTransportModule:
@@ -660,6 +661,189 @@ class TestTransportModule:
             "page[size]": 20,
             "include": "alert_urgency",
         }
+
+    def test_check_shift_date_range_blocks_over_31_day_schedule_query(self):
+        with pytest.raises(RootlyValidationError) as exc_info:
+            transport.AuthenticatedHTTPXClient._check_shift_date_range(
+                "GET",
+                "https://api.rootly.com/v1/schedules/abc/shifts",
+                {"from": "2026-05-01", "to": "2026-07-31"},
+            )
+        msg = str(exc_info.value)
+        assert "31-day cap" in msg
+        assert "Split the query" in msg
+
+    def test_check_shift_date_range_blocks_over_62_day_listShifts(self):
+        with pytest.raises(RootlyValidationError):
+            transport.AuthenticatedHTTPXClient._check_shift_date_range(
+                "GET",
+                "https://api.rootly.com/v1/shifts?from=2026-04-01T00:00:00Z&to=2026-07-01T00:00:00Z",
+                None,
+            )
+
+    def test_check_shift_date_range_allows_within_limit(self):
+        # 28 days on the schedule endpoint (limit 31) — must pass.
+        transport.AuthenticatedHTTPXClient._check_shift_date_range(
+            "GET",
+            "https://api.rootly.com/v1/schedules/abc/shifts",
+            {"from": "2026-05-01", "to": "2026-05-29"},
+        )
+
+    def test_check_shift_date_range_ignores_non_get(self):
+        # A POST on the same path must not be range-checked.
+        transport.AuthenticatedHTTPXClient._check_shift_date_range(
+            "POST",
+            "https://api.rootly.com/v1/schedules/abc/shifts",
+            {"from": "2026-01-01", "to": "2026-12-31"},
+        )
+
+    def test_check_shift_date_range_ignores_unrelated_path(self):
+        # Same params on a different endpoint must not be checked.
+        transport.AuthenticatedHTTPXClient._check_shift_date_range(
+            "GET",
+            "https://api.rootly.com/v1/incidents",
+            {"from": "2026-01-01", "to": "2026-12-31"},
+        )
+
+    def test_check_shift_date_range_ignores_override_shifts_lookalike(self):
+        # `/v1/schedules/{id}/override_shifts` and `/v1/override_shifts/{id}` both
+        # contain the substring `_shifts` but do not END in `/shifts`. They must
+        # not be range-checked — they have their own (different) date semantics.
+        transport.AuthenticatedHTTPXClient._check_shift_date_range(
+            "GET",
+            "https://api.rootly.com/v1/schedules/abc/override_shifts",
+            {"from": "2026-01-01", "to": "2026-12-31"},
+        )
+        transport.AuthenticatedHTTPXClient._check_shift_date_range(
+            "GET",
+            "https://api.rootly.com/v1/override_shifts/abc",
+            {"from": "2026-01-01", "to": "2026-12-31"},
+        )
+
+    def test_check_for_unfilled_path_params_ignores_query_string_braces(self):
+        # A legitimate query value containing `{...}` (or URL-encoded `%7B...%7D`)
+        # must not trigger the path-template guard. Only braces in the URL path
+        # indicate an unfilled OpenAPI substitution.
+        transport.AuthenticatedHTTPXClient._check_for_unfilled_path_params(
+            "GET", "https://api.rootly.com/v1/incidents?filter[search]={literal}"
+        )
+        transport.AuthenticatedHTTPXClient._check_for_unfilled_path_params(
+            "GET",
+            "https://api.rootly.com/v1/incidents?filter%5Bsearch%5D=%7Bliteral%7D",
+        )
+
+    def test_check_for_unfilled_path_params_catches_path_brace_with_query(self):
+        # An unfilled placeholder in the PATH must still raise even when the
+        # URL also has a query string.
+        with pytest.raises(RootlyValidationError):
+            transport.AuthenticatedHTTPXClient._check_for_unfilled_path_params(
+                "GET", "https://api.rootly.com/v1/schedules/{id}/shifts?from=2026-01-01"
+            )
+
+    def test_check_shift_date_range_skips_on_malformed_dates(self):
+        # Bad dates should fall through to the upstream's own error path.
+        transport.AuthenticatedHTTPXClient._check_shift_date_range(
+            "GET",
+            "https://api.rootly.com/v1/shifts",
+            {"from": "not-a-date", "to": "also-not"},
+        )
+
+    def test_alert_routing_rules_403_gets_use_tool_hint(self):
+        """403 from /alert_routing_rules with advanced-routing message gets a _use_tool field."""
+        response = httpx.Response(
+            403,
+            request=httpx.Request(
+                "GET", "https://api.rootly.com/v1/alert_routing_rules?page%5Bsize%5D=20"
+            ),
+            content=(
+                b'{"errors":[{"title":"Advanced alert routing features are enabled '
+                b"for your team. Please use the Alert Routes endpoint instead for "
+                b'enhanced alert routing functionality.","status":"403"}]}'
+            ),
+        )
+        annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_alert_routing_deprecation(
+            "GET",
+            "https://api.rootly.com/v1/alert_routing_rules?page%5Bsize%5D=20",
+            response,
+        )
+        body = annotated.json()
+        assert body["_use_tool"]["use"] == "listAlertRoutes"
+        assert body["_use_tool"]["instead_of"] == "listAlertRoutingRules"
+
+    def test_alert_routing_rules_non_advanced_403_not_annotated(self):
+        """Other 403 reasons (auth failure, etc.) must not get the use_tool hint."""
+        response = httpx.Response(
+            403,
+            request=httpx.Request("GET", "https://api.rootly.com/v1/alert_routing_rules"),
+            content=b'{"errors":[{"title":"Forbidden","status":"403"}]}',
+        )
+        annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_alert_routing_deprecation(
+            "GET", "https://api.rootly.com/v1/alert_routing_rules", response
+        )
+        assert "_use_tool" not in annotated.json()
+
+    def test_unrelated_403_not_annotated(self):
+        """A 403 on an endpoint other than /alert_routing_rules is left alone."""
+        response = httpx.Response(
+            403,
+            request=httpx.Request("GET", "https://api.rootly.com/v1/schedules"),
+            content=b'{"errors":[{"title":"Forbidden","status":"403"}]}',
+        )
+        annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_alert_routing_deprecation(
+            "GET", "https://api.rootly.com/v1/schedules", response
+        )
+        assert "_use_tool" not in annotated.json()
+
+    @pytest.mark.asyncio
+    async def test_authenticated_client_request_blocks_unfilled_path_template(self):
+        """`{id}` left in the URL must raise before hitting the upstream API."""
+        with patch.object(
+            transport.AuthenticatedHTTPXClient, "_get_api_token", return_value="token"
+        ):
+            client = transport.AuthenticatedHTTPXClient(hosted=False, transport="stdio")
+            client.client.request = AsyncMock()
+
+            with pytest.raises(RootlyValidationError) as exc_info:
+                await client.request("GET", "https://api.rootly.com/v1/schedules/{id}/shifts")
+            assert "{id}" in str(exc_info.value)
+            client.client.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_authenticated_client_send_blocks_unfilled_path_template(self):
+        """URL-encoded `%7Bid%7D` in a built request must also be blocked."""
+        with patch.object(
+            transport.AuthenticatedHTTPXClient, "_get_api_token", return_value="token"
+        ):
+            client = transport.AuthenticatedHTTPXClient(hosted=False, transport="stdio")
+            client.client.send = AsyncMock()
+
+            request = httpx.Request(
+                "GET",
+                "https://api.rootly.com/v1/schedules/%7Bschedule_id%7D/shifts",
+            )
+            with pytest.raises(RootlyValidationError) as exc_info:
+                await client.send(request)
+            assert "{schedule_id}" in str(exc_info.value)
+            client.client.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_authenticated_client_request_allows_filled_path(self):
+        """A fully-substituted URL must pass the path-template guard."""
+        response = httpx.Response(
+            200,
+            request=httpx.Request("GET", "https://api.rootly.com/v1/schedules/abc-123/shifts"),
+            content=b'{"data":[]}',
+        )
+        with patch.object(
+            transport.AuthenticatedHTTPXClient, "_get_api_token", return_value="token"
+        ):
+            client = transport.AuthenticatedHTTPXClient(hosted=False, transport="stdio")
+            client.client.request = AsyncMock(return_value=response)
+
+            result = await client.request(
+                "GET", "https://api.rootly.com/v1/schedules/abc-123/shifts"
+            )
+            assert result.status_code == 200
 
     @pytest.mark.asyncio
     async def test_authenticated_client_send_drops_empty_query_parameters(self):

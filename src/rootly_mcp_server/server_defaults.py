@@ -63,6 +63,7 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "createIncident",
         "createIncidentActionItem",
         "createOverrideShift",
+        "createSchedule",
         "createWorkflow",
         "createWorkflowTask",
         "find_related_incidents",
@@ -84,6 +85,7 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_server_version",
         "get_shift_incidents",
         "listAlertEvents",
+        "listAlertRoutes",
         "listAlertRoutingRules",
         "listAlertUrgencies",
         "listAlerts",
@@ -145,14 +147,23 @@ CURATED_OVERRIDE_OPERATION_IDS: frozenset[str] = frozenset(
 
 
 def canonicalize_tool_names(enabled_tools: set[str]) -> set[str]:
-    """Expand legacy tool names in an allowlist to also include their canonical replacements.
+    """Expand legacy/canonical tool name pairs so both stay exposed together.
 
-    Under posture A (deprecated-proxy) the legacy name remains callable; we keep it
-    in the allowlist alongside the canonical so both the proxy and the new tool stay
-    exposed. A deprecation warning is emitted per legacy name encountered.
+    Under posture A (deprecated-proxy) the legacy name remains callable; we keep
+    both names in the allowlist so curated tools registered under the legacy
+    name (e.g. `@mcp.tool(name="listIncidents")`) and their canonical wrappers
+    (`list_incidents`) are both reachable. Without this, an allowlist that
+    mentions only one half of the pair will silently strip the other and
+    produce "Unknown tool" errors for models that pick the missing name.
+
+    Expansion is bidirectional: legacy→canonical AND canonical→legacy. A
+    deprecation warning is emitted only when the legacy name was the entry
+    that triggered expansion (the canonical→legacy direction is silent
+    because operators using the canonical name aren't doing anything wrong).
     """
     if not enabled_tools:
         return enabled_tools
+    canonical_to_legacy: dict[str, str] = {v: k for k, v in LEGACY_TOOL_ALIASES.items()}
     resolved: set[str] = set(enabled_tools)
     for name in enabled_tools:
         canonical = LEGACY_TOOL_ALIASES.get(name)
@@ -165,6 +176,9 @@ def canonicalize_tool_names(enabled_tools: set[str]) -> set[str]:
                 canonical,
             )
             resolved.add(canonical)
+        legacy = canonical_to_legacy.get(name)
+        if legacy:
+            resolved.add(legacy)
     return resolved
 
 
@@ -329,6 +343,12 @@ DEFAULT_ALLOWED_PATHS = [
     "/alert_groups/{id}",
     "/alert_routing_rules",
     "/alert_routing_rules/{id}",
+    # Advanced alert routing — the successor to alert_routing_rules.  When a
+    # tenant has the Advanced Alert Routing feature enabled, `/alert_routing_rules`
+    # returns 403 and this endpoint is the replacement.  Both are exposed so the
+    # model can fall back automatically based on the per-tenant feature flag.
+    "/alert_routes",
+    "/alert_routes/{id}",
     "/alert_sources",
     "/alert_sources/{id}",
     "/alert_urgencies",

@@ -84,9 +84,12 @@ def _terminate_process(process: subprocess.Popen[str]) -> str:
     ("enabled_tools", "enable_write_tools", "expected_tools"),
     [
         (
+            # Bidirectional alias expansion: `list_incidents` (canonical) brings
+            # `listIncidents` (legacy proxy) along so models that pick either name
+            # find the tool. See canonicalize_tool_names() in server_defaults.py.
             "list_incidents,getIncident,listTeams",
             False,
-            ["getIncident", "listTeams", "list_incidents"],
+            ["getIncident", "listIncidents", "listTeams", "list_incidents"],
         ),
         (
             "listIncidents,getIncident,listTeams",

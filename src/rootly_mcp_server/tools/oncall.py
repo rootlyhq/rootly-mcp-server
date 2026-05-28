@@ -1608,15 +1608,20 @@ def register_oncall_tools(
     async def get_oncall_schedule_summary(
         start_date: Annotated[
             str,
-            Field(description="Start date (ISO 8601, e.g., '2026-02-09')"),
+            Field(description="REQUIRED. Start date (ISO 8601, e.g., '2026-02-09')"),
         ],
         end_date: Annotated[
             str,
-            Field(description="End date (ISO 8601, e.g., '2026-02-15')"),
+            Field(description="REQUIRED. End date (ISO 8601, e.g., '2026-02-15')"),
         ],
         schedule_ids: Annotated[
             str,
-            Field(description="Comma-separated schedule IDs to filter (optional)"),
+            Field(
+                description=(
+                    "Comma-separated schedule IDs to filter (optional). "
+                    "NOTE: argument name is `schedule_ids` (plural), not `schedule_id`."
+                )
+            ),
         ] = "",
         team_ids: Annotated[
             str,
@@ -1629,6 +1634,9 @@ def register_oncall_tools(
     ) -> dict:
         """
         Get compact on-call schedule summary for a date range.
+
+        REQUIRED ARGUMENTS: start_date, end_date (both ISO 8601 date strings).
+        Optional: schedule_ids (comma-separated, plural), team_ids.
 
         Returns one entry per user per schedule (not raw shifts), with
         aggregated hours. Optimized for AI agent context windows.
@@ -1875,12 +1883,20 @@ def register_oncall_tools(
         user_ids: Annotated[
             str,
             Field(
-                description="Comma-separated Rootly user IDs to check (e.g., '2381,94178,27965')"
+                description=(
+                    "Comma-separated Rootly user IDs to check (e.g., '2381,94178,27965'). "
+                    "REQUIRED — this tool does not accept email lookup. Resolve emails "
+                    "to numeric user IDs first via `listUsers` with `filter[email]`."
+                )
             ),
         ],
     ) -> dict:
         """
         Check if specific users are scheduled for on-call in a date range.
+
+        REQUIRED ARGUMENTS: start_date (ISO 8601), end_date (ISO 8601), user_ids
+        (comma-separated numeric IDs — not emails). Resolve emails to user IDs
+        via `listUsers` filtered by email before calling this.
 
         Use this to verify if at-risk users (from On-Call Health) are scheduled,
         or to check availability before assigning new shifts.
