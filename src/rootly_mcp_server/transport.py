@@ -836,9 +836,7 @@ class AuthenticatedHTTPXClient:
         return parsed
 
     @classmethod
-    def _check_shift_date_range(
-        cls, method: str, url: Any, params: dict[str, Any] | None
-    ) -> None:
+    def _check_shift_date_range(cls, method: str, url: Any, params: dict[str, Any] | None) -> None:
         """Reject shift queries whose `from`/`to` span exceeds the API's cap."""
         if method.upper() != "GET":
             return
@@ -904,9 +902,7 @@ class AuthenticatedHTTPXClient:
         if not matches:
             return
         # Normalize URL-encoded matches (`%7Bid%7D`) back to `{id}` for the message.
-        missing = sorted(
-            {m.replace("%7B", "{").replace("%7D", "}") for m in matches}
-        )
+        missing = sorted({m.replace("%7B", "{").replace("%7D", "}") for m in matches})
         raise RootlyValidationError(
             f"Cannot call {method} {url_str}: the upstream URL still contains "
             f"unfilled path parameter(s) {missing}. This usually means a required "
@@ -1140,9 +1136,7 @@ class AuthenticatedHTTPXClient:
         # Match `/v1/alert_routing_rules` and `/v1/alert_routing_rules/{id}` only;
         # a hypothetical `/v1/alert_routing_rules_v2` would slip through a plain
         # startswith. Anchor on a `/` boundary instead.
-        if path != "/v1/alert_routing_rules" and not path.startswith(
-            "/v1/alert_routing_rules/"
-        ):
+        if path != "/v1/alert_routing_rules" and not path.startswith("/v1/alert_routing_rules/"):
             return response
         try:
             body = response.json()

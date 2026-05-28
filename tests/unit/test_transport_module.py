@@ -757,7 +757,7 @@ class TestTransportModule:
             ),
             content=(
                 b'{"errors":[{"title":"Advanced alert routing features are enabled '
-                b'for your team. Please use the Alert Routes endpoint instead for '
+                b"for your team. Please use the Alert Routes endpoint instead for "
                 b'enhanced alert routing functionality.","status":"403"}]}'
             ),
         )
@@ -774,9 +774,7 @@ class TestTransportModule:
         """Other 403 reasons (auth failure, etc.) must not get the use_tool hint."""
         response = httpx.Response(
             403,
-            request=httpx.Request(
-                "GET", "https://api.rootly.com/v1/alert_routing_rules"
-            ),
+            request=httpx.Request("GET", "https://api.rootly.com/v1/alert_routing_rules"),
             content=b'{"errors":[{"title":"Forbidden","status":"403"}]}',
         )
         annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_alert_routing_deprecation(
@@ -806,9 +804,7 @@ class TestTransportModule:
             client.client.request = AsyncMock()
 
             with pytest.raises(RootlyValidationError) as exc_info:
-                await client.request(
-                    "GET", "https://api.rootly.com/v1/schedules/{id}/shifts"
-                )
+                await client.request("GET", "https://api.rootly.com/v1/schedules/{id}/shifts")
             assert "{id}" in str(exc_info.value)
             client.client.request.assert_not_called()
 
@@ -835,9 +831,7 @@ class TestTransportModule:
         """A fully-substituted URL must pass the path-template guard."""
         response = httpx.Response(
             200,
-            request=httpx.Request(
-                "GET", "https://api.rootly.com/v1/schedules/abc-123/shifts"
-            ),
+            request=httpx.Request("GET", "https://api.rootly.com/v1/schedules/abc-123/shifts"),
             content=b'{"data":[]}',
         )
         with patch.object(
