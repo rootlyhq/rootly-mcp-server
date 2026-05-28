@@ -14,10 +14,17 @@ from typing import Any
 
 import httpx
 
+from .exceptions import RootlyValidationError
 from .security import mask_sensitive_data
 from .utils import OAUTH_PROTECTED_RESOURCE_PATH, auth_header_state, resolve_mcp_server_url
 
 logger = logging.getLogger(__name__)
+
+# Detects unfilled OpenAPI path templates like `{id}` or `{schedule_id}` that
+# leaked into a URL because a required path argument was missing or misnamed.
+# Without this check the literal `{id}` gets URL-encoded to `%7Bid%7D` and the
+# Rootly API returns a misleading 404 instead of a clear param-missing error.
+_UNFILLED_PATH_PARAM_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}|%7B[A-Za-z_][A-Za-z0-9_]*%7D")
 
 # ContextVar to hold the auth token for the current hosted HTTP session/request.
 # Set by AuthCaptureMiddleware on MCP transport paths (e.g. /sse, /mcp),
@@ -798,6 +805,31 @@ class AuthenticatedHTTPXClient:
         return api_token
 
     @staticmethod
+    def _check_for_unfilled_path_params(method: str, url: Any) -> None:
+        """Block requests whose URL still contains unfilled `{param}` templates.
+
+        FastMCP's OpenAPI integration substitutes path parameters from tool
+        arguments. When the model calls a tool with the wrong parameter name
+        (e.g. `schedule_id` instead of `id`), the placeholder remains in the URL
+        and gets sent upstream, producing a misleading 404. This guard catches
+        that earlier with a clear, actionable error.
+        """
+        url_str = str(url)
+        matches = _UNFILLED_PATH_PARAM_RE.findall(url_str)
+        if not matches:
+            return
+        # Normalize URL-encoded matches (`%7Bid%7D`) back to `{id}` for the message.
+        missing = sorted(
+            {m.replace("%7B", "{").replace("%7D", "}") for m in matches}
+        )
+        raise RootlyValidationError(
+            f"Cannot call {method} {url_str}: the upstream URL still contains "
+            f"unfilled path parameter(s) {missing}. This usually means a required "
+            f"path argument was missing or passed under the wrong name. "
+            f"Check the tool's input schema for the exact parameter names."
+        )
+
+    @staticmethod
     def _normalize_query_param_value(value: Any) -> Any:
         """Drop blank query values while preserving meaningful falsey values.
 
@@ -846,6 +878,7 @@ class AuthenticatedHTTPXClient:
 
     async def request(self, method: str, url: str, **kwargs):
         """Override request to transform parameters and ensure correct headers."""
+        self._check_for_unfilled_path_params(method, url)
         # Transform query parameters
         if "params" in kwargs:
             kwargs["params"] = self._transform_params(kwargs["params"])
@@ -1178,6 +1211,7 @@ class AuthenticatedHTTPXClient:
         Headers are enforced by the event hook, so we just delegate to the inner client.
         Alert response stripping is also applied here for forward compatibility.
         """
+        self._check_for_unfilled_path_params(request.method, request.url)
         # In hosted mode, ensure Authorization header is present in the request.
         # The _session_auth_token ContextVar is set by AuthCaptureMiddleware
         # on MCP transport paths (/sse, /mcp).

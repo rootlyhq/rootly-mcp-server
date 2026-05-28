@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from rootly_mcp_server import transport
+from rootly_mcp_server.exceptions import RootlyValidationError
 
 
 class TestTransportModule:
@@ -660,6 +661,61 @@ class TestTransportModule:
             "page[size]": 20,
             "include": "alert_urgency",
         }
+
+    @pytest.mark.asyncio
+    async def test_authenticated_client_request_blocks_unfilled_path_template(self):
+        """`{id}` left in the URL must raise before hitting the upstream API."""
+        with patch.object(
+            transport.AuthenticatedHTTPXClient, "_get_api_token", return_value="token"
+        ):
+            client = transport.AuthenticatedHTTPXClient(hosted=False, transport="stdio")
+            client.client.request = AsyncMock()
+
+            with pytest.raises(RootlyValidationError) as exc_info:
+                await client.request(
+                    "GET", "https://api.rootly.com/v1/schedules/{id}/shifts"
+                )
+            assert "{id}" in str(exc_info.value)
+            client.client.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_authenticated_client_send_blocks_unfilled_path_template(self):
+        """URL-encoded `%7Bid%7D` in a built request must also be blocked."""
+        with patch.object(
+            transport.AuthenticatedHTTPXClient, "_get_api_token", return_value="token"
+        ):
+            client = transport.AuthenticatedHTTPXClient(hosted=False, transport="stdio")
+            client.client.send = AsyncMock()
+
+            request = httpx.Request(
+                "GET",
+                "https://api.rootly.com/v1/schedules/%7Bschedule_id%7D/shifts",
+            )
+            with pytest.raises(RootlyValidationError) as exc_info:
+                await client.send(request)
+            assert "{schedule_id}" in str(exc_info.value)
+            client.client.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_authenticated_client_request_allows_filled_path(self):
+        """A fully-substituted URL must pass the path-template guard."""
+        response = httpx.Response(
+            200,
+            request=httpx.Request(
+                "GET", "https://api.rootly.com/v1/schedules/abc-123/shifts"
+            ),
+            content=b'{"data":[]}',
+        )
+        with patch.object(
+            transport.AuthenticatedHTTPXClient, "_get_api_token", return_value="token"
+        ):
+            client = transport.AuthenticatedHTTPXClient(hosted=False, transport="stdio")
+            client.client.request = AsyncMock(return_value=response)
+
+            result = await client.request(
+                "GET", "https://api.rootly.com/v1/schedules/abc-123/shifts"
+            )
+            assert result.status_code == 200
 
     @pytest.mark.asyncio
     async def test_authenticated_client_send_drops_empty_query_parameters(self):
