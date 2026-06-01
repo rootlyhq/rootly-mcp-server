@@ -89,15 +89,14 @@ class ContainerClient:
         expected_tools = [
             "search_incidents",  # Curated tool
             "list_incidents",  # Curated tool (canonical name for listing incidents)
-            "listIncidents",  # Curated deprecated proxy forwarding to list_incidents
-            "createIncident",
-            "listTeams",
-            "listAlerts",
-            "listEnvironments",
-            "listServices",
-            "listSeverities",
-            "createAlert",
-            "createTeam",
+            "create_incident",
+            "list_teams",
+            "list_alerts",
+            "list_environments",
+            "list_services",
+            "list_severities",
+            "create_alert",
+            "create_team",
         ]
 
         # Simulate tool response format
@@ -241,8 +240,9 @@ class TestContainerServerEssentials:
         assert "search_incidents" in tool_names, "search_incidents tool missing"
 
         # Verify canonical curated incident tool and a standard OpenAPI tool.
-        # `listIncidents` is also exposed as a deprecated proxy for backward compat.
-        expected_tools = ["list_incidents", "listTeams"]
+        # camelCase names (e.g. listIncidents) stay callable as hidden aliases
+        # but are not listed; tools/list advertises snake_case only.
+        expected_tools = ["list_incidents", "list_teams"]
         for tool in expected_tools:
             assert tool in tool_names, f"Expected tool {tool} not found"
 

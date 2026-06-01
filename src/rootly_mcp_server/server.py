@@ -14,6 +14,7 @@ import traceback
 from typing import Any
 
 import fastmcp.server.middleware as fastmcp_middleware
+import httpx
 import mcp.types as mt
 from fastmcp import FastMCP
 
@@ -26,6 +27,7 @@ from .tools.incidents import register_incident_tools
 from .tools.oncall import register_oncall_tools
 from .tools.resources import register_resource_handlers
 from .utils import (
+    OAUTH_AUTHORIZATION_SERVER_PATH,
     OAUTH_PROTECTED_RESOURCE_PATH,
     auth_header_state,
     derive_oauth_server_url,
@@ -53,6 +55,7 @@ _load_swagger_spec = spec_transform._load_swagger_spec
 _fetch_swagger_from_url = spec_transform._fetch_swagger_from_url
 _filter_openapi_spec = spec_transform._filter_openapi_spec
 _has_broken_references = spec_transform._has_broken_references
+snakecase_operation_ids = spec_transform.snakecase_operation_ids
 
 # Re-export transport/auth internals for backward compatibility with existing tests/imports.
 ALERT_ESSENTIAL_ATTRIBUTES = transport.ALERT_ESSENTIAL_ATTRIBUTES
@@ -77,33 +80,51 @@ DEFAULT_WRITE_ALLOWED_PATHS = server_defaults.DEFAULT_WRITE_ALLOWED_PATHS
 RootlyMCPServer = legacy_server.RootlyMCPServer
 
 
-def _strip_curated_override_operations(
-    spec: dict[str, Any], override_ids: frozenset[str] | set[str]
-) -> None:
-    """Remove operations from `spec.paths` whose operationId is in `override_ids`.
+def _provider_tool_inventory(
+    mcp: FastMCP,
+) -> tuple[set[str], Any, set[str]]:
+    """Return (curated_names, autogen_provider, autogen_names) across providers.
 
-    Mutates the spec in place. Paths that end up with no operations are also removed.
+    Curated tools live on the LocalProvider (`_components` keyed `tool:<name>`);
+    autogen OpenAPI tools live on the OpenAPIProvider (`_tools` keyed by name).
     """
-    if not override_ids:
+    curated_names: set[str] = set()
+    autogen_provider: Any = None
+    autogen_names: set[str] = set()
+    for provider in mcp.providers:
+        components = getattr(provider, "_components", None)
+        if components:
+            for component_key, component in components.items():
+                if component_key.startswith("tool:") and getattr(component, "name", None):
+                    curated_names.add(component.name)
+        autogen_tools = getattr(provider, "_tools", None)
+        if isinstance(autogen_tools, dict):
+            autogen_provider = provider
+            autogen_names.update(autogen_tools.keys())
+    return curated_names, autogen_provider, autogen_names
+
+
+def _remove_autogen_tools_shadowed_by_curated(mcp: FastMCP) -> None:
+    """Drop autogen tools whose name a curated `@mcp.tool` registration provides.
+
+    A curated tool and an autogen OpenAPI tool can resolve to the same name (the
+    curated one is the richer implementation). Without this, both would surface
+    as duplicate entries in `tools/list`. The collision set is derived from the
+    actually-registered tool names, so adding a future curated tool that shadows
+    an autogen operation is handled automatically — nothing to keep in sync.
+    """
+    curated_names, autogen_provider, autogen_names = _provider_tool_inventory(mcp)
+    if autogen_provider is None:
         return
-    paths = spec.get("paths", {})
-    paths_to_drop: list[str] = []
-    for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
-        methods_to_drop = [
-            method
-            for method, op in path_item.items()
-            if method.lower() in ("get", "post", "put", "patch", "delete")
-            and isinstance(op, dict)
-            and op.get("operationId") in override_ids
-        ]
-        for method in methods_to_drop:
-            path_item.pop(method, None)
-        if not any(m.lower() in ("get", "post", "put", "patch", "delete") for m in path_item):
-            paths_to_drop.append(path)
-    for path in paths_to_drop:
-        del paths[path]
+    collisions = curated_names & autogen_names
+    for name in collisions:
+        autogen_provider._tools.pop(name, None)
+    if collisions:
+        logger.info(
+            "Removed %d autogen tool(s) shadowed by curated implementations: %s",
+            len(collisions),
+            ", ".join(sorted(collisions)),
+        )
 
 
 def _fingerprint_auth_header(auth_header: str) -> str:
@@ -344,6 +365,38 @@ def _extract_exception_error_context(exc: Exception) -> dict[str, Any]:
     return {key: value for key, value in error_context.items() if value not in ("", [], None, {})}
 
 
+class CamelCaseAliasMiddleware(fastmcp_middleware.Middleware):
+    """Routes deprecated camelCase tool names to their snake_case canonical.
+
+    The tool surface is uniformly snake_case and only snake_case names are
+    advertised in `tools/list`. This middleware keeps the historical camelCase
+    names callable for clients with cached configs or in-flight sessions by
+    rewriting an incoming `call_tool` name to its canonical snake_case form
+    before dispatch. Aliases are intentionally never listed, so the visible
+    surface stays free of duplicates.
+    """
+
+    def __init__(self, aliases: dict[str, str]) -> None:
+        # `snakecase_operation_ids` only emits entries that actually changed, so
+        # every key here is a camelCase name distinct from its snake_case value.
+        self._aliases = dict(aliases)
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        canonical = self._aliases.get(context.message.name)
+        if canonical:
+            logger.debug(
+                "Routing deprecated camelCase tool %r to canonical %r",
+                context.message.name,
+                canonical,
+            )
+            context.message.name = canonical
+        return await call_next(context)
+
+
 class ToolUsageLoggingMiddleware(fastmcp_middleware.Middleware):
     """FastMCP middleware that logs per-tool usage with caller identity context."""
 
@@ -461,6 +514,15 @@ def create_rootly_mcp_server(
     swagger_spec = _load_swagger_spec(swagger_path)
     logger.info(f"Loaded Swagger spec with {len(swagger_spec.get('paths', {}))} total paths")
 
+    # Normalize every operationId to snake_case so the autogen tool surface is
+    # uniformly snake_case (FastMCP derives tool names verbatim from operationIds).
+    # Must run before operationId-based filtering, allowlist matching, and
+    # curated-override stripping below — all of which now operate on snake names.
+    # The returned camelCase->snake_case map feeds the alias middleware so the
+    # historical camelCase names stay callable (but hidden from tools/list).
+    camel_to_snake_aliases = snakecase_operation_ids(swagger_spec)
+    logger.info(f"Normalized {len(camel_to_snake_aliases)} operationIds to snake_case")
+
     # When an allowlist is provided, build the subset that matches real OpenAPI
     # operationIds; curated tool names (registered later via @mcp.tool) won't appear
     # in the spec and are validated separately after registration.
@@ -483,12 +545,10 @@ def create_rootly_mcp_server(
         enabled_operation_ids=autogen_allowlist,
     )
 
-    # Drop operations whose operationId is provided by a curated `@mcp.tool(name=...)`
-    # registration. Without this, FastMCP's OpenAPIProvider would register an autogen
-    # tool with the same name as our curated tool, producing duplicate entries.
-    _strip_curated_override_operations(
-        filtered_spec, server_defaults.CURATED_OVERRIDE_OPERATION_IDS
-    )
+    # NOTE: autogen tools whose name collides with a curated `@mcp.tool` are
+    # removed AFTER registration by `_remove_autogen_tools_shadowed_by_curated`,
+    # which derives the collision set from the real registry instead of a
+    # hand-maintained list.
 
     logger.info(f"Filtered spec to {len(filtered_spec.get('paths', {}))} allowed paths")
 
@@ -543,6 +603,9 @@ def create_rootly_mcp_server(
         name=name,
         tags={"rootly", "incident-management"},
     )
+    # Alias middleware runs first so the historical camelCase names are rewritten
+    # to snake_case before usage logging records the (canonical) tool name.
+    mcp.add_middleware(CamelCaseAliasMiddleware(camel_to_snake_aliases))
     mcp.add_middleware(ToolUsageLoggingMiddleware())
 
     @mcp.custom_route("/healthz", methods=["GET"])
@@ -569,52 +632,7 @@ def create_rootly_mcp_server(
                         "openid",
                         "profile",
                         "email",
-                        "ir.incidents:read",
-                        "ir.incidents:write",
-                        "ir.services:read",
-                        "ir.services:write",
-                        "ir.environments:read",
-                        "ir.environments:write",
-                        "ir.functionalities:read",
-                        "ir.functionalities:write",
-                        "ir.severities:read",
-                        "ir.severities:write",
-                        "ir.incident_types:read",
-                        "ir.incident_types:write",
-                        "ir.incident_roles:read",
-                        "ir.incident_roles:write",
-                        "ir.workflows:read",
-                        "ir.workflows:write",
-                        "ir.catalogs:read",
-                        "ir.catalogs:write",
-                        "ir.groups:read",
-                        "ir.groups:write",
-                        "ir.playbooks:read",
-                        "ir.playbooks:write",
-                        "ir.retrospectives:read",
-                        "ir.retrospectives:write",
-                        "ir.status_pages:read",
-                        "ir.status_pages:write",
-                        "ir.form_fields:read",
-                        "ir.form_fields:write",
-                        "ir.pulses:read",
-                        "ir.pulses:write",
-                        "oc.alerts:read",
-                        "oc.alerts:write",
-                        "oc.schedules:read",
-                        "oc.schedules:write",
-                        "oc.escalation_policies:read",
-                        "oc.escalation_policies:write",
-                        "oc.alert_routing_rules:read",
-                        "oc.alert_routing_rules:write",
-                        "oc.heartbeats:read",
-                        "oc.heartbeats:write",
-                        "oc.alert_sources:read",
-                        "oc.alert_sources:write",
-                        "oc.live_call_routing:read",
-                        "oc.live_call_routing:write",
-                        "oc.shift_overrides:read",
-                        "oc.shift_overrides:write",
+                        "all",
                     ],
                     "bearer_methods_supported": ["header"],
                 },
@@ -630,6 +648,65 @@ def create_rootly_mcp_server(
         @mcp.custom_route(OAUTH_PROTECTED_RESOURCE_PATH, methods=["GET"])
         async def oauth_protected_resource(request):
             return await _oauth_protected_resource_handler(request)
+
+        # OAuth 2.0 Authorization Server Metadata (RFC 8414)
+        # Some MCP clients fetch this directly from the MCP server instead of
+        # following the authorization_servers link from the protected resource
+        # metadata. Proxy the response from the actual OAuth server.
+        _auth_server_metadata_cache: dict[str, Any] = {}
+        _AUTH_SERVER_CACHE_TTL = 3600
+
+        # NOTE: The proxied response contains "issuer": "https://rootly.com" from
+        # the upstream OAuth server, but clients fetch this from the MCP server
+        # origin. RFC 8414 §3.3 requires issuer to match the request URL; strict
+        # OAuth libraries may reject the mismatch. Most observed clients (node,
+        # python-httpx, Cursor) do not enforce this check.
+        async def _oauth_authorization_server_handler(request):
+            oauth_server_url = derive_oauth_server_url(base_url)
+            now = time.time()
+            cached = _auth_server_metadata_cache.get("data")
+            cached_at = _auth_server_metadata_cache.get("cached_at", 0)
+            if cached and (now - cached_at) < _AUTH_SERVER_CACHE_TTL:
+                return JSONResponse(cached, headers={"Cache-Control": "max-age=3600"})
+
+            upstream_url = f"{oauth_server_url}/.well-known/oauth-authorization-server"
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.get(upstream_url)
+                    resp.raise_for_status()
+                    metadata = resp.json()
+                    _auth_server_metadata_cache["data"] = metadata
+                    _auth_server_metadata_cache["cached_at"] = now
+                    return JSONResponse(metadata, headers={"Cache-Control": "max-age=3600"})
+            except Exception:
+                logger.warning(
+                    "Failed to proxy OAuth authorization server metadata from %s",
+                    upstream_url,
+                    exc_info=True,
+                )
+                if cached:
+                    return JSONResponse(cached, headers={"Cache-Control": "max-age=60"})
+                return JSONResponse(
+                    {"error": "authorization_server_metadata_unavailable"},
+                    status_code=502,
+                    headers={"Cache-Control": "no-store"},
+                )
+
+        @mcp.custom_route(OAUTH_AUTHORIZATION_SERVER_PATH + "/{path:path}", methods=["GET"])
+        async def oauth_authorization_server_suffixed(request):
+            return await _oauth_authorization_server_handler(request)
+
+        @mcp.custom_route(OAUTH_AUTHORIZATION_SERVER_PATH, methods=["GET"])
+        async def oauth_authorization_server(request):
+            return await _oauth_authorization_server_handler(request)
+
+        # Some clients prepend the resource path before the well-known segment
+        # (e.g. /mcp/.well-known/oauth-authorization-server).
+        @mcp.custom_route(
+            "/{resource_path:path}" + OAUTH_AUTHORIZATION_SERVER_PATH, methods=["GET"]
+        )
+        async def oauth_authorization_server_prefixed(request):
+            return await _oauth_authorization_server_handler(request)
 
     # Add some custom tools for enhanced functionality
 
@@ -754,22 +831,16 @@ def create_rootly_mcp_server(
         mcp_error=MCPError,
     )
 
+    # A curated tool and an autogen tool can resolve to the same name; drop the
+    # autogen duplicate so only the richer curated implementation is surfaced.
+    _remove_autogen_tools_shadowed_by_curated(mcp)
+
     # Validate the allowlist against the fully-registered tool set (autogen + curated).
     # This must happen after all register_*_tools() calls so curated tool names — which
     # aren't OpenAPI operationIds — are recognized as valid.
     if enabled_tools is not None:
-        registered_names: set[str] = set()
-        for provider in mcp.providers:
-            # LocalProvider stores curated tools in `_components` keyed `tool:<name>`.
-            components = getattr(provider, "_components", None)
-            if components:
-                for component_key, component in components.items():
-                    if component_key.startswith("tool:") and getattr(component, "name", None):
-                        registered_names.add(component.name)
-            # OpenAPIProvider stores autogen tools in `_tools` keyed by name.
-            autogen_tools = getattr(provider, "_tools", None)
-            if isinstance(autogen_tools, dict):
-                registered_names.update(autogen_tools.keys())
+        curated_names, _, autogen_names = _provider_tool_inventory(mcp)
+        registered_names = curated_names | autogen_names
 
         valid_tools = enabled_tools & registered_names
         invalid_tools = sorted(enabled_tools - registered_names)

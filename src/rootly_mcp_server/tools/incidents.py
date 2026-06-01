@@ -451,115 +451,6 @@ def register_incident_tools(
             error_type, error_message = mcp_error.categorize_error(e)
             return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
 
-    @mcp.tool(name="listIncidents")
-    async def list_incidents_legacy(
-        query: Annotated[
-            str,
-            Field(description="Optional free-text search across incident titles and summaries"),
-        ] = "",
-        teams: Annotated[
-            str,
-            Field(description="Comma-separated team names or slugs to filter incidents"),
-        ] = "",
-        team_ids: Annotated[
-            str,
-            Field(description="Comma-separated Rootly team IDs to filter incidents"),
-        ] = "",
-        service_ids: Annotated[
-            str,
-            Field(description="Comma-separated Rootly service IDs to filter incidents"),
-        ] = "",
-        severity: Annotated[
-            str,
-            Field(description="Optional severity filter (e.g., critical, high, medium, low)"),
-        ] = "",
-        status: Annotated[
-            str,
-            Field(description="Optional incident status filter"),
-        ] = "",
-        started_after: Annotated[
-            str,
-            Field(description="Filter incidents that started at or after this ISO 8601 timestamp"),
-        ] = "",
-        started_before: Annotated[
-            str,
-            Field(description="Filter incidents that started at or before this ISO 8601 timestamp"),
-        ] = "",
-        custom_field_selected_option_ids: Annotated[
-            str,
-            Field(description="Comma-separated custom field option IDs"),
-        ] = "",
-        sort: Annotated[
-            Literal["created_at", "-created_at", "updated_at", "-updated_at"],
-            Field(description="Sort order"),
-        ] = "-created_at",
-        page_size: Annotated[
-            int,
-            Field(description="Number of incidents per page (max: 100)", ge=1, le=100),
-        ] = 25,
-        page_number: Annotated[
-            int,
-            Field(description="Page number to retrieve (1-indexed)", ge=1),
-        ] = 1,
-        fields_incidents: Annotated[
-            str,
-            Field(
-                description="[Deprecated] Sparse fieldset is now handled internally; this parameter is ignored."
-            ),
-        ] = "",
-        include: Annotated[
-            str,
-            Field(
-                description="[Deprecated] Related-resource inclusion is now handled internally; this parameter is ignored."
-            ),
-        ] = "",
-        filter_status: Annotated[
-            str,
-            Field(description="[Legacy] Mapped to `status` if `status` is not provided."),
-        ] = "",
-        filter_severity: Annotated[
-            str,
-            Field(description="[Legacy] Mapped to `severity` if `severity` is not provided."),
-        ] = "",
-        filter_started_at_gte: Annotated[
-            str,
-            Field(description="[Legacy] Mapped to `started_after` if not provided."),
-        ] = "",
-        filter_started_at_lte: Annotated[
-            str,
-            Field(description="[Legacy] Mapped to `started_before` if not provided."),
-        ] = "",
-    ) -> JsonDict:
-        """⚠️ DEPRECATED — use `list_incidents` instead.
-
-        This is a backward-compatibility shim for clients that have the legacy
-        `listIncidents` tool name pinned (e.g. in `ROOTLY_MCP_ENABLED_TOOLS` or
-        cached agent configs). It forwards to `list_incidents` and will be
-        removed in a future release. Update your configuration to call
-        `list_incidents` directly.
-        """
-        logger.warning(
-            "Deprecated tool 'listIncidents' invoked; forwarding to 'list_incidents'. "
-            "Update callers to use 'list_incidents' directly — the legacy name will be removed."
-        )
-        return cast(
-            JsonDict,
-            await list_incidents(
-                query=query,
-                teams=teams,
-                team_ids=team_ids,
-                service_ids=service_ids,
-                severity=severity or filter_severity,
-                status=status or filter_status,
-                started_after=started_after or filter_started_at_gte,
-                started_before=started_before or filter_started_at_lte,
-                custom_field_selected_option_ids=custom_field_selected_option_ids,
-                sort=sort,
-                page_size=page_size,
-                page_number=page_number,
-            ),
-        )
-
     @mcp.tool()
     async def collect_incidents(
         query: Annotated[
@@ -852,7 +743,7 @@ def register_incident_tools(
             error_type, error_message = mcp_error.categorize_error(e)
             return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
 
-    @mcp.tool(name="getIncident")
+    @mcp.tool(name="get_incident")
     async def get_incident(
         incident_id: Annotated[
             str,
@@ -909,7 +800,7 @@ def register_incident_tools(
 
     if enable_write_tools:
 
-        @mcp.tool(name="createIncident")
+        @mcp.tool(name="create_incident")
         async def create_incident(
             title: Annotated[
                 str | None,
@@ -1003,7 +894,7 @@ def register_incident_tools(
                     ),
                 )
 
-        @mcp.tool(name="updateIncident")
+        @mcp.tool(name="update_incident")
         async def update_incident(
             incident_id: Annotated[
                 str,

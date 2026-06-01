@@ -265,7 +265,7 @@ def build_code_mode_transform() -> CodeMode:
             "the task, then fall back to lower-level API tools as needed. Use list_incidents for "
             "structured incident queries with filters like teams, team_ids, start_time, end_time, "
             "severity, or status; use search_incidents for lightweight free-text lookups. Do not use client "
-            "prefixes like mcp__rootly-codemode__tool_search or rootly:getCurrentUser inside "
+            "prefixes like mcp__rootly-codemode__tool_search or rootly:get_current_user inside "
             "execute; call tool_search or the raw Rootly tool name directly. Avoid imports "
             "such as json or asyncio inside the sandbox and return native Python values instead. Example: "
             "await call_tool('search_incidents', {'query': '', 'page_size': 1, 'page_number': 1, "

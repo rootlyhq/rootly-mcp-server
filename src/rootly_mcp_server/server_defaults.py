@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 
+from .spec_transform import to_snake_case
+
 # Set up logger
 logger = logging.getLogger(__name__)
 
@@ -44,142 +46,100 @@ def _parse_csv_set(raw: str | None) -> set[str] | None:
     return parsed or None
 
 
-# Legacy tool names that have been replaced by curated equivalents.
-# Kept callable via proxy registration; allowlists referencing the legacy name
-# are transparently resolved to the canonical name with a deprecation warning.
-LEGACY_TOOL_ALIASES: dict[str, str] = {
-    "listIncidents": "list_incidents",
-}
-
-
 # Default hosted tool surface tuned from one month of production popularity data.
 # This keeps the slim remote/serverless profile near 70 tools while still
 # covering the overwhelming majority of observed requests. Operators can always
 # override this with ROOTLY_MCP_ENABLED_TOOLS for a narrower or broader surface.
 DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
     {
-        "ListWorkflowRuns",
         "collect_incidents",
-        "createIncident",
-        "createIncidentActionItem",
-        "createOverrideShift",
-        "createSchedule",
-        "createWorkflow",
-        "createWorkflowTask",
+        "create_incident",
+        "create_incident_action_item",
+        "create_override_shift",
+        "create_schedule",
+        "create_workflow",
+        "create_workflow_task",
         "find_related_incidents",
-        "getAlert",
-        "getAlertEvent",
-        "getCurrentUser",
-        "getEscalationLevel",
-        "getEscalationPolicy",
-        "getFunctionality",
-        "getIncident",
-        "getService",
-        "getSchedule",
-        "getScheduleShifts",
-        "getTeam",
-        "getUser",
+        "get_alert",
         "get_alert_by_short_id",
+        "get_alert_event",
+        "get_current_user",
+        "get_escalation_level",
+        "get_escalation_policy",
+        "get_functionality",
+        "get_incident",
         "get_oncall_handoff_summary",
         "get_oncall_schedule_summary",
+        "get_schedule",
+        "get_schedule_shifts",
         "get_server_version",
+        "get_service",
         "get_shift_incidents",
-        "listAlertEvents",
-        "listAlertRoutes",
-        "listAlertRoutingRules",
-        "listAlertUrgencies",
-        "listAlerts",
-        "listAlertsSources",
-        "listAllIncidentActionItems",
-        "listEscalationLevels",
-        "listEscalationPaths",
-        "listEscalationPolicies",
-        "listFunctionalities",
-        "listIncidentActionItems",
-        "listIncidentAlerts",
-        "listIncidentEvents",
-        "listIncidentFormFieldSelections",
-        "listIncidentTypes",
-        "listScheduleRotationActiveDays",
-        "listScheduleRotationUsers",
-        "listScheduleRotations",
-        "listSchedules",
-        "listServices",
-        "listSeverities",
-        "listShifts",
-        "listTeams",
-        "listUsers",
-        "listWorkflowTasks",
-        "listWorkflows",
+        "get_team",
+        "get_user",
+        "list_alert_events",
+        "list_alert_routes",
+        "list_alert_routing_rules",
+        "list_alert_urgencies",
+        "list_alerts",
+        "list_alerts_sources",
+        "list_all_incident_action_items",
         "list_endpoints",
+        "list_escalation_levels",
+        "list_escalation_paths",
+        "list_escalation_policies",
+        "list_functionalities",
+        "list_incident_action_items",
+        "list_incident_alerts",
+        "list_incident_events",
+        "list_incident_form_field_selections",
+        "list_incident_types",
         "list_incidents",
+        "list_override_shifts",
+        "list_schedule_rotation_active_days",
+        "list_schedule_rotation_users",
+        "list_schedule_rotations",
+        "list_schedules",
+        "list_services",
+        "list_severities",
         "list_shifts",
+        "list_teams",
+        "list_users",
+        "list_workflow_runs",
+        "list_workflow_tasks",
+        "list_workflows",
         "search_incidents",
         "suggest_solutions",
-        "listOverrideShifts",
-        "updateEscalationLevel",
-        "updateEscalationPath",
-        "updateEscalationPolicy",
-        "updateIncident",
-        "updateIncidentType",
-        "updateOverrideShift",
-        "updateSchedule",
-        "updateScheduleRotation",
-        "updateSeverity",
-        "updateService",
-        "updateTeam",
-        "updateWorkflow",
-        "updateWorkflowTask",
-    }
-)
-
-
-# OpenAPI operationIds that must be removed from the autogen spec because a
-# curated `@mcp.tool(name=...)` registration provides the implementation for
-# that exact name. Without this exclusion, FastMCP's OpenAPIProvider and
-# LocalProvider would each register a tool under the same name, producing
-# duplicate entries in `tools/list`.
-CURATED_OVERRIDE_OPERATION_IDS: frozenset[str] = frozenset(
-    {
-        "listIncidents",  # overridden by the deprecated proxy in tools/incidents.py
+        "update_escalation_level",
+        "update_escalation_path",
+        "update_escalation_policy",
+        "update_incident",
+        "update_incident_type",
+        "update_override_shift",
+        "update_schedule",
+        "update_schedule_rotation",
+        "update_service",
+        "update_severity",
+        "update_team",
+        "update_workflow",
+        "update_workflow_task",
     }
 )
 
 
 def canonicalize_tool_names(enabled_tools: set[str]) -> set[str]:
-    """Expand legacy/canonical tool name pairs so both stay exposed together.
+    """Normalize an allowlist to the snake_case canonical tool names.
 
-    Under posture A (deprecated-proxy) the legacy name remains callable; we keep
-    both names in the allowlist so curated tools registered under the legacy
-    name (e.g. `@mcp.tool(name="listIncidents")`) and their canonical wrappers
-    (`list_incidents`) are both reachable. Without this, an allowlist that
-    mentions only one half of the pair will silently strip the other and
-    produce "Unknown tool" errors for models that pick the missing name.
-
-    Expansion is bidirectional: legacy→canonical AND canonical→legacy. A
-    deprecation warning is emitted only when the legacy name was the entry
-    that triggered expansion (the canonical→legacy direction is silent
-    because operators using the canonical name aren't doing anything wrong).
+    The exposed tool surface is uniformly snake_case. Operators with legacy
+    camelCase entries in ``ROOTLY_MCP_ENABLED_TOOLS`` (or cached configs) still
+    get the right tools: each name is converted to its snake_case form so it
+    matches the registered/autogen tool names. (The camelCase names also remain
+    callable at runtime via the alias middleware, but allowlist filtering keys
+    off the canonical snake_case name.)
     """
     if not enabled_tools:
         return enabled_tools
-    canonical_to_legacy: dict[str, str] = {v: k for k, v in LEGACY_TOOL_ALIASES.items()}
-    resolved: set[str] = set(enabled_tools)
-    for name in enabled_tools:
-        canonical = LEGACY_TOOL_ALIASES.get(name)
-        if canonical:
-            logger.warning(
-                "ROOTLY_MCP_ENABLED_TOOLS entry %r is deprecated; %r will be exposed alongside it. "
-                "Update your configuration to use %r directly — the legacy name will be removed in a future release.",
-                name,
-                canonical,
-                canonical,
-            )
-            resolved.add(canonical)
-        legacy = canonical_to_legacy.get(name)
-        if legacy:
-            resolved.add(legacy)
-    return resolved
+    return {to_snake_case(name) for name in enabled_tools}
 
 
 def _generate_recommendation(solution_data: dict) -> str:

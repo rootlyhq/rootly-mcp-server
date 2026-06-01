@@ -41,7 +41,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
@@ -63,7 +63,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7

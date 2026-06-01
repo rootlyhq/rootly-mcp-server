@@ -134,7 +134,7 @@ class TestDefaultConfiguration:
 
 @pytest.mark.unit
 class TestScopedIncidentUpdateTool:
-    """Test the scoped custom updateIncident tool."""
+    """Test the scoped custom update_incident tool."""
 
     def _register_tools(self):
         mcp = FakeMCP()
@@ -153,9 +153,9 @@ class TestScopedIncidentUpdateTool:
     async def test_update_incident_tool_is_registered_with_customer_facing_name(self):
         tools, _ = self._register_tools()
 
-        assert "createIncident" in tools
-        assert "updateIncident" in tools
-        assert "getIncident" in tools
+        assert "create_incident" in tools
+        assert "update_incident" in tools
+        assert "get_incident" in tools
 
     @pytest.mark.asyncio
     async def test_write_tools_are_hidden_when_write_gating_is_disabled(self):
@@ -170,9 +170,9 @@ class TestScopedIncidentUpdateTool:
             enable_write_tools=False,
         )
 
-        assert "getIncident" in mcp.tools
-        assert "createIncident" not in mcp.tools
-        assert "updateIncident" not in mcp.tools
+        assert "get_incident" in mcp.tools
+        assert "create_incident" not in mcp.tools
+        assert "update_incident" not in mcp.tools
 
     @pytest.mark.asyncio
     async def test_create_incident_sends_only_allowed_fields(self):
@@ -196,7 +196,7 @@ class TestScopedIncidentUpdateTool:
         }
         request.return_value = response
 
-        result = await tools["createIncident"](
+        result = await tools["create_incident"](
             title="  Database latency spike  ",
             summary=" Primary API requests timing out ",
             severity_id=" sev-1 ",
@@ -231,7 +231,7 @@ class TestScopedIncidentUpdateTool:
     async def test_create_incident_requires_title_or_summary(self):
         tools, request = self._register_tools()
 
-        result = await tools["createIncident"](title="   ", summary=None)
+        result = await tools["create_incident"](title="   ", summary=None)
 
         request.assert_not_called()
         assert result["error"] is True
@@ -255,7 +255,7 @@ class TestScopedIncidentUpdateTool:
         }
         request.return_value = response
 
-        result = await tools["getIncident"](incident_id="inc-123")
+        result = await tools["get_incident"](incident_id="inc-123")
 
         request.assert_awaited_once_with("GET", "/v1/incidents/inc-123")
         assert result["data"]["id"] == "inc-123"
@@ -307,7 +307,7 @@ class TestScopedIncidentUpdateTool:
 
         request.side_effect = [list_response, incident_response]
 
-        result = await tools["getIncident"](incident_id=incident_reference)
+        result = await tools["get_incident"](incident_id=incident_reference)
 
         assert request.await_args_list == [
             call(
@@ -403,7 +403,7 @@ class TestScopedIncidentUpdateTool:
 
         request.side_effect = [first_page_response, mid_page_response, target_range_response]
 
-        result = await tools["getIncident"](incident_id="4460")
+        result = await tools["get_incident"](incident_id="4460")
 
         assert result["error"] is True
         assert result["error_type"] == "not_found"
@@ -462,7 +462,7 @@ class TestScopedIncidentUpdateTool:
         }
         request.return_value = response
 
-        result = await tools["updateIncident"](
+        result = await tools["update_incident"](
             incident_id="inc-123",
             retrospective_progress_status="active",
             summary="Updated PIR summary",
@@ -516,7 +516,7 @@ class TestScopedIncidentUpdateTool:
 
         request.side_effect = [list_response, update_response]
 
-        result = await tools["updateIncident"](
+        result = await tools["update_incident"](
             incident_id="#4460",
             retrospective_progress_status="active",
         )
@@ -564,7 +564,7 @@ class TestScopedIncidentUpdateTool:
         }
         request.return_value = response
 
-        result = await tools["updateIncident"](
+        result = await tools["update_incident"](
             incident_id="inc-123",
             retrospective_progress_status="skipped",
         )
@@ -587,7 +587,7 @@ class TestScopedIncidentUpdateTool:
     async def test_update_incident_requires_at_least_one_supported_field(self):
         tools, request = self._register_tools()
 
-        result = await tools["updateIncident"](incident_id="inc-123")
+        result = await tools["update_incident"](incident_id="inc-123")
 
         request.assert_not_called()
         assert result["error"] is True
@@ -598,7 +598,7 @@ class TestScopedIncidentUpdateTool:
     async def test_update_incident_rejects_invalid_retrospective_status(self):
         tools, request = self._register_tools()
 
-        result = await tools["updateIncident"](
+        result = await tools["update_incident"](
             incident_id="inc-123",
             retrospective_progress_status="paused",
         )
@@ -646,77 +646,6 @@ class TestStructuredListIncidentsTool:
         tools, _ = self._register_tools()
 
         assert "list_incidents" in tools
-
-    @pytest.mark.asyncio
-    async def test_list_incidents_legacy_proxy_is_registered(self):
-        """The deprecated `listIncidents` name must remain callable as a proxy
-        until the deprecation window closes — see IMPLEMENTATION_PLAN posture A."""
-        tools, _ = self._register_tools()
-
-        assert "listIncidents" in tools, (
-            "listIncidents proxy must be registered alongside list_incidents to keep "
-            "legacy callers working during the deprecation window"
-        )
-
-    @pytest.mark.asyncio
-    async def test_list_incidents_legacy_proxy_forwards_to_canonical(self):
-        """Calling the deprecated `listIncidents` should produce the same upstream
-        request as calling `list_incidents` with equivalent args."""
-        tools, request = self._register_tools()
-        response = Mock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {"data": [], "meta": {}}
-        request.return_value = response
-
-        await tools["listIncidents"](
-            status="open",
-            severity="critical",
-            page_size=5,
-            page_number=2,
-        )
-
-        request.assert_awaited_once()
-        await_args = request.await_args
-        assert await_args is not None
-        method, url = await_args.args
-        params = await_args.kwargs["params"]
-        assert method == "GET"
-        assert url == "/v1/incidents"
-        # Curated list_incidents converts these to filter[...] / page[...] form
-        assert params["filter[status]"] == "open"
-        assert params["filter[severity]"] == "critical"
-        assert params["page[size]"] == 5
-        assert params["page[number]"] == 2
-
-    @pytest.mark.asyncio
-    async def test_list_incidents_legacy_proxy_maps_filter_aliases(self):
-        """Legacy `filter_*` autogen-style kwargs should be mapped to curated names
-        when the curated equivalent isn't supplied."""
-        tools, request = self._register_tools()
-        response = Mock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {"data": [], "meta": {}}
-        request.return_value = response
-
-        await tools["listIncidents"](
-            filter_status="investigating",
-            filter_severity="high",
-            filter_started_at_gte="2026-01-01T00:00:00Z",
-            fields_incidents="this,should,be,ignored",
-            include="should,also,be,ignored",
-        )
-
-        request.assert_awaited_once()
-        await_args = request.await_args
-        assert await_args is not None
-        params = await_args.kwargs["params"]
-        assert params["filter[status]"] == "investigating"
-        assert params["filter[severity]"] == "high"
-        assert params["filter[started_at][gte]"] == "2026-01-01T00:00:00Z"
-        # Deprecated params must NOT leak through to the upstream request — the
-        # curated tool's internal sparse-fieldset value is what should win.
-        assert "this,should,be,ignored" not in params.get("fields[incidents]", "")
-        assert "should,also,be,ignored" not in params.get("include", "")
 
     @pytest.mark.asyncio
     async def test_list_incidents_passes_structured_filters_and_returns_compact_results(self):

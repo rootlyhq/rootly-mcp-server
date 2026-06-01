@@ -21,10 +21,59 @@ logger = logging.getLogger(__name__)
 SWAGGER_URL = "https://rootly-heroku.s3.amazonaws.com/swagger/v1/swagger.json"
 _PATH_PARAM_PATTERN = re.compile(r"\{[^/{}]+\}")
 
+# HTTP methods that denote an OpenAPI operation within a path item.
+_OPENAPI_METHODS = frozenset({"get", "post", "put", "patch", "delete"})
+
 
 def _normalize_path_template(path: str) -> str:
     """Normalize parameter names in path templates to support id-token variants."""
     return _PATH_PARAM_PATTERN.sub("{}", path)
+
+
+# camelCase / PascalCase boundary detection for operationId normalization.
+_SNAKE_BOUNDARY_1 = re.compile(r"(.)([A-Z][a-z]+)")
+_SNAKE_BOUNDARY_2 = re.compile(r"([a-z0-9])([A-Z])")
+
+
+def to_snake_case(name: str) -> str:
+    """Convert a camelCase/PascalCase identifier to snake_case.
+
+    Examples: ``getIncident`` -> ``get_incident``, ``ListWorkflowRuns`` ->
+    ``list_workflow_runs``, ``listAlertsSources`` -> ``list_alerts_sources``.
+    Already-snake_case names pass through unchanged.
+    """
+    s = _SNAKE_BOUNDARY_1.sub(r"\1_\2", name)
+    s = _SNAKE_BOUNDARY_2.sub(r"\1_\2", s)
+    return s.lower()
+
+
+def snakecase_operation_ids(spec: dict[str, Any]) -> dict[str, str]:
+    """Rewrite every ``operationId`` in ``spec.paths`` to snake_case in place.
+
+    Tool names are derived verbatim from operationIds by FastMCP's OpenAPI
+    integration, so normalizing the operationIds here makes the entire autogen
+    tool surface snake_case. Returns the mapping of original ``camelCase`` name
+    to its ``snake_case`` form for every operationId that changed — callers use
+    this to register deprecated-name aliases.
+    """
+    paths = spec.get("paths", {})
+    mapping: dict[str, str] = {}
+    for path_item in paths.values():
+        if not isinstance(path_item, dict):
+            continue
+        for method, op in path_item.items():
+            if method.lower() not in _OPENAPI_METHODS:
+                continue
+            if not isinstance(op, dict):
+                continue
+            op_id = op.get("operationId")
+            if not op_id:
+                continue
+            snake = to_snake_case(op_id)
+            if snake != op_id:
+                op["operationId"] = snake
+                mapping[op_id] = snake
+    return mapping
 
 
 def _load_swagger_spec(swagger_path: str | None = None) -> dict[str, Any]:
@@ -180,9 +229,7 @@ def _filter_openapi_spec(
         )
         if not allow_delete:
             path_item.pop("delete", None)
-        if not any(
-            method.lower() in ["get", "post", "put", "patch", "delete"] for method in path_item
-        ):
+        if not any(method.lower() in _OPENAPI_METHODS for method in path_item):
             paths_to_remove.append(path)
     for path in paths_to_remove:
         del filtered_paths[path]
@@ -192,16 +239,14 @@ def _filter_openapi_spec(
         for path, path_item in filtered_paths.items():
             methods_to_remove: list[str] = []
             for method, operation in path_item.items():
-                if method.lower() not in ["get", "post", "put", "patch", "delete"]:
+                if method.lower() not in _OPENAPI_METHODS:
                     continue
                 operation_id = operation.get("operationId")
                 if operation_id not in enabled_operation_ids:
                     methods_to_remove.append(method)
             for method in methods_to_remove:
                 path_item.pop(method, None)
-            if not any(
-                method.lower() in ["get", "post", "put", "patch", "delete"] for method in path_item
-            ):
+            if not any(method.lower() in _OPENAPI_METHODS for method in path_item):
                 paths_to_remove.append(path)
         for path in paths_to_remove:
             del filtered_paths[path]
@@ -647,7 +692,7 @@ def collect_duplicate_operation_ids(spec: dict[str, Any]) -> list[dict[str, Any]
         if not isinstance(path_item, dict):
             continue
         for method, operation in path_item.items():
-            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+            if method.lower() not in _OPENAPI_METHODS:
                 continue
             if not isinstance(operation, dict):
                 continue
@@ -670,7 +715,7 @@ def collect_sanitized_parameter_collisions(spec: dict[str, Any]) -> list[dict[st
             continue
         path_level_params = path_item.get("parameters", [])
         for method, operation in path_item.items():
-            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+            if method.lower() not in _OPENAPI_METHODS:
                 continue
             if not isinstance(operation, dict):
                 continue

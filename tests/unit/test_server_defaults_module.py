@@ -7,9 +7,7 @@ from rootly_mcp_server.server_defaults import (
     DEFAULT_HOSTED_ENABLED_TOOLS,
     HOSTED_TOOL_PROFILE_FULL,
     HOSTED_TOOL_PROFILE_SLIM,
-    LEGACY_TOOL_ALIASES,
     _generate_recommendation,
-    canonicalize_tool_names,
     enabled_tools_from_env,
     hosted_tool_profile_from_env,
     normalize_hosted_tool_profile,
@@ -94,10 +92,10 @@ class TestServerDefaultsModule:
     def test_enabled_tools_from_env_parses_csv(self):
         with patch.dict(
             "os.environ",
-            {"ROOTLY_MCP_ENABLED_TOOLS": "list_incidents, getIncident ,listTeams"},
+            {"ROOTLY_MCP_ENABLED_TOOLS": "list_incidents, get_incident ,list_teams"},
             clear=True,
         ):
-            assert enabled_tools_from_env() == {"list_incidents", "getIncident", "listTeams"}
+            assert enabled_tools_from_env() == {"list_incidents", "get_incident", "list_teams"}
 
     def test_enabled_tools_from_env_defaults_to_hosted_full_surface(self):
         with patch.dict("os.environ", {}, clear=True):
@@ -127,27 +125,9 @@ class TestServerDefaultsModule:
         with patch.dict("os.environ", {}, clear=True):
             assert hosted_tool_profile_from_env() == HOSTED_TOOL_PROFILE_FULL
 
-    def test_canonicalize_passes_through_unaliased_names(self):
-        # `getIncident` has no alias, so it stays as-is.
-        assert canonicalize_tool_names({"getIncident"}) == {"getIncident"}
-
-    def test_canonicalize_expands_legacy_to_include_canonical(self):
-        # Posture A: legacy name stays in the set (so the proxy remains exposed)
-        # AND the canonical name is added (so new clients also see it).
-        assert canonicalize_tool_names({"listIncidents"}) == {"listIncidents", "list_incidents"}
-
-    def test_canonicalize_expands_canonical_to_include_legacy(self):
-        # Reverse direction: an allowlist with only the canonical name must
-        # still expose the legacy proxy, otherwise models calling the legacy
-        # name get "Unknown tool" errors.
-        assert canonicalize_tool_names({"list_incidents"}) == {"listIncidents", "list_incidents"}
-
-    def test_canonicalize_handles_mixed_allowlist(self):
-        result = canonicalize_tool_names({"listIncidents", "getIncident", "listTeams"})
-        assert result == {"listIncidents", "list_incidents", "getIncident", "listTeams"}
-
-    def test_canonicalize_empty_set(self):
-        assert canonicalize_tool_names(set()) == set()
-
-    def test_legacy_aliases_contains_list_incidents(self):
-        assert LEGACY_TOOL_ALIASES.get("listIncidents") == "list_incidents"
+    def test_default_hosted_enabled_tools_are_all_snake_case(self):
+        # Hard cutover: the entire tool surface is snake_case. No camelCase
+        # entries should survive in the curated hosted allowlist.
+        for name in DEFAULT_HOSTED_ENABLED_TOOLS:
+            assert name == name.lower(), f"{name!r} is not snake_case"
+            assert "-" not in name

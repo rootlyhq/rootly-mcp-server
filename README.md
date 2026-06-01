@@ -373,7 +373,7 @@ For hosted clients that want the smaller remote profile, append `?tool_profile=s
 
 To override the hosted or self-hosted default profile entirely, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names. When that variable is set, it fully replaces the default selection.
 
-To expose only a specific subset of MCP tools on a self-hosted deployment, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names, for example `list_incidents,getIncident,get_server_version`.
+To expose only a specific subset of MCP tools on a self-hosted deployment, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names, for example `list_incidents,get_incident,get_server_version`.
 
 To discover the exact tool names available under your current self-hosted configuration, run:
 
@@ -388,7 +388,7 @@ Smoke-test a self-hosted allowlist:
 
 ```bash
 ROOTLY_API_TOKEN=<YOUR_ROOTLY_API_TOKEN> \
-ROOTLY_MCP_ENABLED_TOOLS=list_incidents,getIncident,get_server_version \
+ROOTLY_MCP_ENABLED_TOOLS=list_incidents,get_incident,get_server_version \
 uv run python -m rootly_mcp_server --transport streamable-http --log-level ERROR
 ```
 
@@ -396,7 +396,7 @@ Then connect an MCP client to `http://127.0.0.1:8000/mcp` and verify `tools/list
 
 ```text
 get_server_version
-getIncident
+get_incident
 list_incidents
 ```
 
@@ -405,7 +405,7 @@ To include specific write tools for self-hosted testing, add both the write flag
 ```bash
 ROOTLY_API_TOKEN=<YOUR_ROOTLY_API_TOKEN> \
 ROOTLY_MCP_ENABLE_WRITE_TOOLS=true \
-ROOTLY_MCP_ENABLED_TOOLS=createIncident,createWorkflowTask,listTeams \
+ROOTLY_MCP_ENABLED_TOOLS=create_incident,create_workflow_task,list_teams \
 uv run python -m rootly_mcp_server --transport streamable-http --log-level ERROR
 ```
 
@@ -445,35 +445,35 @@ The full hosted and self-hosted surface exposes 200+ tools. If you want tighter 
 *Essential tools for emergency responders and incident commanders*
 
 ```bash
-ROOTLY_MCP_ENABLED_TOOLS="list_incidents,getIncident,createIncident,updateIncident,search_incidents,find_related_incidents,suggest_solutions,createIncidentActionItem,listIncidentActionItems,updateIncidentFormFieldSelection,listTeams,getCurrentUser,listServices,listSeverities,getAlert,listAlerts,get_alert_by_short_id,listEscalationPolicies,getEscalationPolicy,listOnCallRoles,listSchedules,getScheduleShifts,get_oncall_handoff_summary,get_shift_incidents,list_endpoints"
+ROOTLY_MCP_ENABLED_TOOLS="list_incidents,get_incident,create_incident,update_incident,search_incidents,find_related_incidents,suggest_solutions,create_incident_action_item,list_incident_action_items,update_incident_form_field_selection,list_teams,get_current_user,list_services,list_severities,get_alert,list_alerts,get_alert_by_short_id,list_escalation_policies,get_escalation_policy,list_on_call_roles,list_schedules,get_schedule_shifts,get_oncall_handoff_summary,get_shift_incidents,list_endpoints"
 ```
 
 ### 📅 On-Call Management (35 tools)  
 *For schedule coordinators and on-call managers*
 
 ```bash
-ROOTLY_MCP_ENABLED_TOOLS="listSchedules,getSchedule,updateSchedule,getScheduleShifts,listShifts,list_shifts,createScheduleRotation,updateScheduleRotation,listScheduleRotations,getScheduleRotation,listScheduleRotationUsers,updateScheduleRotationUser,createOnCallShadow,updateOnCallShadow,listOnCallShadows,createOverrideShift,updateOverrideShift,listOverrideShifts,listOnCallRoles,updateOnCallRole,get_oncall_schedule_summary,get_oncall_shift_metrics,check_oncall_health_risk,check_responder_availability,create_override_recommendation,listTeams,getTeam,listUsers,getUser,getCurrentUser,listEscalationPolicies,updateEscalationPolicy,listEscalationPaths,updateEscalationPath,listEscalationLevels"
+ROOTLY_MCP_ENABLED_TOOLS="list_schedules,get_schedule,update_schedule,get_schedule_shifts,list_shifts,create_schedule_rotation,update_schedule_rotation,list_schedule_rotations,get_schedule_rotation,list_schedule_rotation_users,update_schedule_rotation_user,create_on_call_shadow,update_on_call_shadow,list_on_call_shadows,create_override_shift,update_override_shift,list_override_shifts,list_on_call_roles,update_on_call_role,get_oncall_schedule_summary,get_oncall_shift_metrics,check_oncall_health_risk,check_responder_availability,create_override_recommendation,list_teams,get_team,list_users,get_user,get_current_user,list_escalation_policies,update_escalation_policy,list_escalation_paths,update_escalation_path,list_escalation_levels"
 ```
 
 ### 📊 Monitoring & Alerting (40 tools)
 *For platform teams setting up observability*
 
 ```bash
-ROOTLY_MCP_ENABLED_TOOLS="listAlerts,getAlert,get_alert_by_short_id,createAlertGroup,updateAlertGroup,listAlertGroups,createAlertRoutingRule,updateAlertRoutingRule,listAlertRoutingRules,listAlertEvents,getAlertEvent,updateAlertEvent,createHeartbeat,updateHeartbeat,listHeartbeats,getHeartbeat,createPulse,updatePulse,listPulses,getPulse,createDashboard,updateDashboard,listDashboards,getDashboard,createDashboardPanel,updateDashboardPanel,listStatusPages,getStatusPage,updateStatusPage,listStatusPageTemplates,getStatusPageTemplate,listCommunicationsTemplates,updateCommunicationsTemplate,createLiveCallRouter,updateLiveCallRouter,listServices,listTeams,getCurrentUser,listEnvironments,listSeverities,list_endpoints"
+ROOTLY_MCP_ENABLED_TOOLS="list_alerts,get_alert,get_alert_by_short_id,create_alert_group,update_alert_group,list_alert_groups,create_alert_routing_rule,update_alert_routing_rule,list_alert_routing_rules,list_alert_events,get_alert_event,update_alert_event,create_heartbeat,update_heartbeat,list_heartbeats,get_heartbeat,create_pulse,update_pulse,list_pulses,get_pulse,create_dashboard,update_dashboard,list_dashboards,get_dashboard,create_dashboard_panel,update_dashboard_panel,list_status_pages,get_status_page,update_status_page,list_status_page_templates,get_status_page_template,list_communications_templates,update_communications_template,create_live_call_router,update_live_call_router,list_services,list_teams,get_current_user,list_environments,list_severities,list_endpoints"
 ```
 
 ### 📋 Post-Incident Analysis (30 tools)
 *For SREs doing retrospectives and process improvement*
 
 ```bash
-ROOTLY_MCP_ENABLED_TOOLS="getIncident,updateIncident,find_related_incidents,suggest_solutions,listIncidentActionItems,createIncidentActionItem,updateIncidentFormFieldSelection,createPostIncidentReview,updatePostIncidentReview,listPostIncidentReviews,getPostIncidentReview,createRetrospectiveStep,updateRetrospectiveStep,listRetrospectiveSteps,createRetrospectiveProcess,updateRetrospectiveProcess,listRetrospectiveProcesses,createPlaybook,updatePlaybook,listPlaybooks,getPlaybook,createPlaybookTask,updatePlaybookTask,listCauses,getCause,updateCause,listIncidentTypes,getIncidentType,updateIncidentType,getCurrentUser"
+ROOTLY_MCP_ENABLED_TOOLS="get_incident,update_incident,find_related_incidents,suggest_solutions,list_incident_action_items,create_incident_action_item,update_incident_form_field_selection,create_post_incident_review,update_post_incident_review,list_post_incident_reviews,get_post_incident_review,create_retrospective_step,update_retrospective_step,list_retrospective_steps,create_retrospective_process,update_retrospective_process,list_retrospective_processes,create_playbook,update_playbook,list_playbooks,get_playbook,create_playbook_task,update_playbook_task,list_causes,get_cause,update_cause,list_incident_types,get_incident_type,update_incident_type,get_current_user"
 ```
 
 ### 📈 Analytics & Reporting (15 tools)
 *For leadership and metrics teams (read-only focus)*
 
 ```bash
-ROOTLY_MCP_ENABLED_TOOLS="list_incidents,search_incidents,collect_incidents,listTeams,listServices,listSchedules,get_oncall_shift_metrics,get_shift_incidents,listDashboards,getDashboard,listAlerts,listHeartbeats,listPulses,getCurrentUser,list_endpoints"
+ROOTLY_MCP_ENABLED_TOOLS="list_incidents,search_incidents,collect_incidents,list_teams,list_services,list_schedules,get_oncall_shift_metrics,get_shift_incidents,list_dashboards,get_dashboard,list_alerts,list_heartbeats,list_pulses,get_current_user,list_endpoints"
 ```
 
 ### Multiple MCP Instances for Different Teams
@@ -487,14 +487,14 @@ You can run multiple MCP instances with different tool subsets:
       "command": "uvx", "args": ["--from", "rootly-mcp-server", "rootly-mcp-server"],
       "env": {
         "ROOTLY_API_TOKEN": "<token>",
-        "ROOTLY_MCP_ENABLED_TOOLS": "list_incidents,getIncident,createIncident,find_related_incidents,suggest_solutions..."
+        "ROOTLY_MCP_ENABLED_TOOLS": "list_incidents,get_incident,create_incident,find_related_incidents,suggest_solutions..."
       }
     },
     "rootly-oncall-management": {
       "command": "uvx", "args": ["--from", "rootly-mcp-server", "rootly-mcp-server"],
       "env": {
         "ROOTLY_API_TOKEN": "<token>",
-        "ROOTLY_MCP_ENABLED_TOOLS": "listSchedules,updateSchedule,createOverrideShift,get_oncall_shift_metrics..."
+        "ROOTLY_MCP_ENABLED_TOOLS": "list_schedules,update_schedule,create_override_shift,get_oncall_shift_metrics..."
       }
     }
   }
@@ -546,10 +546,10 @@ The default tool surface depends on deployment profile:
 - `check_oncall_health_risk`
 - `check_responder_availability`
 - `collect_incidents`
-- `createIncident` - create a new incident with a scoped set of fields for agent workflows
+- `create_incident` - create a new incident with a scoped set of fields for agent workflows
 - `create_override_recommendation`
 - `find_related_incidents`
-- `getIncident` - retrieve a single incident for direct verification, including PIR-related fields
+- `get_incident` - retrieve a single incident for direct verification, including PIR-related fields
 - `get_alert_by_short_id`
 - `get_oncall_handoff_summary`
 - `get_oncall_schedule_summary`
@@ -561,116 +561,122 @@ The default tool surface depends on deployment profile:
 - `list_shifts`
 - `search_incidents`
 - `suggest_solutions`
-- `updateIncident` - scoped incident update tool for `summary` and `retrospective_progress_status`
+- `update_incident` - scoped incident update tool for `summary` and `retrospective_progress_status`
 
 ### OpenAPI-Generated Tools
 
+> **Tool naming:** all tools use `snake_case`. The historical `camelCase` names
+> (e.g. `getScheduleShifts`, `listIncidents`) are no longer advertised in
+> `tools/list`, but remain callable as hidden aliases — they are transparently
+> routed to their `snake_case` canonical. Update configs and `ROOTLY_MCP_ENABLED_TOOLS`
+> allowlists to the `snake_case` names; legacy camelCase allowlist entries are
+> auto-canonicalized.
+
 ```text
-ListWorkflowRuns
-createIncidentActionItem
-createIncidentFormFieldSelection
-createWorkflowTask
-getAlert
-getAlertEvent
-getAlertGroup
-getAlertRoutingRule
-getAlertSource
-getAlertUrgency
-getCatalog
-getCatalogEntity
-getCause
-getCurrentUser
-getCustomForm
-getEnvironment
-getEscalationLevel
-getEscalationPath
-getEscalationPolicy
-getFormField
-getFormFieldOption
-getFunctionality
-getFunctionalityIncidentsChart
-getFunctionalityUptimeChart
-getIncidentActionItems
-getIncidentFormFieldSelection
-getIncidentType
-getOnCallRole
-getOnCallShadow
-getOverrideShift
-getSchedule
-getScheduleRotation
-getScheduleShifts
-getService
-getServiceIncidentsChart
-getServiceUptimeChart
-getSeverity
-getStatusPage
-getStatusPageTemplate
-getTeam
-getTeamIncidentsChart
-getUser
-getWorkflow
-getWorkflowFormFieldCondition
-getWorkflowGroup
-getWorkflowTask
-listAlertEvents
-listAlertGroups
-listAlertRoutingRules
-listAlertSources
-listAlertUrgencies
-listAlerts
-listAllIncidentActionItems
-listCatalogEntities
-listCatalogs
-listCauses
-listCustomForms
-listEnvironments
-listEscalationLevels
-listEscalationLevelsPaths
-listEscalationPaths
-listEscalationPolicies
-listFormFieldOptions
-listFormFields
-listFunctionalities
-listIncidentActionItems
-listIncidentAlerts
-listIncidentFormFieldSelections
-listIncident_Types
-listIncidents  (deprecated alias — use `list_incidents`)
-listOnCallRoles
-listOnCallShadows
-listOverrideShifts
-listScheduleRotationActiveDays
-listScheduleRotationUsers
-listScheduleRotations
-listSchedules
-listServices
-listSeverities
-listShifts
-listStatusPageTemplates
-listStatusPages
-listTeams
-listUsers
-listWorkflowFormFieldConditions
-listWorkflowGroups
-listWorkflows
-listWorkflowTasks
-updateEnvironment
-updateEscalationLevel
-updateEscalationPath
-updateEscalationPolicy
-updateFunctionality
-updateIncidentType
-updateOnCallRole
-updateOnCallShadow
-updateOverrideShift
-updateSchedule
-updateScheduleRotation
-updateService
-updateSeverity
-updateTeam
-updateWorkflow
-updateIncidentFormFieldSelection
-updateWorkflowTask
+list_workflow_runs
+create_incident_action_item
+create_incident_form_field_selection
+create_workflow_task
+get_alert
+get_alert_event
+get_alert_group
+get_alert_routing_rule
+get_alert_source
+get_alert_urgency
+get_catalog
+get_catalog_entity
+get_cause
+get_current_user
+get_custom_form
+get_environment
+get_escalation_level
+get_escalation_path
+get_escalation_policy
+get_form_field
+get_form_field_option
+get_functionality
+get_functionality_incidents_chart
+get_functionality_uptime_chart
+get_incident_action_items
+get_incident_form_field_selection
+get_incident_type
+get_on_call_role
+get_on_call_shadow
+get_override_shift
+get_schedule
+get_schedule_rotation
+get_schedule_shifts
+get_service
+get_service_incidents_chart
+get_service_uptime_chart
+get_severity
+get_status_page
+get_status_page_template
+get_team
+get_team_incidents_chart
+get_user
+get_workflow
+get_workflow_form_field_condition
+get_workflow_group
+get_workflow_task
+list_alert_events
+list_alert_groups
+list_alert_routing_rules
+list_alert_sources
+list_alert_urgencies
+list_alerts
+list_all_incident_action_items
+list_catalog_entities
+list_catalogs
+list_causes
+list_custom_forms
+list_environments
+list_escalation_levels
+list_escalation_levels_paths
+list_escalation_paths
+list_escalation_policies
+list_form_field_options
+list_form_fields
+list_functionalities
+list_incident_action_items
+list_incident_alerts
+list_incident_form_field_selections
+list_incident_types
+list_on_call_roles
+list_on_call_shadows
+list_override_shifts
+list_schedule_rotation_active_days
+list_schedule_rotation_users
+list_schedule_rotations
+list_schedules
+list_services
+list_severities
+list_shifts
+list_status_page_templates
+list_status_pages
+list_teams
+list_users
+list_workflow_form_field_conditions
+list_workflow_groups
+list_workflows
+list_workflow_tasks
+update_environment
+update_escalation_level
+update_escalation_path
+update_escalation_policy
+update_functionality
+update_incident_type
+update_on_call_role
+update_on_call_shadow
+update_override_shift
+update_schedule
+update_schedule_rotation
+update_service
+update_severity
+update_team
+update_workflow
+update_incident_form_field_selection
+update_workflow_task
 ```
 
 **Major Expansion**: This version includes 50+ new endpoints covering communications, dashboards, playbooks, post-incident reviews, monitoring, and advanced form management - while carefully excluding security-sensitive operations like API key management, user creation/deletion, role management, and webhook configuration.
