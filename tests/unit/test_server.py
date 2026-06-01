@@ -559,7 +559,7 @@ class TestBundledIncidentFormFieldSelectionTools:
 class TestListAlertsParamSerialization:
     """Regression for empty optional params corrupting the upstream request.
 
-    Calling listAlerts with empty-string optional filters alongside a valid
+    Calling list_alerts with empty-string optional filters alongside a valid
     page_size must drop the blanks and forward the real page[size] value. A
     forwarded blank like ``filter[status]=`` makes the Rootly API 500 (and echo
     a bogus ``page[size]=0`` self-link), so the request must omit it entirely.
@@ -576,7 +576,7 @@ class TestListAlertsParamSerialization:
     async def test_empty_optional_params_preserve_page_size(self, mock_environment_token):
         server = create_rootly_mcp_server(hosted=False)
         tool = self._find_openapi_tool(server, "list_alerts")
-        assert tool is not None, "listAlerts tool should be generated from the spec"
+        assert tool is not None, "list_alerts tool should be generated from the spec"
 
         captured: dict[str, Any] = {}
 
@@ -954,7 +954,7 @@ class TestToolUsageIdentityHelpers:
         with patch.object(server_module, "_configure_tool_usage_json_logger"):
             with patch.object(server_module._tool_usage_json_logger, "info") as mock_info:
                 server_module._log_tool_usage_event(
-                    tool_name="listAlerts",
+                    tool_name="list_alerts",
                     status="error",
                     duration_ms=42.0,
                     arg_keys=["page_size"],
@@ -1034,7 +1034,7 @@ class TestToolUsageIdentityHelpers:
     async def test_tool_usage_middleware_logs_returned_tool_errors(self):
         middleware = server_module.ToolUsageLoggingMiddleware()
         context = SimpleNamespace(
-            message=SimpleNamespace(name="listAlerts", arguments={"page_size": 10})
+            message=SimpleNamespace(name="list_alerts", arguments={"page_size": 10})
         )
         result = mt.CallToolResult(
             content=[],
