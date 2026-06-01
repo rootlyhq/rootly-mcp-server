@@ -14,6 +14,7 @@ import traceback
 from typing import Any
 
 import fastmcp.server.middleware as fastmcp_middleware
+import httpx
 import mcp.types as mt
 from fastmcp import FastMCP
 
@@ -594,9 +595,12 @@ def create_rootly_mcp_server(
         _auth_server_metadata_cache: dict[str, Any] = {}
         _AUTH_SERVER_CACHE_TTL = 3600
 
+        # NOTE: The proxied response contains "issuer": "https://rootly.com" from
+        # the upstream OAuth server, but clients fetch this from the MCP server
+        # origin. RFC 8414 §3.3 requires issuer to match the request URL; strict
+        # OAuth libraries may reject the mismatch. Most observed clients (node,
+        # python-httpx, Cursor) do not enforce this check.
         async def _oauth_authorization_server_handler(request):
-            import httpx
-
             oauth_server_url = derive_oauth_server_url(base_url)
             now = time.time()
             cached = _auth_server_metadata_cache.get("data")
@@ -615,7 +619,9 @@ def create_rootly_mcp_server(
                     return JSONResponse(metadata, headers={"Cache-Control": "max-age=3600"})
             except Exception:
                 logger.warning(
-                    "Failed to proxy OAuth authorization server metadata from %s", upstream_url
+                    "Failed to proxy OAuth authorization server metadata from %s",
+                    upstream_url,
+                    exc_info=True,
                 )
                 if cached:
                     return JSONResponse(cached, headers={"Cache-Control": "max-age=60"})
