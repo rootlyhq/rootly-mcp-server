@@ -60,7 +60,7 @@ def test_build_code_mode_transform_includes_pagination_guidance():
     assert "page_size, page_number, and max_results" in transform.execute_description
     assert "per_page" in transform.execute_description
     assert "mcp__rootly-codemode__tool_search" in transform.execute_description
-    assert "rootly:getCurrentUser" in transform.execute_description
+    assert "rootly:get_current_user" in transform.execute_description
     assert "Avoid imports such as json or asyncio" in transform.execute_description
     assert "await call_tool('search_incidents'" in transform.execute_description
 

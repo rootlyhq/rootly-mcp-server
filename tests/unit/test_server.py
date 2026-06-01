@@ -292,6 +292,36 @@ class TestServerCreation:
 class TestBundledIncidentFormFieldSelectionTools:
     """Verify the bundled swagger exposes the intended incident custom field tools."""
 
+    async def test_entire_tool_surface_is_snake_case(self, mock_environment_token):
+        """Guard against camelCase leaking back into the advertised tool surface.
+
+        Every listed tool — autogen and curated — must be snake_case. Deprecated
+        camelCase names stay callable via the alias middleware but are never
+        listed, so nothing in tools/list should contain an uppercase letter."""
+        server = create_rootly_mcp_server(hosted=False)
+
+        tools = await server.list_tools()
+        offenders = [t.name for t in tools if t.name != t.name.lower() or "-" in t.name]
+
+        assert offenders == [], f"Non-snake_case tools surfaced: {sorted(offenders)}"
+
+    async def test_no_duplicate_tool_names_when_curated_shadows_autogen(
+        self, mock_environment_token
+    ):
+        """A curated tool and an autogen tool can resolve to the same name
+        (e.g. `list_incidents`, `list_shifts`). The post-registration dedup must
+        leave exactly one entry per name in tools/list — this guards the
+        collision handling that replaced the hand-maintained override list."""
+        from collections import Counter
+
+        server = create_rootly_mcp_server(hosted=False)
+
+        tools = await server.list_tools()
+        counts = Counter(t.name for t in tools)
+        duplicates = sorted(name for name, n in counts.items() if n > 1)
+
+        assert duplicates == [], f"Duplicate tools in tools/list: {duplicates}"
+
     async def test_default_server_shows_generated_write_tools(self, mock_environment_token):
         server = create_rootly_mcp_server(hosted=False)
 
@@ -299,16 +329,16 @@ class TestBundledIncidentFormFieldSelectionTools:
         tool_names = {tool.name for tool in tools}
 
         # Read tools should be present
-        assert "listIncidentActionItems" in tool_names
-        assert "listIncidentFormFieldSelections" in tool_names
-        assert "getIncidentFormFieldSelection" in tool_names
+        assert "list_incident_action_items" in tool_names
+        assert "list_incident_form_field_selections" in tool_names
+        assert "get_incident_form_field_selection" in tool_names
 
         # Write tools should also be present by default
-        assert "createIncidentActionItem" in tool_names
-        assert "createIncidentFormFieldSelection" in tool_names
-        assert "updateIncidentFormFieldSelection" in tool_names
+        assert "create_incident_action_item" in tool_names
+        assert "create_incident_form_field_selection" in tool_names
+        assert "update_incident_form_field_selection" in tool_names
         # Delete operations are still restricted
-        assert "deleteIncidentFormFieldSelection" not in tool_names
+        assert "delete_incident_form_field_selection" not in tool_names
 
     async def test_default_server_shows_workflow_write_tools(self, mock_environment_token):
         server = create_rootly_mcp_server(hosted=False)
@@ -317,14 +347,14 @@ class TestBundledIncidentFormFieldSelectionTools:
         tool_names = {tool.name for tool in tools}
 
         # Read tools should be present
-        assert "listWorkflowTasks" in tool_names
-        assert "getWorkflowTask" in tool_names
+        assert "list_workflow_tasks" in tool_names
+        assert "get_workflow_task" in tool_names
 
         # Write tools should also be present by default
-        assert "createWorkflowTask" in tool_names
-        assert "updateWorkflowTask" in tool_names
+        assert "create_workflow_task" in tool_names
+        assert "update_workflow_task" in tool_names
         # Delete operations are still restricted
-        assert "deleteWorkflowTask" not in tool_names
+        assert "delete_workflow_task" not in tool_names
 
     async def test_default_server_shows_additional_read_tools(self, mock_environment_token):
         server = create_rootly_mcp_server(hosted=False)
@@ -333,63 +363,63 @@ class TestBundledIncidentFormFieldSelectionTools:
         tool_names = {tool.name for tool in tools}
 
         # Workflow observability reads
-        assert "ListWorkflowRuns" in tool_names
-        assert "listWorkflowGroups" in tool_names
-        assert "getWorkflowGroup" in tool_names
-        assert "listWorkflowFormFieldConditions" in tool_names
-        assert "getWorkflowFormFieldCondition" in tool_names
+        assert "list_workflow_runs" in tool_names
+        assert "list_workflow_groups" in tool_names
+        assert "get_workflow_group" in tool_names
+        assert "list_workflow_form_field_conditions" in tool_names
+        assert "get_workflow_form_field_condition" in tool_names
 
         # Alert, status page, form metadata, and catalog reads
-        assert "listAlertEvents" in tool_names
-        assert "getAlertEvent" in tool_names
-        assert "listStatusPages" in tool_names
-        assert "getStatusPage" in tool_names
-        assert "listStatusPageTemplates" in tool_names
-        assert "getStatusPageTemplate" in tool_names
-        assert "getTeamIncidentsChart" in tool_names
-        assert "getServiceIncidentsChart" in tool_names
-        assert "getServiceUptimeChart" in tool_names
-        assert "getFunctionalityIncidentsChart" in tool_names
-        assert "getFunctionalityUptimeChart" in tool_names
-        assert "listAlertGroups" in tool_names
-        assert "getAlertGroup" in tool_names
-        assert "listAlertRoutingRules" in tool_names
-        assert "getAlertRoutingRule" in tool_names
-        assert "listAlertsSources" in tool_names
-        assert "getAlertsSource" in tool_names
-        assert "listAlertUrgencies" in tool_names
-        assert "getAlertUrgency" in tool_names
-        assert "listAllIncidentActionItems" in tool_names
-        assert "getIncidentActionItems" in tool_names
-        assert "listCustomForms" in tool_names
-        assert "getCustomForm" in tool_names
-        assert "listFormFields" in tool_names
-        assert "getFormField" in tool_names
-        assert "listFormFieldOptions" in tool_names
-        assert "getFormFieldOption" in tool_names
-        assert "listCatalogs" in tool_names
-        assert "getCatalog" in tool_names
-        assert "listCatalogEntities" in tool_names
-        assert "getCatalogEntity" in tool_names
-        assert "listCauses" in tool_names
-        assert "getCause" in tool_names
+        assert "list_alert_events" in tool_names
+        assert "get_alert_event" in tool_names
+        assert "list_status_pages" in tool_names
+        assert "get_status_page" in tool_names
+        assert "list_status_page_templates" in tool_names
+        assert "get_status_page_template" in tool_names
+        assert "get_team_incidents_chart" in tool_names
+        assert "get_service_incidents_chart" in tool_names
+        assert "get_service_uptime_chart" in tool_names
+        assert "get_functionality_incidents_chart" in tool_names
+        assert "get_functionality_uptime_chart" in tool_names
+        assert "list_alert_groups" in tool_names
+        assert "get_alert_group" in tool_names
+        assert "list_alert_routing_rules" in tool_names
+        assert "get_alert_routing_rule" in tool_names
+        assert "list_alerts_sources" in tool_names
+        assert "get_alerts_source" in tool_names
+        assert "list_alert_urgencies" in tool_names
+        assert "get_alert_urgency" in tool_names
+        assert "list_all_incident_action_items" in tool_names
+        assert "get_incident_action_items" in tool_names
+        assert "list_custom_forms" in tool_names
+        assert "get_custom_form" in tool_names
+        assert "list_form_fields" in tool_names
+        assert "get_form_field" in tool_names
+        assert "list_form_field_options" in tool_names
+        assert "get_form_field_option" in tool_names
+        assert "list_catalogs" in tool_names
+        assert "get_catalog" in tool_names
+        assert "list_catalog_entities" in tool_names
+        assert "get_catalog_entity" in tool_names
+        assert "list_causes" in tool_names
+        assert "get_cause" in tool_names
 
         # Workflow creates now enabled, but workflow runs remain excluded
-        assert "createWorkflowRun" not in tool_names
+        assert "create_workflow_run" not in tool_names
         # Alert configuration writes remain excluded (connects to external systems)
-        assert "createAlertGroup" not in tool_names
-        assert "updateAlertGroup" not in tool_names
-        assert "createAlertRoutingRule" not in tool_names
-        assert "updateAlertRoutingRule" not in tool_names
-        assert "createAlertSource" not in tool_names
-        assert "updateAlertSource" not in tool_names
-        assert "createAlertUrgency" not in tool_names
-        assert "updateAlertUrgency" not in tool_names
+        assert "create_alert_group" not in tool_names
+        assert "update_alert_group" not in tool_names
+        assert "create_alert_routing_rule" not in tool_names
+        assert "update_alert_routing_rule" not in tool_names
+        assert "create_alert_source" not in tool_names
+        assert "update_alert_source" not in tool_names
+        assert "create_alert_urgency" not in tool_names
+        assert "update_alert_urgency" not in tool_names
         # Custom form/field creation excluded (schema-level configuration)
-        assert "createCustomForm" not in tool_names
-        assert "updateCustomForm" not in tool_names
-        assert "createFormField" not in tool_names
-        assert "updateFormField" not in tool_names
+        assert "create_custom_form" not in tool_names
+        assert "update_custom_form" not in tool_names
+        assert "create_form_field" not in tool_names
+        assert "update_form_field" not in tool_names
 
     async def test_enable_write_tools_exposes_curated_generated_write_tools(
         self, mock_environment_token
@@ -399,34 +429,34 @@ class TestBundledIncidentFormFieldSelectionTools:
         tools = await server.list_tools()
         tool_names = {tool.name for tool in tools}
 
-        assert "createIncidentActionItem" in tool_names
-        assert "createIncidentFormFieldSelection" in tool_names
-        assert "updateIncidentFormFieldSelection" in tool_names
-        assert "updateEnvironment" in tool_names
-        assert "updateEscalationLevel" in tool_names
-        assert "updateEscalationPath" in tool_names
-        assert "updateEscalationPolicy" in tool_names
-        assert "updateFunctionality" in tool_names
-        assert "updateIncidentType" in tool_names
-        assert "updateOnCallRole" in tool_names
-        assert "updateOnCallShadow" in tool_names
-        assert "updateOverrideShift" in tool_names
-        assert "updateSchedule" in tool_names
-        assert "updateScheduleRotation" in tool_names
-        assert "updateService" in tool_names
-        assert "updateSeverity" in tool_names
-        assert "updateTeam" in tool_names
-        assert "updateWorkflow" in tool_names
-        assert "createWorkflowTask" in tool_names
-        assert "updateWorkflowTask" in tool_names
-        assert "updateAlert" not in tool_names
-        assert "updateUser" not in tool_names
-        assert "deleteSchedule" not in tool_names
-        assert "deleteScheduleRotation" not in tool_names
-        assert "deleteEscalationPolicy" not in tool_names
-        assert "deleteEscalationPath" not in tool_names
-        assert "deleteEscalationLevel" not in tool_names
-        assert "deleteWorkflowTask" not in tool_names
+        assert "create_incident_action_item" in tool_names
+        assert "create_incident_form_field_selection" in tool_names
+        assert "update_incident_form_field_selection" in tool_names
+        assert "update_environment" in tool_names
+        assert "update_escalation_level" in tool_names
+        assert "update_escalation_path" in tool_names
+        assert "update_escalation_policy" in tool_names
+        assert "update_functionality" in tool_names
+        assert "update_incident_type" in tool_names
+        assert "update_on_call_role" in tool_names
+        assert "update_on_call_shadow" in tool_names
+        assert "update_override_shift" in tool_names
+        assert "update_schedule" in tool_names
+        assert "update_schedule_rotation" in tool_names
+        assert "update_service" in tool_names
+        assert "update_severity" in tool_names
+        assert "update_team" in tool_names
+        assert "update_workflow" in tool_names
+        assert "create_workflow_task" in tool_names
+        assert "update_workflow_task" in tool_names
+        assert "update_alert" not in tool_names
+        assert "update_user" not in tool_names
+        assert "delete_schedule" not in tool_names
+        assert "delete_schedule_rotation" not in tool_names
+        assert "delete_escalation_policy" not in tool_names
+        assert "delete_escalation_path" not in tool_names
+        assert "delete_escalation_level" not in tool_names
+        assert "delete_workflow_task" not in tool_names
 
     async def test_hosted_server_exposes_full_surface_by_default(self, mock_environment_token):
         server = create_rootly_mcp_server(hosted=True)
@@ -435,12 +465,12 @@ class TestBundledIncidentFormFieldSelectionTools:
         tool_names = {tool.name for tool in tools}
 
         assert len(tool_names) > len(DEFAULT_HOSTED_ENABLED_TOOLS)
-        assert "createIncidentActionItem" in tool_names
-        assert "updateIncident" in tool_names
+        assert "create_incident_action_item" in tool_names
+        assert "update_incident" in tool_names
         assert "search_incidents" in tool_names
-        assert "createWorkflowTask" in tool_names
-        assert "updateWorkflowTask" in tool_names
-        assert "deleteWorkflowTask" not in tool_names
+        assert "create_workflow_task" in tool_names
+        assert "update_workflow_task" in tool_names
+        assert "delete_workflow_task" not in tool_names
 
     async def test_hosted_slim_profile_matches_curated_allowlist(self, mock_environment_token):
         from rootly_mcp_server.server_defaults import canonicalize_tool_names
@@ -453,15 +483,16 @@ class TestBundledIncidentFormFieldSelectionTools:
         tools = await server.list_tools()
         tool_names = {tool.name for tool in tools}
 
-        # The surfaced set is the canonical allowlist expanded through the
-        # bidirectional legacy/canonical alias map — e.g., `list_incidents` in
-        # the slim profile also brings `listIncidents` along so models that
-        # pick either name find the tool.
+        # The surfaced set is the snake_case allowlist verbatim. canonicalize is
+        # an identity transform for snake_case input, so the slim profile shows
+        # exactly the curated allowlist (no camelCase aliases are ever listed).
         assert tool_names == canonicalize_tool_names(set(DEFAULT_HOSTED_ENABLED_TOOLS))
 
     async def test_enabled_tools_allowlist_filters_generated_and_custom_tools(
         self, mock_environment_token
     ):
+        # Legacy camelCase entries are canonicalized to snake_case so back-compat
+        # configs keep resolving to the right (snake_case) tools.
         server = create_rootly_mcp_server(
             hosted=False,
             enabled_tools={"listTeams", "listSeverities"},
@@ -470,7 +501,7 @@ class TestBundledIncidentFormFieldSelectionTools:
         tools = await server.list_tools()
         tool_names = {tool.name for tool in tools}
 
-        assert tool_names == {"listTeams", "listSeverities"}
+        assert tool_names == {"list_teams", "list_severities"}
 
     async def test_list_incidents_canonical_name_in_allowlist_does_not_raise(
         self, mock_environment_token
@@ -489,9 +520,12 @@ class TestBundledIncidentFormFieldSelectionTools:
 
         assert "list_incidents" in tool_names
 
-    async def test_list_incidents_legacy_allowlist_exposes_both_names(self, mock_environment_token):
-        """Posture A: legacy `listIncidents` in the allowlist must keep both
-        the proxy and the canonical name exposed during the deprecation window."""
+    async def test_legacy_camelcase_allowlist_resolves_to_snake_canonical(
+        self, mock_environment_token
+    ):
+        """Hard cutover: a legacy `listIncidents` allowlist entry is canonicalized
+        to `list_incidents`. The snake_case canonical is exposed; the camelCase
+        name is never listed (it stays callable only via the alias middleware)."""
         server = create_rootly_mcp_server(
             hosted=False,
             enabled_tools={"listIncidents"},
@@ -501,23 +535,22 @@ class TestBundledIncidentFormFieldSelectionTools:
         tool_names = {tool.name for tool in tools}
 
         assert "list_incidents" in tool_names
-        assert "listIncidents" in tool_names
+        assert "listIncidents" not in tool_names
 
     async def test_single_incident_list_tool_invariant(self, mock_environment_token):
-        """Regression: only one canonical incident-list tool should exist.
-        The autogen `listIncidents` is overwritten by the curated proxy; no
-        third copy should sneak in. (`list_incidents` is a separately-named
-        curated tool and is the canonical surface.)"""
+        """Regression: exactly one incident-list tool is surfaced — the curated
+        snake_case `list_incidents`. The autogen `listIncidents` operationId is
+        normalized to `list_incidents` and then stripped in favor of the curated
+        implementation, and no camelCase variant is ever listed."""
         server = create_rootly_mcp_server(hosted=False)
 
         tools = await server.list_tools()
         tool_names = sorted(tool.name for tool in tools)
 
-        # Expect exactly these two names targeting GET /incidents:
         list_variants = [n for n in tool_names if n in ("list_incidents", "listIncidents")]
-        assert list_variants == ["listIncidents", "list_incidents"], (
+        assert list_variants == ["list_incidents"], (
             f"Unexpected incident-list tool surface: {list_variants}. "
-            "Should be exactly ['listIncidents', 'list_incidents'] under posture A."
+            "Should be exactly ['list_incidents']."
         )
 
 
@@ -542,7 +575,7 @@ class TestListAlertsParamSerialization:
 
     async def test_empty_optional_params_preserve_page_size(self, mock_environment_token):
         server = create_rootly_mcp_server(hosted=False)
-        tool = self._find_openapi_tool(server, "listAlerts")
+        tool = self._find_openapi_tool(server, "list_alerts")
         assert tool is not None, "listAlerts tool should be generated from the spec"
 
         captured: dict[str, Any] = {}

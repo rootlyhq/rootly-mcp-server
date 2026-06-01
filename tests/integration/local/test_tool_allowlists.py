@@ -84,22 +84,23 @@ def _terminate_process(process: subprocess.Popen[str]) -> str:
     ("enabled_tools", "enable_write_tools", "expected_tools"),
     [
         (
-            # Bidirectional alias expansion: `list_incidents` (canonical) brings
-            # `listIncidents` (legacy proxy) along so models that pick either name
-            # find the tool. See canonicalize_tool_names() in server_defaults.py.
-            "list_incidents,getIncident,listTeams",
+            # Snake_case canonical names map to themselves; the surfaced tool list
+            # is exactly the canonicalized allowlist. See canonicalize_tool_names().
+            "list_incidents,get_incident,list_teams",
             False,
-            ["getIncident", "listIncidents", "listTeams", "list_incidents"],
+            ["get_incident", "list_incidents", "list_teams"],
         ),
         (
+            # Hard cutover back-compat: legacy camelCase entries are canonicalized
+            # to their snake_case form, which is what tools/list advertises.
             "listIncidents,getIncident,listTeams",
             False,
-            ["getIncident", "listIncidents", "listTeams", "list_incidents"],
+            ["get_incident", "list_incidents", "list_teams"],
         ),
         (
             "createIncident,createWorkflowTask,listTeams",
             True,
-            ["createIncident", "createWorkflowTask", "listTeams"],
+            ["create_incident", "create_workflow_task", "list_teams"],
         ),
     ],
 )

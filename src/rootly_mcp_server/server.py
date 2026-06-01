@@ -55,6 +55,7 @@ _load_swagger_spec = spec_transform._load_swagger_spec
 _fetch_swagger_from_url = spec_transform._fetch_swagger_from_url
 _filter_openapi_spec = spec_transform._filter_openapi_spec
 _has_broken_references = spec_transform._has_broken_references
+snakecase_operation_ids = spec_transform.snakecase_operation_ids
 
 # Re-export transport/auth internals for backward compatibility with existing tests/imports.
 ALERT_ESSENTIAL_ATTRIBUTES = transport.ALERT_ESSENTIAL_ATTRIBUTES
@@ -79,33 +80,51 @@ DEFAULT_WRITE_ALLOWED_PATHS = server_defaults.DEFAULT_WRITE_ALLOWED_PATHS
 RootlyMCPServer = legacy_server.RootlyMCPServer
 
 
-def _strip_curated_override_operations(
-    spec: dict[str, Any], override_ids: frozenset[str] | set[str]
-) -> None:
-    """Remove operations from `spec.paths` whose operationId is in `override_ids`.
+def _provider_tool_inventory(
+    mcp: FastMCP,
+) -> tuple[set[str], Any, set[str]]:
+    """Return (curated_names, autogen_provider, autogen_names) across providers.
 
-    Mutates the spec in place. Paths that end up with no operations are also removed.
+    Curated tools live on the LocalProvider (`_components` keyed `tool:<name>`);
+    autogen OpenAPI tools live on the OpenAPIProvider (`_tools` keyed by name).
     """
-    if not override_ids:
+    curated_names: set[str] = set()
+    autogen_provider: Any = None
+    autogen_names: set[str] = set()
+    for provider in mcp.providers:
+        components = getattr(provider, "_components", None)
+        if components:
+            for component_key, component in components.items():
+                if component_key.startswith("tool:") and getattr(component, "name", None):
+                    curated_names.add(component.name)
+        autogen_tools = getattr(provider, "_tools", None)
+        if isinstance(autogen_tools, dict):
+            autogen_provider = provider
+            autogen_names.update(autogen_tools.keys())
+    return curated_names, autogen_provider, autogen_names
+
+
+def _remove_autogen_tools_shadowed_by_curated(mcp: FastMCP) -> None:
+    """Drop autogen tools whose name a curated `@mcp.tool` registration provides.
+
+    A curated tool and an autogen OpenAPI tool can resolve to the same name (the
+    curated one is the richer implementation). Without this, both would surface
+    as duplicate entries in `tools/list`. The collision set is derived from the
+    actually-registered tool names, so adding a future curated tool that shadows
+    an autogen operation is handled automatically — nothing to keep in sync.
+    """
+    curated_names, autogen_provider, autogen_names = _provider_tool_inventory(mcp)
+    if autogen_provider is None:
         return
-    paths = spec.get("paths", {})
-    paths_to_drop: list[str] = []
-    for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
-        methods_to_drop = [
-            method
-            for method, op in path_item.items()
-            if method.lower() in ("get", "post", "put", "patch", "delete")
-            and isinstance(op, dict)
-            and op.get("operationId") in override_ids
-        ]
-        for method in methods_to_drop:
-            path_item.pop(method, None)
-        if not any(m.lower() in ("get", "post", "put", "patch", "delete") for m in path_item):
-            paths_to_drop.append(path)
-    for path in paths_to_drop:
-        del paths[path]
+    collisions = curated_names & autogen_names
+    for name in collisions:
+        autogen_provider._tools.pop(name, None)
+    if collisions:
+        logger.info(
+            "Removed %d autogen tool(s) shadowed by curated implementations: %s",
+            len(collisions),
+            ", ".join(sorted(collisions)),
+        )
 
 
 def _fingerprint_auth_header(auth_header: str) -> str:
@@ -346,6 +365,38 @@ def _extract_exception_error_context(exc: Exception) -> dict[str, Any]:
     return {key: value for key, value in error_context.items() if value not in ("", [], None, {})}
 
 
+class CamelCaseAliasMiddleware(fastmcp_middleware.Middleware):
+    """Routes deprecated camelCase tool names to their snake_case canonical.
+
+    The tool surface is uniformly snake_case and only snake_case names are
+    advertised in `tools/list`. This middleware keeps the historical camelCase
+    names callable for clients with cached configs or in-flight sessions by
+    rewriting an incoming `call_tool` name to its canonical snake_case form
+    before dispatch. Aliases are intentionally never listed, so the visible
+    surface stays free of duplicates.
+    """
+
+    def __init__(self, aliases: dict[str, str]) -> None:
+        # `snakecase_operation_ids` only emits entries that actually changed, so
+        # every key here is a camelCase name distinct from its snake_case value.
+        self._aliases = dict(aliases)
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        canonical = self._aliases.get(context.message.name)
+        if canonical:
+            logger.debug(
+                "Routing deprecated camelCase tool %r to canonical %r",
+                context.message.name,
+                canonical,
+            )
+            context.message.name = canonical
+        return await call_next(context)
+
+
 class ToolUsageLoggingMiddleware(fastmcp_middleware.Middleware):
     """FastMCP middleware that logs per-tool usage with caller identity context."""
 
@@ -463,6 +514,15 @@ def create_rootly_mcp_server(
     swagger_spec = _load_swagger_spec(swagger_path)
     logger.info(f"Loaded Swagger spec with {len(swagger_spec.get('paths', {}))} total paths")
 
+    # Normalize every operationId to snake_case so the autogen tool surface is
+    # uniformly snake_case (FastMCP derives tool names verbatim from operationIds).
+    # Must run before operationId-based filtering, allowlist matching, and
+    # curated-override stripping below — all of which now operate on snake names.
+    # The returned camelCase->snake_case map feeds the alias middleware so the
+    # historical camelCase names stay callable (but hidden from tools/list).
+    camel_to_snake_aliases = snakecase_operation_ids(swagger_spec)
+    logger.info(f"Normalized {len(camel_to_snake_aliases)} operationIds to snake_case")
+
     # When an allowlist is provided, build the subset that matches real OpenAPI
     # operationIds; curated tool names (registered later via @mcp.tool) won't appear
     # in the spec and are validated separately after registration.
@@ -485,12 +545,10 @@ def create_rootly_mcp_server(
         enabled_operation_ids=autogen_allowlist,
     )
 
-    # Drop operations whose operationId is provided by a curated `@mcp.tool(name=...)`
-    # registration. Without this, FastMCP's OpenAPIProvider would register an autogen
-    # tool with the same name as our curated tool, producing duplicate entries.
-    _strip_curated_override_operations(
-        filtered_spec, server_defaults.CURATED_OVERRIDE_OPERATION_IDS
-    )
+    # NOTE: autogen tools whose name collides with a curated `@mcp.tool` are
+    # removed AFTER registration by `_remove_autogen_tools_shadowed_by_curated`,
+    # which derives the collision set from the real registry instead of a
+    # hand-maintained list.
 
     logger.info(f"Filtered spec to {len(filtered_spec.get('paths', {}))} allowed paths")
 
@@ -545,6 +603,9 @@ def create_rootly_mcp_server(
         name=name,
         tags={"rootly", "incident-management"},
     )
+    # Alias middleware runs first so the historical camelCase names are rewritten
+    # to snake_case before usage logging records the (canonical) tool name.
+    mcp.add_middleware(CamelCaseAliasMiddleware(camel_to_snake_aliases))
     mcp.add_middleware(ToolUsageLoggingMiddleware())
 
     @mcp.custom_route("/healthz", methods=["GET"])
@@ -770,22 +831,16 @@ def create_rootly_mcp_server(
         mcp_error=MCPError,
     )
 
+    # A curated tool and an autogen tool can resolve to the same name; drop the
+    # autogen duplicate so only the richer curated implementation is surfaced.
+    _remove_autogen_tools_shadowed_by_curated(mcp)
+
     # Validate the allowlist against the fully-registered tool set (autogen + curated).
     # This must happen after all register_*_tools() calls so curated tool names — which
     # aren't OpenAPI operationIds — are recognized as valid.
     if enabled_tools is not None:
-        registered_names: set[str] = set()
-        for provider in mcp.providers:
-            # LocalProvider stores curated tools in `_components` keyed `tool:<name>`.
-            components = getattr(provider, "_components", None)
-            if components:
-                for component_key, component in components.items():
-                    if component_key.startswith("tool:") and getattr(component, "name", None):
-                        registered_names.add(component.name)
-            # OpenAPIProvider stores autogen tools in `_tools` keyed by name.
-            autogen_tools = getattr(provider, "_tools", None)
-            if isinstance(autogen_tools, dict):
-                registered_names.update(autogen_tools.keys())
+        curated_names, _, autogen_names = _provider_tool_inventory(mcp)
+        registered_names = curated_names | autogen_names
 
         valid_tools = enabled_tools & registered_names
         invalid_tools = sorted(enabled_tools - registered_names)
