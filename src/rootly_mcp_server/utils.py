@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 # OAuth 2.0 Protected Resource Metadata (RFC 9728)
 OAUTH_PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource"
+# OAuth 2.0 Authorization Server Metadata (RFC 8414)
+OAUTH_AUTHORIZATION_SERVER_PATH = "/.well-known/oauth-authorization-server"
 
 # Cached at import time — static for the lifetime of the process.
 _MCP_SERVER_URL = os.getenv("ROOTLY_MCP_SERVER_URL", "")

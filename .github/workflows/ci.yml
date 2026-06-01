@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   quality:
-    name: Quality (Python 3.12)
+    name: Quality (Python 3.13)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -24,7 +24,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
@@ -70,13 +70,13 @@ jobs:
         run: uv run pytest tests/unit/ --cov=src/rootly_mcp_server --cov-report=xml
 
       - name: Run local integration tests
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         env:
           ROOTLY_API_TOKEN: ${{ secrets.ROOTLY_API_TOKEN }}
         run: uv run pytest tests/integration/local/ -x
 
       - name: Upload coverage to Codecov
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v5
         with:
           file: ./coverage.xml
@@ -95,7 +95,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
@@ -140,7 +140,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
@@ -166,7 +166,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install uv
         uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7

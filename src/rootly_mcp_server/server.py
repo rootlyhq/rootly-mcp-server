@@ -14,6 +14,7 @@ import traceback
 from typing import Any
 
 import fastmcp.server.middleware as fastmcp_middleware
+import httpx
 import mcp.types as mt
 from fastmcp import FastMCP
 
@@ -26,6 +27,7 @@ from .tools.incidents import register_incident_tools
 from .tools.oncall import register_oncall_tools
 from .tools.resources import register_resource_handlers
 from .utils import (
+    OAUTH_AUTHORIZATION_SERVER_PATH,
     OAUTH_PROTECTED_RESOURCE_PATH,
     auth_header_state,
     derive_oauth_server_url,
@@ -585,6 +587,65 @@ def create_rootly_mcp_server(
         @mcp.custom_route(OAUTH_PROTECTED_RESOURCE_PATH, methods=["GET"])
         async def oauth_protected_resource(request):
             return await _oauth_protected_resource_handler(request)
+
+        # OAuth 2.0 Authorization Server Metadata (RFC 8414)
+        # Some MCP clients fetch this directly from the MCP server instead of
+        # following the authorization_servers link from the protected resource
+        # metadata. Proxy the response from the actual OAuth server.
+        _auth_server_metadata_cache: dict[str, Any] = {}
+        _AUTH_SERVER_CACHE_TTL = 3600
+
+        # NOTE: The proxied response contains "issuer": "https://rootly.com" from
+        # the upstream OAuth server, but clients fetch this from the MCP server
+        # origin. RFC 8414 §3.3 requires issuer to match the request URL; strict
+        # OAuth libraries may reject the mismatch. Most observed clients (node,
+        # python-httpx, Cursor) do not enforce this check.
+        async def _oauth_authorization_server_handler(request):
+            oauth_server_url = derive_oauth_server_url(base_url)
+            now = time.time()
+            cached = _auth_server_metadata_cache.get("data")
+            cached_at = _auth_server_metadata_cache.get("cached_at", 0)
+            if cached and (now - cached_at) < _AUTH_SERVER_CACHE_TTL:
+                return JSONResponse(cached, headers={"Cache-Control": "max-age=3600"})
+
+            upstream_url = f"{oauth_server_url}/.well-known/oauth-authorization-server"
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.get(upstream_url)
+                    resp.raise_for_status()
+                    metadata = resp.json()
+                    _auth_server_metadata_cache["data"] = metadata
+                    _auth_server_metadata_cache["cached_at"] = now
+                    return JSONResponse(metadata, headers={"Cache-Control": "max-age=3600"})
+            except Exception:
+                logger.warning(
+                    "Failed to proxy OAuth authorization server metadata from %s",
+                    upstream_url,
+                    exc_info=True,
+                )
+                if cached:
+                    return JSONResponse(cached, headers={"Cache-Control": "max-age=60"})
+                return JSONResponse(
+                    {"error": "authorization_server_metadata_unavailable"},
+                    status_code=502,
+                    headers={"Cache-Control": "no-store"},
+                )
+
+        @mcp.custom_route(OAUTH_AUTHORIZATION_SERVER_PATH + "/{path:path}", methods=["GET"])
+        async def oauth_authorization_server_suffixed(request):
+            return await _oauth_authorization_server_handler(request)
+
+        @mcp.custom_route(OAUTH_AUTHORIZATION_SERVER_PATH, methods=["GET"])
+        async def oauth_authorization_server(request):
+            return await _oauth_authorization_server_handler(request)
+
+        # Some clients prepend the resource path before the well-known segment
+        # (e.g. /mcp/.well-known/oauth-authorization-server).
+        @mcp.custom_route(
+            "/{resource_path:path}" + OAUTH_AUTHORIZATION_SERVER_PATH, methods=["GET"]
+        )
+        async def oauth_authorization_server_prefixed(request):
+            return await _oauth_authorization_server_handler(request)
 
     # Add some custom tools for enhanced functionality
 
