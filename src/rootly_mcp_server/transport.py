@@ -474,11 +474,20 @@ class AuthCaptureMiddleware:
                 return
             _session_authenticated_user.set(authenticated_user)
 
+            response_started = False
+
             async def _send_with_www_authenticate(message):
-                if message.get("type") == "http.response.start" and message.get("status") == 401:
-                    response_headers = list(message.get("headers", []))
-                    response_headers.append((b"www-authenticate", www_auth_value))
-                    message = {**message, "headers": response_headers}
+                nonlocal response_started
+                if message.get("type") == "http.response.start":
+                    if response_started:
+                        return
+                    response_started = True
+                    if message.get("status") == 401:
+                        response_headers = list(message.get("headers", []))
+                        response_headers.append((b"www-authenticate", www_auth_value))
+                        message = {**message, "headers": response_headers}
+                elif message.get("type") == "http.response.body" and not response_started:
+                    return
                 await send(message)
 
             await self.app(scope, receive, _send_with_www_authenticate)
