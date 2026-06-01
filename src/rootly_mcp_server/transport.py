@@ -475,18 +475,21 @@ class AuthCaptureMiddleware:
             _session_authenticated_user.set(authenticated_user)
 
             response_started = False
+            response_dropped = False
 
             async def _send_with_www_authenticate(message):
-                nonlocal response_started
+                nonlocal response_started, response_dropped
                 if message.get("type") == "http.response.start":
                     if response_started:
+                        response_dropped = True
                         return
+                    response_dropped = False
                     response_started = True
                     if message.get("status") == 401:
                         response_headers = list(message.get("headers", []))
                         response_headers.append((b"www-authenticate", www_auth_value))
                         message = {**message, "headers": response_headers}
-                elif message.get("type") == "http.response.body" and not response_started:
+                elif message.get("type") == "http.response.body" and response_dropped:
                     return
                 await send(message)
 
