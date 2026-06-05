@@ -615,11 +615,18 @@ class TestScopedIncidentUpdateTool:
 
     @pytest.mark.asyncio
     async def test_list_incident_roles_returns_validation_error_for_blank_reference(self):
-        tools, _ = self._register_tools()
+        tools, request = self._register_tools()
 
         result = await tools["list_incident_roles"](incident_id="   ")
 
-        assert result.get("error_type") == "validation_error" or "error" in result
+        # Specifically the ValueError → validation_error branch must be hit.
+        # A loose `"error" in result` check would also pass for unrelated error
+        # branches (e.g. a network failure) and silently mask the wrong code path.
+        assert result["error"] is True
+        assert result["error_type"] == "validation_error"
+        assert "Incident reference is required" in result["message"]
+        # No upstream HTTP call should have been attempted with a blank reference.
+        request.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_update_incident_sends_only_allowed_fields(self):
