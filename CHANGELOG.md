@@ -5,12 +5,27 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Features
+
+- **`list_incident_roles` Tool**: Added a curated `list_incident_roles(incident_id)` tool that returns role assignments for an incident (Commander, Postmortem Owner, Scribe, etc.) as a flat table with role metadata and the assigned user. Wraps `GET /v1/incidents/{id}?include=roles` and flattens the JSON:API `included` array so callers don't have to walk the relationships graph. Included in the default hosted tool surface
+
+### Fixed
+
+- **Misnamed Tool Argument Normalization**: Added argument normalization middleware to recover from common LLM/client parameter mistakes before Pydantic validation runs. This now remaps `from`/`to` to `from_date`/`to_date` for `list_shifts`, remaps `max_tokens` to `max_results` for `search_incidents`, and coerces list-shaped schedule/shift identifiers into the CSV form expected by the current tool schemas
+
+### Testing
+
+- Expanded snake_case and argument-normalization coverage for alias handling, CSV coercion, and misnamed-argument recovery paths
+- Added coverage for `list_incident_roles` happy path, unassigned roles, sequential reference resolution, and validation errors
+
 ## [2.3.13] - Released 2026-06-01
 
 ### Features
 
 - **OAuth Authorization Server Metadata**: Hosted MCP deployments now serve RFC 8414 authorization server metadata so OAuth-capable clients can discover Rootly's authorization endpoints directly from the MCP server
-- **Remote Safe Write Surface Expanded**: The hosted/full tool surface now exposes a broader set of non-destructive write tools for alerts, alert events, alert routes, alert sources, custom forms, form fields, workflow runs, status page templates, and related resources
+- **Safe Write Surface Expanded**: The default write-allowed surface now exposes a broader set of non-destructive tools for alerts, alert events, alert routes, alert sources, custom forms, form fields, workflow runs, status page templates, and related resources when write tools are enabled
 
 ### Fixed
 
