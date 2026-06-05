@@ -797,6 +797,124 @@ def register_incident_tools(
                 ),
             )
 
+    @mcp.tool(name="list_incident_roles")
+    async def list_incident_roles(
+        incident_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "Incident reference whose role assignments to list. "
+                    "ARGUMENT NAME IS `incident_id` (not `id`). "
+                    "Accepts: UUID, bare sequential number (`4460`), "
+                    "`#4460`, or `INC-4460`."
+                )
+            ),
+        ],
+    ) -> JsonDict:
+        """List role assignments for an incident (who is Commander, Scribe, etc.).
+
+        Returns one entry per defined role with role metadata and the assigned
+        user (or `user_id: null` for roles that are defined on the incident but
+        not yet assigned). Use this to answer questions like "who is the
+        incident commander?", "is there a postmortem owner?", or "list all
+        roles for INC-4460".
+
+        Implementation note: this wraps `GET /v1/incidents/{id}?include=roles`
+        and flattens the JSON:API `included` array of `incident_role_assignments`
+        into a flat table so callers don't need to walk the relationships graph.
+        """
+        try:
+            resolved_incident_id = await _resolve_incident_reference_to_uuid(
+                incident_id, make_authenticated_request
+            )
+            response = await make_authenticated_request(
+                "GET",
+                f"/v1/incidents/{resolved_incident_id}",
+                params={"include": "roles"},
+            )
+            response.raise_for_status()
+
+            payload = response.json()
+            included = payload.get("included") if isinstance(payload, dict) else None
+            assignments: list[dict[str, Any]] = []
+            if isinstance(included, list):
+                for item in included:
+                    if (
+                        not isinstance(item, dict)
+                        or item.get("type") != "incident_role_assignments"
+                    ):
+                        continue
+                    attrs = item.get("attributes") or {}
+                    role_envelope = attrs.get("incident_role") or {}
+                    role_data = (
+                        role_envelope.get("data") if isinstance(role_envelope, dict) else None
+                    ) or {}
+                    role_attrs = role_data.get("attributes") or {}
+                    user_envelope = attrs.get("user") or {}
+                    user_data = (
+                        user_envelope.get("data") if isinstance(user_envelope, dict) else None
+                    )
+                    user_attrs = (
+                        user_data.get("attributes") or {} if isinstance(user_data, dict) else {}
+                    )
+                    role_name = role_attrs.get("name")
+                    if isinstance(role_name, str):
+                        role_name = role_name.strip() or None
+                    assignments.append(
+                        {
+                            "assignment_id": item.get("id"),
+                            "role_id": role_data.get("id"),
+                            "role_name": role_name,
+                            "role_slug": role_attrs.get("slug"),
+                            "role_summary": role_attrs.get("summary"),
+                            "user_id": (
+                                user_data.get("id") if isinstance(user_data, dict) else None
+                            ),
+                            "user_email": user_attrs.get("email"),
+                            "user_name": user_attrs.get("full_name") or user_attrs.get("name"),
+                            "assigned_at": attrs.get("created_at"),
+                            "updated_at": attrs.get("updated_at"),
+                        }
+                    )
+
+            return cast(
+                JsonDict,
+                {
+                    "data": assignments,
+                    "meta": {
+                        "incident_id": resolved_incident_id,
+                        "total_count": len(assignments),
+                        "assigned_count": sum(1 for a in assignments if a.get("user_id")),
+                        "unassigned_count": sum(1 for a in assignments if not a.get("user_id")),
+                    },
+                },
+            )
+        except ValueError as e:
+            return cast(
+                JsonDict,
+                mcp_error.tool_error(
+                    f"Failed to list incident roles: {e}",
+                    "validation_error",
+                ),
+            )
+        except LookupError as e:
+            return cast(
+                JsonDict,
+                mcp_error.tool_error(
+                    f"Failed to list incident roles: {e}",
+                    "not_found",
+                ),
+            )
+        except Exception as e:
+            error_type, error_message = mcp_error.categorize_error(e)
+            return cast(
+                JsonDict,
+                mcp_error.tool_error(
+                    f"Failed to list incident roles: {error_message}",
+                    error_type,
+                ),
+            )
+
     if enable_write_tools:
 
         @mcp.tool(name="create_incident")

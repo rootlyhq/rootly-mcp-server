@@ -445,6 +445,183 @@ class TestScopedIncidentUpdateTool:
         ]
 
     @pytest.mark.asyncio
+    async def test_list_incident_roles_tool_is_registered(self):
+        tools, _ = self._register_tools()
+        assert "list_incident_roles" in tools
+
+    @pytest.mark.asyncio
+    async def test_list_incident_roles_returns_flattened_assignments(self):
+        """Happy path: incident_role_assignments in `included` get flattened to a table."""
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": {
+                "id": "inc-uuid",
+                "type": "incidents",
+                "relationships": {
+                    "roles": {
+                        "data": [
+                            {"id": "assign-1", "type": "incident_role_assignments"},
+                            {"id": "assign-2", "type": "incident_role_assignments"},
+                        ]
+                    }
+                },
+            },
+            "included": [
+                {
+                    "id": "assign-1",
+                    "type": "incident_role_assignments",
+                    "attributes": {
+                        "incident_role": {
+                            "data": {
+                                "id": "role-commander",
+                                "type": "incident_roles",
+                                "attributes": {
+                                    "slug": "commander",
+                                    "name": "Commander",
+                                    "summary": "Incident Commander",
+                                },
+                            }
+                        },
+                        "user": {
+                            "data": {
+                                "id": "109673",
+                                "type": "users",
+                                "attributes": {
+                                    "email": "spencer.cheng@rootly.com",
+                                    "full_name": "Spencer Cheng",
+                                },
+                            }
+                        },
+                        "created_at": "2026-06-05T09:57:17.213-07:00",
+                        "updated_at": "2026-06-05T09:57:17.819-07:00",
+                    },
+                },
+                {
+                    "id": "assign-2",
+                    "type": "incident_role_assignments",
+                    "attributes": {
+                        "incident_role": {
+                            "data": {
+                                "id": "role-postmortem",
+                                "type": "incident_roles",
+                                "attributes": {
+                                    "slug": "postmortem-owner",
+                                    # Trailing space mirrors real API payloads — must be stripped.
+                                    "name": "Postmortem Owner ",
+                                    "summary": "Postmortem Owner",
+                                },
+                            }
+                        },
+                        # Unassigned role: API returns user: None
+                        "user": None,
+                        "created_at": "2026-06-05T09:57:17.244-07:00",
+                        "updated_at": "2026-06-05T09:57:17.244-07:00",
+                    },
+                },
+            ],
+        }
+        request.return_value = response
+
+        result = await tools["list_incident_roles"](incident_id="inc-uuid")
+
+        request.assert_awaited_once_with(
+            "GET", "/v1/incidents/inc-uuid", params={"include": "roles"}
+        )
+        assert result["meta"] == {
+            "incident_id": "inc-uuid",
+            "total_count": 2,
+            "assigned_count": 1,
+            "unassigned_count": 1,
+        }
+        assignments = result["data"]
+        assert len(assignments) == 2
+
+        commander = assignments[0]
+        assert commander["role_slug"] == "commander"
+        # Trailing space stripped.
+        assert commander["role_name"] == "Commander"
+        assert commander["user_id"] == "109673"
+        assert commander["user_email"] == "spencer.cheng@rootly.com"
+        assert commander["user_name"] == "Spencer Cheng"
+        assert commander["assigned_at"] == "2026-06-05T09:57:17.213-07:00"
+
+        postmortem = assignments[1]
+        assert postmortem["role_slug"] == "postmortem-owner"
+        assert postmortem["role_name"] == "Postmortem Owner"
+        assert postmortem["user_id"] is None
+        assert postmortem["user_email"] is None
+        assert postmortem["user_name"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_incident_roles_returns_empty_when_no_included(self):
+        """Incident with no roles at all → empty data + zero counts, not an error."""
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": {"id": "inc-empty", "type": "incidents", "attributes": {}},
+        }
+        request.return_value = response
+
+        result = await tools["list_incident_roles"](incident_id="inc-empty")
+
+        assert result["data"] == []
+        assert result["meta"]["total_count"] == 0
+        assert result["meta"]["assigned_count"] == 0
+        assert result["meta"]["unassigned_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_incident_roles_resolves_sequential_reference(self):
+        """`INC-4460` should be resolved to a UUID first, then include=roles fetched."""
+        tools, request = self._register_tools()
+
+        list_response = Mock()
+        list_response.raise_for_status.return_value = None
+        list_response.json.return_value = {
+            "data": [
+                {
+                    "id": "22222222-2222-4222-8222-222222222222",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 4460},
+                }
+            ],
+            "meta": {
+                "current_page": 1,
+                "next_page": None,
+                "prev_page": None,
+                "total_pages": 1,
+                "total_count": 1,
+            },
+        }
+        roles_response = Mock()
+        roles_response.raise_for_status.return_value = None
+        roles_response.json.return_value = {
+            "data": {"id": "22222222-2222-4222-8222-222222222222", "type": "incidents"},
+            "included": [],
+        }
+        request.side_effect = [list_response, roles_response]
+
+        result = await tools["list_incident_roles"](incident_id="INC-4460")
+
+        # Second call must be the include=roles fetch against the resolved UUID.
+        assert request.await_args_list[-1] == call(
+            "GET",
+            "/v1/incidents/22222222-2222-4222-8222-222222222222",
+            params={"include": "roles"},
+        )
+        assert result["meta"]["incident_id"] == "22222222-2222-4222-8222-222222222222"
+
+    @pytest.mark.asyncio
+    async def test_list_incident_roles_returns_validation_error_for_blank_reference(self):
+        tools, _ = self._register_tools()
+
+        result = await tools["list_incident_roles"](incident_id="   ")
+
+        assert result.get("error_type") == "validation_error" or "error" in result
+
+    @pytest.mark.asyncio
     async def test_update_incident_sends_only_allowed_fields(self):
         tools, request = self._register_tools()
         response = Mock()

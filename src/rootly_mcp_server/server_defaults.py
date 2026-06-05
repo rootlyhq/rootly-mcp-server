@@ -93,6 +93,7 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "list_incident_alerts",
         "list_incident_events",
         "list_incident_form_field_selections",
+        "list_incident_roles",
         "list_incident_types",
         "list_incidents",
         "list_override_shifts",
