@@ -125,6 +125,6 @@ To contribute:
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/Rootly-AI-Labs/Rootly-MCP-server/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/Rootly-AI-Labs/Rootly-MCP-server/discussions)
+- **Issues**: [GitHub Issues](https://github.com/rootlyhq/rootly-mcp-server/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/rootlyhq/rootly-mcp-server/discussions)
 - **Rootly Support**: [docs.rootly.com](https://docs.rootly.com)

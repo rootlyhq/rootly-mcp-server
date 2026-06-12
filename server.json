@@ -5,7 +5,7 @@
   "description": "Incident management, on-call scheduling, and intelligent analysis powered by Rootly.",
   "version": "2.2.9",
   "repository": {
-    "url": "https://github.com/Rootly-AI-Labs/Rootly-MCP-server",
+    "url": "https://github.com/rootlyhq/rootly-mcp-server",
     "source": "github"
   },
   "remotes": [

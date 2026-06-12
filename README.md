@@ -7,7 +7,7 @@
 
 An MCP server for the [Rootly API](https://docs.rootly.com/api-reference/overview) for Cursor, Windsurf, Claude, and other MCP clients.
 
-![Demo GIF](https://raw.githubusercontent.com/Rootly-AI-Labs/Rootly-MCP-server/refs/heads/main/rootly-mcp-server-demo.gif)
+![Demo GIF](https://raw.githubusercontent.com/rootlyhq/rootly-mcp-server/refs/heads/main/rootly-mcp-server-demo.gif)
 
 ## Quick Start
 
@@ -128,7 +128,7 @@ claude mcp add --transport http rootly https://mcp.rootly.com/mcp \
 Install the extension:
 
 ```bash
-gemini extensions install https://github.com/Rootly-AI-Labs/Rootly-MCP-server
+gemini extensions install https://github.com/rootlyhq/rootly-mcp-server
 ```
 
 Or configure manually in `~/.gemini/settings.json`:
@@ -818,4 +818,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for developer setup and guidelines.
 ## About Rootly AI Labs
 
 This project was developed by [Rootly AI Labs](https://labs.rootly.ai/), where we're building the future of system reliability and operational excellence. As an open-source incubator, we share ideas, experiment, and rapidly prototype solutions that benefit the entire community.
-![Rootly AI logo](https://github.com/Rootly-AI-Labs/EventOrOutage/raw/main/rootly-ai.png)
+![Rootly AI logo](https://github.com/rootlyhq/EventOrOutage/raw/main/rootly-ai.png)

@@ -51,8 +51,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Rootly-AI-Labs/Rootly-MCP-server"
-Issues = "https://github.com/Rootly-AI-Labs/Rootly-MCP-server/issues"
+Homepage = "https://github.com/rootlyhq/rootly-mcp-server"
+Issues = "https://github.com/rootlyhq/rootly-mcp-server/issues"
 
 [build-system]
 requires = ["hatchling"]
