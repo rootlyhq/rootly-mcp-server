@@ -37,11 +37,14 @@ classifiers = [
 ]
 dependencies = [
     "fastmcp[code-mode]==3.3.1",  # Pin to patched version with Code Mode support
-    "authlib>=1.6.11",  # Override vulnerable transitive authlib (GHSA-jj8c-mmj3-mmgv)
+    "authlib>=1.7.1",  # Override vulnerable transitive authlib (GHSA-jj8c-mmj3-mmgv, GHSA-w8p2-r796-3vmq)
     "python-dotenv>=1.2.2",  # Override vulnerable transitive python-dotenv (GHSA-m8f7-34r5-grfg)
-    "python-multipart>=0.0.26",  # Override vulnerable transitive python-multipart (CVE-2026-40347)
-    "cryptography>=46.0.7",  # Override vulnerable transitive cryptography
+    "python-multipart>=0.0.31",  # Override vulnerable transitive python-multipart (CVE-2026-40347, GHSA-v9pg-7xvm-68hf and others)
+    "cryptography>=48.0.1",  # Override vulnerable transitive cryptography (GHSA-537c-gmf6-5ccf)
     "Pygments>=2.20.0",  # Override vulnerable transitive Pygments
+    "pyjwt>=2.13.0",  # Override vulnerable transitive pyjwt (GHSA-xgmm-8j9v-c9wx and others)
+    "msgpack>=1.2.1",  # Override vulnerable transitive msgpack (GHSA-6v7p-g79w-8964)
+    "starlette>=1.3.1",  # Override vulnerable transitive starlette (GHSA-82w8-qh3p-5jfq and others)
     "requests==2.34.2", # Pin to patched version
     "httpx==0.28.1",   # Pin to specific version
     "pydantic==2.13.4",  # Pin to specific version
