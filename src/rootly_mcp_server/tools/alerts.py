@@ -66,7 +66,7 @@ def register_alert_tools(
 
             data = response.json().get("data", {})
             attrs = data.get("attributes", {})
-            return {
+            result = {
                 "id": data.get("id"),
                 "short_id": attrs.get("short_id"),
                 "summary": attrs.get("summary"),
@@ -77,8 +77,19 @@ def register_alert_tools(
                 "ended_at": attrs.get("ended_at"),
                 "noise": attrs.get("noise"),
                 "url": attrs.get("url"),
+                "external_url": attrs.get("external_url"),
                 "created_at": attrs.get("created_at"),
+                "updated_at": attrs.get("updated_at"),
             }
+            # Pass through the raw payload / custom-field data when present.
+            # `data` is the alert's raw source payload (what the Rootly UI shows
+            # under the "payload" tab); `alert_field_values` and `labels` hold
+            # custom fields. These can carry things like runbook links, so
+            # they're essential when investigating an alert.
+            for key in ("data", "alert_field_values", "labels"):
+                if key in attrs:
+                    result[key] = attrs[key]
+            return result
 
         except Exception as e:
             error_type, error_message = mcp_error.categorize_error(e)

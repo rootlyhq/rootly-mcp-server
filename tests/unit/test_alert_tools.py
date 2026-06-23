@@ -87,6 +87,35 @@ class TestGetAlertByShortId:
         assert result["summary"] == "Disk full on web-01"
 
     @pytest.mark.asyncio
+    async def test_returns_payload_and_custom_fields(self):
+        """The raw payload (`data`) and custom fields must come through, since
+        they can carry data like runbook links needed to investigate an alert."""
+        tools, request = _register()
+        alert = _alert_payload(short_id="PhIQtP")
+        alert["attributes"]["data"] = {"runbook_url": "https://wiki/runbooks/disk"}
+        alert["attributes"]["alert_field_values"] = [{"field": "region", "value": "us-east-1"}]
+        alert["attributes"]["labels"] = [{"key": "env", "value": "prod"}]
+        request.return_value = _ok_response(alert)
+
+        result = await tools["get_alert_by_short_id"]("PhIQtP")
+
+        assert result["data"] == {"runbook_url": "https://wiki/runbooks/disk"}
+        assert result["alert_field_values"] == [{"field": "region", "value": "us-east-1"}]
+        assert result["labels"] == [{"key": "env", "value": "prod"}]
+
+    @pytest.mark.asyncio
+    async def test_omits_payload_keys_when_absent(self):
+        """Payload keys are only included when present — no null noise."""
+        tools, request = _register()
+        request.return_value = _ok_response(_alert_payload(short_id="PhIQtP"))
+
+        result = await tools["get_alert_by_short_id"]("PhIQtP")
+
+        assert "data" not in result
+        assert "alert_field_values" not in result
+        assert "labels" not in result
+
+    @pytest.mark.asyncio
     async def test_extracts_short_id_from_url(self):
         tools, request = _register()
         request.return_value = _ok_response(_alert_payload(short_id="PhIQtP"))

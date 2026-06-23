@@ -95,14 +95,32 @@ class TestStripHeavyAlertData:
             assert "labels" not in alert["attributes"]
             assert "notified_users" not in alert["attributes"]
 
-    def test_strips_heavy_fields_from_single_resource_response(self):
+    def test_preserves_full_attributes_on_single_resource_response(self):
+        """A single-resource (detail) response keeps all attributes, including
+        the raw payload/custom fields, since it's a point lookup."""
         data = {"data": _make_alert("a1")}
         result = strip_heavy_alert_data(data)
 
-        attr_keys = set(result["data"]["attributes"].keys())
-        assert attr_keys <= ALERT_ESSENTIAL_ATTRIBUTES
-        assert result["data"]["attributes"]["summary"] == "CPU usage above 90%"
-        assert "services" not in result["data"]["attributes"]
+        attrs = result["data"]["attributes"]
+        # Essential fields are still present
+        assert attrs["summary"] == "CPU usage above 90%"
+        # Heavy / payload-bearing fields are preserved on detail lookups
+        assert "services" in attrs
+        assert "data" in attrs
+        assert "alert_field_values" in attrs
+        assert "labels" in attrs
+
+    def test_single_resource_still_collapses_relationships_and_drops_included(self):
+        """Even on detail lookups, relationships collapse and sideloads drop
+        to keep the response bounded."""
+        data = {
+            "data": _make_alert("a1"),
+            "included": [{"id": "svc-1", "type": "services"}],
+        }
+        result = strip_heavy_alert_data(data)
+
+        assert result["data"]["relationships"]["events"] == {"count": 2}
+        assert "included" not in result
 
     def test_collapses_relationships_to_counts(self):
         data = {"data": [_make_alert()]}
