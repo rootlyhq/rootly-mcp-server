@@ -714,16 +714,24 @@ def strip_heavy_shift_data(data: dict[str, Any]) -> dict[str, Any]:
 def strip_heavy_alert_data(data: dict[str, Any]) -> dict[str, Any]:
     """
     Strip heavy nested data from alert responses to reduce payload size.
-    Uses a whitelist approach: only essential attributes are kept.
-    Handles both list responses (data: [...]) and single-resource responses (data: {...}).
+
+    List responses (data: [...]) use a whitelist approach: only essential
+    attributes are kept, since a list can hold many alerts and the per-alert
+    detail is rarely needed when scanning.
+
+    Single-resource responses (data: {...}) are a point detail lookup
+    (e.g. GET /v1/alerts/{id}), so all attributes are preserved — including
+    the raw ``payload``/source data, which can carry custom fields like
+    runbook links. Relationships are still collapsed to counts and sideloaded
+    ``included`` data is dropped to keep the response bounded.
     """
     if not isinstance(data, dict) or "data" not in data:
         return data
 
-    def _strip_single_alert(alert: Any) -> None:
+    def _strip_single_alert(alert: Any, *, keep_all_attributes: bool = False) -> None:
         if not isinstance(alert, dict):
             return
-        if "attributes" in alert:
+        if not keep_all_attributes and "attributes" in alert:
             attrs = alert["attributes"]
             keys_to_remove = [k for k in attrs if k not in ALERT_ESSENTIAL_ATTRIBUTES]
             for k in keys_to_remove:
@@ -743,7 +751,8 @@ def strip_heavy_alert_data(data: dict[str, Any]) -> dict[str, Any]:
         for alert in data["data"]:
             _strip_single_alert(alert)
     elif isinstance(data["data"], dict):
-        _strip_single_alert(data["data"])
+        # Detail lookup: keep the full attribute set, including the payload.
+        _strip_single_alert(data["data"], keep_all_attributes=True)
 
     # Remove sideloaded relationship data
     data.pop("included", None)
