@@ -82,9 +82,11 @@ def register_alert_tools(
                 "updated_at": attrs.get("updated_at"),
             }
             # Pass through the raw payload / custom-field data when present.
-            # The alert source populates these (e.g. runbook links added as
-            # custom fields), so they're essential when investigating an alert.
-            for key in ("payload", "data", "alert_field_values", "labels"):
+            # `data` is the alert's raw source payload (what the Rootly UI shows
+            # under the "payload" tab); `alert_field_values` and `labels` hold
+            # custom fields. These can carry things like runbook links, so
+            # they're essential when investigating an alert.
+            for key in ("data", "alert_field_values", "labels"):
                 if key in attrs:
                     result[key] = attrs[key]
             return result
