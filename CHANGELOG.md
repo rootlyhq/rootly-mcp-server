@@ -5,6 +5,26 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.15] - Unreleased
+
+### Fixed
+
+- **Alert Payload Returned on Detail Lookups**: Single-alert lookups now return the full alert payload, including custom fields. Alert responses were stripped to a whitelist of essential attributes to keep payloads small, but this also dropped the raw `data` payload — where custom fields such as runbook links live (the same data shown under the Rootly UI's alert "payload" tab). The strip now applies only to list/search responses; single-resource detail lookups (`GET /v1/alerts/{id}`) preserve their full attribute set, while relationships are still collapsed to counts and sideloaded `included` data is dropped to keep responses bounded. The curated `get_alert_by_short_id` tool also passes through `data`, `alert_field_values`, and `labels` (plus `external_url` and `updated_at`). Verified end-to-end against a live alert
+
+### Security
+
+- **Dependency Bumps to Resolve Dependabot Alerts**: Raised direct override constraints in `pyproject.toml` (and regenerated `uv.lock`) to pull patched versions of vulnerable transitive dependencies, resolving all 16 open Dependabot alerts:
+  - `starlette` 0.52.1 → 1.3.1 (GHSA-82w8-qh3p-5jfq, -jp82-jpqv-5vv3, -wqp7-x3pw-xc5r, -x746-7m8f-x49c — DoS, SSRF)
+  - `cryptography` 46.0.7 → 49.0.0 (GHSA-537c-gmf6-5ccf — bundled OpenSSL)
+  - `python-multipart` 0.0.28 → 0.0.32 (CVE-2026-40347, GHSA-v9pg-7xvm-68hf, -6jv3-5f52-599m, -vffw-93wf-4j4q — DoS / parameter smuggling)
+  - `pyjwt` 2.12.1 → 2.13.0 (GHSA-xgmm-8j9v-c9wx, -993g-76c3-p5m4, -w7vc-732c-9m39, -jq35-7prp-9v3f, -fhv5-28vv-h8m8 — token forgery / DoS)
+  - `msgpack` 1.1.2 → 1.2.1 (GHSA-6v7p-g79w-8964 — out-of-bounds read)
+  - `authlib` 1.7.0 → 1.7.2 (GHSA-w8p2-r796-3vmq — OAuth open redirect)
+
+### Testing
+
+- Added coverage for detail-lookup payload preservation, list-response stripping (unchanged), and the `get_alert_by_short_id` payload/custom-field pass-through
+
 ## [2.3.14] - Released 2026-06-05
 
 ### Features
