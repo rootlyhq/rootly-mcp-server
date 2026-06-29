@@ -245,10 +245,11 @@ def parse_args():
         "--no-enable-write-tools",
         dest="enable_write_tools",
         action="store_false",
-        # Default None (not True) so "flag absent" is distinguishable from
-        # "flag passed -> False". Otherwise `args.enable_write_tools or <env>`
-        # short-circuits to True and ROOTLY_MCP_ENABLE_WRITE_TOOLS=false is
-        # silently ignored on the CLI / `python -m` path.
+        # Default None (not True) so we can distinguish "flag not passed" from
+        # "flag passed". When the flag is absent we fall back to the
+        # ROOTLY_MCP_ENABLE_WRITE_TOOLS env var; a True default here would make
+        # `args.enable_write_tools or <env>` short-circuit and silently ignore
+        # the env var.
         default=None,
         help="Disable write tools to expose read-only operations",
     )
@@ -716,8 +717,10 @@ def main():
         # argparse already normalizes/validates --transport via type=normalize_transport
         normalized_transport = args.transport
         code_mode_enabled = args.enable_code_mode or code_mode_enabled_from_env(default=True)
-        # Explicit --no-enable-write-tools wins; otherwise fall back to the env
-        # var (default True to preserve full access and match get_server()).
+        # An explicit --no-enable-write-tools flag wins; otherwise fall back to
+        # the ROOTLY_MCP_ENABLE_WRITE_TOOLS env var, defaulting to write-enabled
+        # (full access by default, matching get_server()). Using `or` here would
+        # ignore ROOTLY_MCP_ENABLE_WRITE_TOOLS=false whenever the flag is absent.
         enable_write_tools = (
             args.enable_write_tools
             if args.enable_write_tools is not None
