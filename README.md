@@ -15,11 +15,13 @@ Use the hosted MCP server. No local installation required.
 
 ### Hosted Transport Options
 
-- **Streamable HTTP (recommended):** `https://mcp.rootly.com/mcp`
+- **Code Mode (recommended):** `https://mcp.rootly.com/mcp-codemode`
+- **Streamable HTTP:** `https://mcp.rootly.com/mcp`
 - **SSE (stable alternative):** `https://mcp.rootly.com/sse`
-- **Code Mode:** `https://mcp.rootly.com/mcp-codemode`
 
-Hosted tool profiles:
+> **Use Code Mode.** Instead of registering ~200 individual tools (whose schemas are re-sent on every model turn), Code Mode exposes a compact set of meta-tools — `list_tools`, `tool_search`, `get_schema`, `tags`, and `execute`. The model discovers the tools it needs and writes a short async Python block in `execute` that chains multiple `await call_tool(...)` calls **server-side**, returning only the final result. In practice this means **dramatically lower token usage** (a handful of tool schemas instead of hundreds) and **fewer round-trips** for multi-step work (one `execute` call instead of N tool calls). Prefer it for any agent that can write code — which is virtually all modern LLM clients. The plain Streamable HTTP and SSE endpoints remain available for clients that need the classic one-tool-per-operation surface.
+
+Hosted tool profiles (apply to the classic Streamable HTTP / SSE endpoints):
 
 - **Full (default):** use the URLs above as-is
 - **Slim (~70 tools):** add `?tool_profile=slim` to the hosted URL, for example `https://mcp.rootly.com/mcp?tool_profile=slim`
@@ -29,48 +31,7 @@ Hosted tool profiles:
 
 ### General Remote Setup
 
-**With OAuth2 (recommended):**
-
-```json
-{
-  "mcpServers": {
-    "rootly": {
-      "url": "https://mcp.rootly.com/mcp"
-    }
-  }
-}
-```
-
-Your MCP client handles OAuth2 login automatically — a browser window opens for you to authenticate with Rootly. No API token needed.
-
-**With API Token:**
-
-```json
-{
-  "mcpServers": {
-    "rootly": {
-      "url": "https://mcp.rootly.com/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_ROOTLY_API_TOKEN"
-      }
-    }
-  }
-}
-```
-
-SSE (alternative):
-
-```json
-{
-  "mcpServers": {
-    "rootly": {
-      "url": "https://mcp.rootly.com/sse"
-    }
-  }
-}
-```
-
-Code Mode:
+**Code Mode with OAuth2 (recommended):**
 
 ```json
 {
@@ -82,6 +43,40 @@ Code Mode:
 }
 ```
 
+Your MCP client handles OAuth2 login automatically — a browser window opens for you to authenticate with Rootly. No API token needed. Code Mode supports OAuth2 (and bearer tokens) identically to the classic endpoint.
+
+**Code Mode with API Token:**
+
+```json
+{
+  "mcpServers": {
+    "rootly": {
+      "url": "https://mcp.rootly.com/mcp-codemode",
+      "headers": {
+        "Authorization": "Bearer YOUR_ROOTLY_API_TOKEN"
+      }
+    }
+  }
+}
+```
+
+<details>
+<summary>Classic one-tool-per-operation endpoints (Streamable HTTP / SSE)</summary>
+
+Use these if your client can't write code in Code Mode's `execute` tool. Swap the URL for `https://mcp.rootly.com/mcp` (Streamable HTTP) or `https://mcp.rootly.com/sse` (SSE); both accept OAuth2 or a `Authorization: Bearer` token the same way.
+
+```json
+{
+  "mcpServers": {
+    "rootly": {
+      "url": "https://mcp.rootly.com/mcp"
+    }
+  }
+}
+```
+
+</details>
+
 ### Agent Setup
 
 <details>
@@ -89,19 +84,19 @@ Code Mode:
 
 <br>
 
-**With OAuth2 (recommended):**
+**With OAuth2 (recommended) — Code Mode:**
 
 ```bash
-claude mcp add --transport http rootly https://mcp.rootly.com/mcp
+claude mcp add --transport http rootly https://mcp.rootly.com/mcp-codemode
 
-# Code Mode:
-claude mcp add --transport http rootly-codemode https://mcp.rootly.com/mcp-codemode
+# Classic one-tool-per-operation endpoint, if you need it:
+claude mcp add --transport http rootly-classic https://mcp.rootly.com/mcp
 ```
 
 **With API Token:**
 
 ```bash
-claude mcp add --transport http rootly https://mcp.rootly.com/mcp \
+claude mcp add --transport http rootly https://mcp.rootly.com/mcp-codemode \
   --header "Authorization: Bearer YOUR_ROOTLY_API_TOKEN"
 ```
 
@@ -112,7 +107,7 @@ claude mcp add --transport http rootly https://mcp.rootly.com/mcp \
   "mcpServers": {
     "rootly": {
       "type": "http",
-      "url": "https://mcp.rootly.com/mcp"
+      "url": "https://mcp.rootly.com/mcp-codemode"
     }
   }
 }
