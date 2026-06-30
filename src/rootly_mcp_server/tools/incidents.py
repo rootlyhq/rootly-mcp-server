@@ -39,6 +39,39 @@ def _split_csv_values(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+# Below this page size, a multi-page sweep is considered inefficient and we
+# surface a hint steering callers toward collect_incidents / larger pages.
+_EFFICIENT_PAGE_SIZE = 25
+# Only hint once a full sweep would take more than this many paginated calls.
+_PAGINATION_HINT_PAGE_THRESHOLD = 5
+
+
+def _pagination_efficiency_hint(
+    *, page_size: int, has_more: bool, total_pages: int | None, total_count: int | None
+) -> JsonDict | None:
+    """Return a non-breaking steering hint when a caller is paginating list_incidents
+    inefficiently (small page_size against a large result set), or None otherwise.
+
+    This addresses clients that walk the full incident history one small page at a
+    time (e.g. page_size=1), turning a bounded fetch into hundreds of tool calls.
+    The hint is advisory only — it does not change the response data or status.
+    """
+    pages = total_pages or 0
+    if not has_more or page_size >= _EFFICIENT_PAGE_SIZE or pages <= _PAGINATION_HINT_PAGE_THRESHOLD:
+        return None
+
+    return {
+        "instead_of": "list_incidents",
+        "use": "collect_incidents",
+        "reason": (
+            f"page_size={page_size} against {total_count} matching incidents needs "
+            f"~{pages} paginated calls. Use collect_incidents for a bounded bulk fetch "
+            f"in one call, raise page_size (max 100), or add filters "
+            f"(team_ids, service_ids, severity, started_after) to narrow the result set."
+        ),
+    }
+
+
 def _normalize_optional_text(value: str | None) -> str | None:
     """Normalize optional text inputs by trimming whitespace and empty values."""
     if value is None:
@@ -432,7 +465,8 @@ def register_incident_tools(
             incidents = response_data.get("data", [])
             meta = response_data.get("meta", {})
 
-            return {
+            has_more = meta.get("next_page") is not None
+            result: JsonDict = {
                 "incidents": [_summarize_incident_record(incident) for incident in incidents],
                 "returned_incidents": len(incidents),
                 "pagination": {
@@ -443,10 +477,19 @@ def register_incident_tools(
                     "prev_page": meta.get("prev_page"),
                     "total_pages": meta.get("total_pages"),
                     "total_count": meta.get("total_count"),
-                    "has_more": meta.get("next_page") is not None,
+                    "has_more": has_more,
                 },
                 "filters": filters,
             }
+            hint = _pagination_efficiency_hint(
+                page_size=page_size,
+                has_more=has_more,
+                total_pages=meta.get("total_pages"),
+                total_count=meta.get("total_count"),
+            )
+            if hint:
+                result["_use_tool"] = hint
+            return result
         except Exception as e:
             error_type, error_message = mcp_error.categorize_error(e)
             return cast(JsonDict, mcp_error.tool_error(error_message, error_type))

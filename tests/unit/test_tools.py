@@ -16,7 +16,11 @@ import pytest
 
 from rootly_mcp_server.server import DEFAULT_ALLOWED_PATHS, create_rootly_mcp_server
 from rootly_mcp_server.server_defaults import _generate_recommendation
-from rootly_mcp_server.tools.incidents import INCIDENT_LIST_FIELDS, register_incident_tools
+from rootly_mcp_server.tools.incidents import (
+    INCIDENT_LIST_FIELDS,
+    _pagination_efficiency_hint,
+    register_incident_tools,
+)
 from rootly_mcp_server.tools.resources import register_resource_handlers
 
 
@@ -1021,6 +1025,95 @@ class TestStructuredListIncidentsTool:
         assert result["error"] is True
         assert result["error_type"] == "validation_error"
         assert "Could not resolve team names/slugs" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_list_incidents_adds_hint_on_tiny_page_size_sweep(self):
+        """A page_size=1 walk over a large result set gets a non-breaking
+        steering hint toward collect_incidents (the Odin page_size=1 pattern)."""
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [{"id": "inc-1", "type": "incidents", "attributes": {"title": "x"}}],
+            "meta": {"current_page": 1, "next_page": 2, "total_pages": 281, "total_count": 281},
+        }
+        request.return_value = response
+
+        result = await tools["list_incidents"](page_size=1)
+
+        assert "_use_tool" in result
+        assert result["_use_tool"]["use"] == "collect_incidents"
+        # data/status are untouched — hint is advisory only.
+        assert result["returned_incidents"] == 1
+        assert result["pagination"]["has_more"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_incidents_no_hint_at_default_page_size(self):
+        """Default page_size paginating a large set is normal — no hint nag."""
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [{"id": "inc-1", "type": "incidents", "attributes": {"title": "x"}}],
+            "meta": {"current_page": 1, "next_page": 2, "total_pages": 12, "total_count": 281},
+        }
+        request.return_value = response
+
+        result = await tools["list_incidents"](page_size=25)
+
+        assert "_use_tool" not in result
+
+
+@pytest.mark.unit
+class TestPaginationEfficiencyHint:
+    """Direct unit tests for the list_incidents pagination steering hint."""
+
+    def test_hint_fires_for_tiny_page_size_large_set(self):
+        hint = _pagination_efficiency_hint(
+            page_size=1, has_more=True, total_pages=281, total_count=281
+        )
+        assert hint is not None
+        assert hint["instead_of"] == "list_incidents"
+        assert hint["use"] == "collect_incidents"
+
+    def test_no_hint_when_no_more_pages(self):
+        assert (
+            _pagination_efficiency_hint(
+                page_size=1, has_more=False, total_pages=1, total_count=1
+            )
+            is None
+        )
+
+    def test_no_hint_at_or_above_efficient_page_size(self):
+        assert (
+            _pagination_efficiency_hint(
+                page_size=25, has_more=True, total_pages=50, total_count=1250
+            )
+            is None
+        )
+
+    def test_no_hint_for_short_sweep_under_threshold(self):
+        # small page_size but only a few pages to go — not worth nagging
+        assert (
+            _pagination_efficiency_hint(
+                page_size=5, has_more=True, total_pages=3, total_count=12
+            )
+            is None
+        )
+
+    def test_hint_fires_for_small_page_size_many_pages(self):
+        hint = _pagination_efficiency_hint(
+            page_size=10, has_more=True, total_pages=6, total_count=55
+        )
+        assert hint is not None
+
+    def test_handles_missing_total_pages(self):
+        assert (
+            _pagination_efficiency_hint(
+                page_size=1, has_more=True, total_pages=None, total_count=None
+            )
+            is None
+        )
 
 
 @pytest.mark.unit
