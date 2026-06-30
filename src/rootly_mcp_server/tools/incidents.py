@@ -58,7 +58,11 @@ def _pagination_efficiency_hint(
     The hint is advisory only — it does not change the response data or status.
     """
     pages = total_pages or 0
-    if not has_more or page_size >= _EFFICIENT_PAGE_SIZE or pages <= _PAGINATION_HINT_PAGE_THRESHOLD:
+    if (
+        not has_more
+        or page_size >= _EFFICIENT_PAGE_SIZE
+        or pages <= _PAGINATION_HINT_PAGE_THRESHOLD
+    ):
         return None
 
     return {
