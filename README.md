@@ -20,6 +20,8 @@ Use the hosted MCP server. No local installation required.
 - **SSE (stable alternative):** `https://mcp.rootly.com/sse`
 
 > **Use Code Mode.** Instead of registering ~200 individual tools (whose schemas are re-sent on every model turn), Code Mode exposes a compact set of meta-tools — `list_tools`, `tool_search`, `get_schema`, `tags`, and `execute`. The model discovers the tools it needs and writes a short async Python block in `execute` that chains multiple `await call_tool(...)` calls **server-side**, returning only the final result. In practice this means **dramatically lower token usage** (a handful of tool schemas instead of hundreds) and **fewer round-trips** for multi-step work (one `execute` call instead of N tool calls). Prefer it for any agent that can write code — which is virtually all modern LLM clients. The plain Streamable HTTP and SSE endpoints remain available for clients that need the classic one-tool-per-operation surface.
+>
+> ⚠️ **Connect Code Mode *instead of* the classic endpoints, not alongside them.** If both surfaces are available to the same client, the model tends to call the classic tools directly and skips `execute` entirely — so the ~200 tool schemas still load and you lose the token savings. Pick one endpoint per client.
 
 Hosted tool profiles (apply to the classic Streamable HTTP / SSE endpoints):
 
