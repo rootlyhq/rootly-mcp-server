@@ -1078,9 +1078,7 @@ class TestPaginationEfficiencyHint:
 
     def test_no_hint_when_no_more_pages(self):
         assert (
-            _pagination_efficiency_hint(
-                page_size=1, has_more=False, total_pages=1, total_count=1
-            )
+            _pagination_efficiency_hint(page_size=1, has_more=False, total_pages=1, total_count=1)
             is None
         )
 
@@ -1095,9 +1093,7 @@ class TestPaginationEfficiencyHint:
     def test_no_hint_for_short_sweep_under_threshold(self):
         # small page_size but only a few pages to go — not worth nagging
         assert (
-            _pagination_efficiency_hint(
-                page_size=5, has_more=True, total_pages=3, total_count=12
-            )
+            _pagination_efficiency_hint(page_size=5, has_more=True, total_pages=3, total_count=12)
             is None
         )
 
