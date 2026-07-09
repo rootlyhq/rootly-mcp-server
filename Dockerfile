@@ -23,7 +23,7 @@ RUN uv pip install --system --no-cache-dir -e .
 # this server relies on. AgentCat's package metadata pins an older Pydantic
 # range, but the SDK imports successfully with our runtime pin, so we restore
 # the server's pinned version after installation.
-RUN uv pip install --system --no-cache-dir "agentcat[community]==1.0.0" \
+RUN uv pip install --system --no-cache-dir "agentcat[community]==1.0.1" \
     && uv pip install --system --no-cache-dir pydantic==2.13.4
 
 # Create non-root user
