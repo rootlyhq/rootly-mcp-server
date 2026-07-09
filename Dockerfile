@@ -19,10 +19,11 @@ COPY . .
 RUN uv pip install --system --no-cache-dir -e .
 
 # Install AgentCat (formerly MCPcat) for hosted telemetry without changing the
-# repo dependency graph. AgentCat's package metadata pins an older Pydantic
+# repo dependency graph. The [community] extra provides FastMCP support, which
+# this server relies on. AgentCat's package metadata pins an older Pydantic
 # range, but the SDK imports successfully with our runtime pin, so we restore
 # the server's pinned version after installation.
-RUN uv pip install --system --no-cache-dir agentcat==1.0.0 \
+RUN uv pip install --system --no-cache-dir "agentcat[community]==1.0.0" \
     && uv pip install --system --no-cache-dir pydantic==2.13.4
 
 # Create non-root user
