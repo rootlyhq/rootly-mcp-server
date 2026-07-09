@@ -99,36 +99,37 @@ def resolve_requested_hosted_tool_profile(
 
 
 def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging.Logger) -> None:
-    """Enable MCPcat tracking when configured and available.
+    """Enable AgentCat tracking when configured and available.
 
-    The Python MCPcat package is currently deployed separately from the core
-    server dependency set, so we load it lazily and only when a project ID is
-    configured. This keeps the base server behavior unchanged for self-hosted
-    users and local development environments that do not install MCPcat.
+    The Python AgentCat package (formerly MCPcat) is currently deployed
+    separately from the core server dependency set, so we load it lazily and
+    only when a project ID is configured. This keeps the base server behavior
+    unchanged for self-hosted users and local development environments that do
+    not install AgentCat.
     """
     if not project_id:
         return
 
     try:
-        mcpcat = importlib.import_module("mcpcat")
-        mcpcat_types = importlib.import_module("mcpcat.types")
+        agentcat = importlib.import_module("agentcat")
+        agentcat_types = importlib.import_module("agentcat.types")
     except ImportError:
         logger.warning(
-            "ROOTLY_MCPCAT_PROJECT_ID is set but mcpcat is not installed; skipping MCPcat tracking"
+            "ROOTLY_MCPCAT_PROJECT_ID is set but agentcat is not installed; skipping AgentCat tracking"
         )
         return
 
     try:
-        options = mcpcat_types.MCPCatOptions(
-            identify=build_mcpcat_identify_callback(mcpcat_types.UserIdentity),
+        options = agentcat_types.AgentCatOptions(
+            identify=build_mcpcat_identify_callback(agentcat_types.UserIdentity),
         )
-        mcpcat.track(server, project_id, options)
+        agentcat.track(server, project_id, options)
     except Exception:
-        logger.warning("MCPcat tracking could not be enabled; skipping", exc_info=True)
+        logger.warning("AgentCat tracking could not be enabled; skipping", exc_info=True)
 
 
 def build_mcpcat_identify_callback(user_identity_cls: type[Any]):
-    """Build a lightweight MCPcat identify callback from hosted auth context."""
+    """Build a lightweight AgentCat identify callback from hosted auth context."""
 
     def identify(_request: dict[str, Any], _context: Any) -> Any:
         user = get_hosted_authenticated_user()

@@ -18,11 +18,12 @@ COPY . .
 # Install the package and its dependencies
 RUN uv pip install --system --no-cache-dir -e .
 
-# Install MCPcat for hosted telemetry without changing the repo dependency graph.
-# MCPcat's current package metadata pins an older Pydantic range, but the SDK
-# imports successfully with our runtime pin, so we restore the server's pinned
-# version after installation.
-RUN uv pip install --system --no-cache-dir mcpcat==0.1.14 \
+# Install AgentCat (formerly MCPcat) for hosted telemetry without changing the
+# repo dependency graph. The [community] extra provides FastMCP support, which
+# this server relies on. AgentCat's package metadata pins an older Pydantic
+# range, but the SDK imports successfully with our runtime pin, so we restore
+# the server's pinned version after installation.
+RUN uv pip install --system --no-cache-dir "agentcat[community]==1.0.0" \
     && uv pip install --system --no-cache-dir pydantic==2.13.4
 
 # Create non-root user
