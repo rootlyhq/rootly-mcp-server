@@ -169,24 +169,24 @@ def test_maybe_enable_mcpcat_tracking_logs_when_package_missing():
     ) as mock_import:
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
-    mock_import.assert_called_once_with("mcpcat")
+    mock_import.assert_called_once_with("agentcat")
     logger.warning.assert_called_once()
 
 
 def test_maybe_enable_mcpcat_tracking_tracks_when_available():
     server = object()
     logger = Mock()
-    mcpcat_module = SimpleNamespace(track=Mock())
-    mcpcat_types_module = SimpleNamespace(
-        MCPCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+    agentcat_module = SimpleNamespace(track=Mock())
+    agentcat_types_module = SimpleNamespace(
+        AgentCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
         UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
     )
 
     def import_side_effect(module_name: str):
-        if module_name == "mcpcat":
-            return mcpcat_module
-        if module_name == "mcpcat.types":
-            return mcpcat_types_module
+        if module_name == "agentcat":
+            return agentcat_module
+        if module_name == "agentcat.types":
+            return agentcat_types_module
         raise ImportError(module_name)
 
     with patch(
@@ -194,8 +194,8 @@ def test_maybe_enable_mcpcat_tracking_tracks_when_available():
     ):
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
-    mcpcat_module.track.assert_called_once()
-    call = mcpcat_module.track.call_args
+    agentcat_module.track.assert_called_once()
+    call = agentcat_module.track.call_args
     assert call.args[:2] == (server, "proj_test_123")
     assert callable(call.args[2].identify)
 
@@ -203,17 +203,17 @@ def test_maybe_enable_mcpcat_tracking_tracks_when_available():
 def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
     server = object()
     logger = Mock()
-    mcpcat_module = SimpleNamespace(track=Mock(side_effect=RuntimeError("boom")))
-    mcpcat_types_module = SimpleNamespace(
-        MCPCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+    agentcat_module = SimpleNamespace(track=Mock(side_effect=RuntimeError("boom")))
+    agentcat_types_module = SimpleNamespace(
+        AgentCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
         UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
     )
 
     def import_side_effect(module_name: str):
-        if module_name == "mcpcat":
-            return mcpcat_module
-        if module_name == "mcpcat.types":
-            return mcpcat_types_module
+        if module_name == "agentcat":
+            return agentcat_module
+        if module_name == "agentcat.types":
+            return agentcat_types_module
         raise ImportError(module_name)
 
     with patch(
@@ -221,9 +221,9 @@ def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
     ):
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
-    assert mcpcat_module.track.call_args.args[:2] == (server, "proj_test_123")
+    assert agentcat_module.track.call_args.args[:2] == (server, "proj_test_123")
     logger.warning.assert_called_once_with(
-        "MCPcat tracking could not be enabled; skipping",
+        "AgentCat tracking could not be enabled; skipping",
         exc_info=True,
     )
 
