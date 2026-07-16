@@ -126,7 +126,9 @@ def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, An
 
     annotated_count = 0
     for tool_name in autogen_names:
-        method = op_id_to_method.get(tool_name, "get")
+        method = op_id_to_method.get(tool_name)
+        if method is None:
+            continue
         tool = autogen_provider._tools.get(tool_name)
         if tool is None:
             continue
