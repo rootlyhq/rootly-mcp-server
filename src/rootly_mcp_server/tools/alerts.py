@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Protocol
 from urllib.parse import quote
 
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 JsonDict = dict[str, Any]
@@ -33,7 +34,9 @@ def register_alert_tools(
 ) -> None:
     """Register alert tools on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def get_alert_by_short_id(
         short_id: Annotated[
             str,
