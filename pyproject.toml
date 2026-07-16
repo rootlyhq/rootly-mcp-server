@@ -88,7 +88,7 @@ dev = [
 
 [tool.uv]
 dev-dependencies = [
-    "pyright>=1.1.404",
+    "pyright>=1.1.411",
     "ruff>=0.7.3",
     "pytest>=9.0.3",
     "pytest-cov>=4.0.0", # Coverage reporting
