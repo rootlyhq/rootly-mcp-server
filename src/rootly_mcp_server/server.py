@@ -104,9 +104,7 @@ def _provider_tool_inventory(
     return curated_names, autogen_provider, autogen_names
 
 
-def _apply_annotations_to_autogen_tools(
-    mcp: FastMCP, openapi_spec: dict[str, Any]
-) -> None:
+def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, Any]) -> None:
     """Apply ToolAnnotations to autogen OpenAPI tools based on their HTTP method.
 
     GET operations are marked read-only; POST/PUT/PATCH are non-destructive writes;
