@@ -7,6 +7,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal, cast
 
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from ..smart_utils import SolutionExtractor, TextSimilarityAnalyzer
@@ -327,7 +328,9 @@ def register_incident_tools(
 
         return params, filters
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def list_incidents(
         query: Annotated[
             str,
@@ -451,7 +454,9 @@ def register_incident_tools(
             error_type, error_message = mcp_error.categorize_error(e)
             return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def collect_incidents(
         query: Annotated[
             str,
@@ -609,7 +614,9 @@ def register_incident_tools(
             error_type, error_message = mcp_error.categorize_error(e)
             return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def search_incidents(
         query: Annotated[
             str, Field(description="Search query to filter incidents by title/summary")
@@ -742,16 +749,18 @@ def register_incident_tools(
             error_type, error_message = mcp_error.categorize_error(e)
             return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
 
-    @mcp.tool(name="get_incident")
+    @mcp.tool(
+        name="get_incident",
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def get_incident(
         incident_id: Annotated[
             str,
             Field(
                 description=(
                     "Incident reference to retrieve. "
-                    "ARGUMENT NAME IS `incident_id` (not `id`). "
-                    "Accepts: UUID (`7e83d9f4-6bc1-...`), bare sequential number "
-                    "(`4460`), `#4460`, or `INC-4460`."
+                    "Accepts: UUID, bare sequential number "
+                    "(4460), #4460, or INC-4460."
                 )
             ),
         ],
@@ -797,16 +806,18 @@ def register_incident_tools(
                 ),
             )
 
-    @mcp.tool(name="list_incident_roles")
+    @mcp.tool(
+        name="list_incident_roles",
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def list_incident_roles(
         incident_id: Annotated[
             str,
             Field(
                 description=(
                     "Incident reference whose role assignments to list. "
-                    "ARGUMENT NAME IS `incident_id` (not `id`). "
-                    "Accepts: UUID, bare sequential number (`4460`), "
-                    "`#4460`, or `INC-4460`."
+                    "Accepts: UUID, bare sequential number (4460), "
+                    "#4460, or INC-4460."
                 )
             ),
         ],
@@ -917,7 +928,15 @@ def register_incident_tools(
 
     if enable_write_tools:
 
-        @mcp.tool(name="create_incident")
+        @mcp.tool(
+            name="create_incident",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+                openWorldHint=True,
+            ),
+        )
         async def create_incident(
             title: Annotated[
                 str | None,
@@ -1011,7 +1030,15 @@ def register_incident_tools(
                     ),
                 )
 
-        @mcp.tool(name="update_incident")
+        @mcp.tool(
+            name="update_incident",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
+        )
         async def update_incident(
             incident_id: Annotated[
                 str,
@@ -1088,7 +1115,9 @@ def register_incident_tools(
                     ),
                 )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def find_related_incidents(
         incident_id: str = "",
         incident_description: str = "",
@@ -1245,7 +1274,9 @@ def register_incident_tools(
                 ),
             )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def suggest_solutions(
         incident_id: str = "",
         incident_title: str = "",

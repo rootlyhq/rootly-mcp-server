@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol, cast
 
 import httpx
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from ..och_client import OnCallHealthClient
@@ -101,7 +102,9 @@ def register_oncall_tools(
 ) -> None:
     """Register on-call analysis and scheduling tools on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def get_oncall_shift_metrics(
         start_date: Annotated[
             str,
@@ -479,7 +482,9 @@ def register_oncall_tools(
                 },
             )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def get_oncall_handoff_summary(
         team_ids: Annotated[
             str,
@@ -491,7 +496,7 @@ def register_oncall_tools(
         timezone: Annotated[
             str,
             Field(
-                description="Timezone to use for display and filtering (e.g., 'America/Los_Angeles', 'Europe/London', 'Asia/Tokyo'). IMPORTANT: If user mentions a city, location, or region (e.g., 'Toronto', 'APAC', 'my time'), infer the appropriate IANA timezone. Defaults to UTC if not specified."
+                description="IANA timezone for display and filtering (e.g., 'America/Los_Angeles', 'Europe/London', 'Asia/Tokyo'). Defaults to UTC."
             ),
         ] = "UTC",
         filter_by_region: Annotated[
@@ -511,15 +516,9 @@ def register_oncall_tools(
         Get current on-call handoff summary. Shows who's currently on-call and who's next.
         Optionally fetch incidents (set include_incidents=True, but slower).
 
-        Timezone handling: If user mentions their location/timezone, infer it (e.g., "Toronto" → "America/Toronto",
-        "my time" → ask clarifying question or use a common timezone).
-
-        Regional filtering: Use timezone + filter_by_region=True to see only people on-call
+        Use filter_by_region=True with a timezone to see only people on-call
         during business hours in that region (e.g., timezone='Asia/Tokyo', filter_by_region=True
         shows only APAC on-call during APAC business hours).
-
-        Performance: By default, incidents are NOT fetched for faster response. Set include_incidents=True
-        to fetch incidents for each shift (slower, may timeout with many schedules).
 
         Useful for:
         - Quick on-call status checks
@@ -1176,7 +1175,9 @@ def register_oncall_tools(
                 },
             )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def get_shift_incidents(
         start_time: Annotated[
             str,
@@ -1393,7 +1394,9 @@ def register_oncall_tools(
 
             return result
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def list_shifts(
         from_date: Annotated[
             str,
@@ -1604,24 +1607,21 @@ def register_oncall_tools(
                 },
             )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def get_oncall_schedule_summary(
         start_date: Annotated[
             str,
-            Field(description="REQUIRED. Start date (ISO 8601, e.g., '2026-02-09')"),
+            Field(description="Start date (ISO 8601, e.g., '2026-02-09')"),
         ],
         end_date: Annotated[
             str,
-            Field(description="REQUIRED. End date (ISO 8601, e.g., '2026-02-15')"),
+            Field(description="End date (ISO 8601, e.g., '2026-02-15')"),
         ],
         schedule_ids: Annotated[
             str,
-            Field(
-                description=(
-                    "Comma-separated schedule IDs to filter (optional). "
-                    "NOTE: argument name is `schedule_ids` (plural), not `schedule_id`."
-                )
-            ),
+            Field(description="Comma-separated schedule IDs to filter (optional)"),
         ] = "",
         team_ids: Annotated[
             str,
@@ -1634,9 +1634,6 @@ def register_oncall_tools(
     ) -> dict:
         """
         Get compact on-call schedule summary for a date range.
-
-        REQUIRED ARGUMENTS: start_date, end_date (both ISO 8601 date strings).
-        Optional: schedule_ids (comma-separated, plural), team_ids.
 
         Returns one entry per user per schedule (not raw shifts), with
         aggregated hours. Optimized for AI agent context windows.
@@ -1870,7 +1867,9 @@ def register_oncall_tools(
                 },
             )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def check_responder_availability(
         start_date: Annotated[
             str,
@@ -1885,18 +1884,13 @@ def register_oncall_tools(
             Field(
                 description=(
                     "Comma-separated Rootly user IDs to check (e.g., '2381,94178,27965'). "
-                    "REQUIRED — this tool does not accept email lookup. Resolve emails "
-                    "to numeric user IDs first via `listUsers` with `filter[email]`."
+                    "Accepts numeric IDs only — use list_users with filter[email] to resolve emails to IDs first."
                 )
             ),
         ],
     ) -> dict:
         """
         Check if specific users are scheduled for on-call in a date range.
-
-        REQUIRED ARGUMENTS: start_date (ISO 8601), end_date (ISO 8601), user_ids
-        (comma-separated numeric IDs — not emails). Resolve emails to user IDs
-        via `listUsers` filtered by email before calling this.
 
         Use this to verify if at-risk users (from On-Call Health) are scheduled,
         or to check availability before assigning new shifts.
@@ -2052,7 +2046,9 @@ def register_oncall_tools(
                 },
             )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def create_override_recommendation(
         schedule_id: Annotated[
             str,
@@ -2296,7 +2292,9 @@ def register_oncall_tools(
                 },
             )
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def check_oncall_health_risk(
         start_date: Annotated[
             str,
@@ -2326,6 +2324,12 @@ def register_oncall_tools(
         Integrates with On-Call Health (oncallhealth.ai) to identify responders with elevated
         workload health risk and checks if they are scheduled during the specified period.
         Optionally recommends safe replacement responders.
+
+        Privacy: This tool surfaces identifiable employee workload health data from On-Call Health.
+        It is an opt-in feature — an administrator must explicitly configure the ONCALLHEALTH_API_KEY
+        environment variable to enable it. On-Call Health displays a visible indicator on each
+        responder's profile page showing their health score and risk level, ensuring employees
+        are aware that workload analytics are collected and visible to their organization.
 
         Requires ONCALLHEALTH_API_KEY environment variable.
         """

@@ -1610,3 +1610,107 @@ class TestOAuthProtectedResourceRoute:
             routes = server._get_additional_http_routes()
             route_paths = [getattr(r, "path", None) for r in routes]
             assert OAUTH_PROTECTED_RESOURCE_PATH not in route_paths
+
+
+@pytest.mark.unit
+class TestApplyAnnotationsToAutogenTools:
+    """Tests for _apply_annotations_to_autogen_tools."""
+
+    @staticmethod
+    def _make_mock_mcp(tool_names: list[str]) -> tuple[Any, dict[str, Any]]:
+        """Build a mock FastMCP with an autogen provider holding named tools."""
+        tools = {}
+        for name in tool_names:
+            tool = SimpleNamespace(annotations=None)
+            tools[name] = tool
+
+        autogen_provider = SimpleNamespace(_tools=tools)
+        mcp = SimpleNamespace(providers=[autogen_provider])
+        return mcp, tools
+
+    def test_get_marked_read_only(self):
+        mcp, tools = self._make_mock_mcp(["list_items"])
+        spec = {"paths": {"/items": {"get": {"operationId": "list_items"}}}}
+
+        server_module._apply_annotations_to_autogen_tools(mcp, spec)
+
+        ann = tools["list_items"].annotations
+        assert ann.readOnlyHint is True
+        assert ann.openWorldHint is True
+
+    def test_post_marked_write_non_idempotent(self):
+        mcp, tools = self._make_mock_mcp(["create_item"])
+        spec = {"paths": {"/items": {"post": {"operationId": "create_item"}}}}
+
+        server_module._apply_annotations_to_autogen_tools(mcp, spec)
+
+        ann = tools["create_item"].annotations
+        assert ann.readOnlyHint is False
+        assert ann.destructiveHint is False
+        assert ann.idempotentHint is False
+        assert ann.openWorldHint is True
+
+    def test_put_marked_idempotent(self):
+        mcp, tools = self._make_mock_mcp(["update_item"])
+        spec = {"paths": {"/items/{id}": {"put": {"operationId": "update_item"}}}}
+
+        server_module._apply_annotations_to_autogen_tools(mcp, spec)
+
+        ann = tools["update_item"].annotations
+        assert ann.readOnlyHint is False
+        assert ann.destructiveHint is False
+        assert ann.idempotentHint is True
+
+    def test_patch_marked_idempotent(self):
+        mcp, tools = self._make_mock_mcp(["patch_item"])
+        spec = {"paths": {"/items/{id}": {"patch": {"operationId": "patch_item"}}}}
+
+        server_module._apply_annotations_to_autogen_tools(mcp, spec)
+
+        ann = tools["patch_item"].annotations
+        assert ann.readOnlyHint is False
+        assert ann.idempotentHint is True
+
+    def test_delete_marked_destructive(self):
+        mcp, tools = self._make_mock_mcp(["delete_item"])
+        spec = {"paths": {"/items/{id}": {"delete": {"operationId": "delete_item"}}}}
+
+        server_module._apply_annotations_to_autogen_tools(mcp, spec)
+
+        ann = tools["delete_item"].annotations
+        assert ann.readOnlyHint is False
+        assert ann.destructiveHint is True
+        assert ann.idempotentHint is True
+        assert ann.openWorldHint is True
+
+    def test_unknown_tool_skipped(self):
+        mcp, tools = self._make_mock_mcp(["mystery_tool"])
+        spec = {"paths": {"/items": {"get": {"operationId": "list_items"}}}}
+
+        server_module._apply_annotations_to_autogen_tools(mcp, spec)
+
+        assert tools["mystery_tool"].annotations is None
+
+    def test_no_autogen_provider_is_noop(self):
+        mcp = SimpleNamespace(providers=[SimpleNamespace(_components={})])
+        server_module._apply_annotations_to_autogen_tools(mcp, {"paths": {}})  # type: ignore[arg-type]
+
+    def test_multiple_methods_all_annotated(self):
+        mcp, tools = self._make_mock_mcp(["list_items", "create_item", "delete_item"])
+        spec = {
+            "paths": {
+                "/items": {
+                    "get": {"operationId": "list_items"},
+                    "post": {"operationId": "create_item"},
+                },
+                "/items/{id}": {
+                    "delete": {"operationId": "delete_item"},
+                },
+            }
+        }
+
+        server_module._apply_annotations_to_autogen_tools(mcp, spec)
+
+        assert tools["list_items"].annotations.readOnlyHint is True
+        assert tools["create_item"].annotations.readOnlyHint is False
+        assert tools["delete_item"].annotations.destructiveHint is True

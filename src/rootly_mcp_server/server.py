@@ -104,6 +104,64 @@ def _provider_tool_inventory(
     return curated_names, autogen_provider, autogen_names
 
 
+def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, Any]) -> None:
+    """Apply ToolAnnotations to autogen OpenAPI tools based on their HTTP method.
+
+    GET operations are marked read-only; POST/PUT/PATCH are non-destructive writes;
+    DELETE operations are marked destructive. All autogen tools interact with
+    external APIs so openWorldHint is True.
+    """
+    _, autogen_provider, autogen_names = _provider_tool_inventory(mcp)
+    if autogen_provider is None:
+        return
+
+    op_id_to_method: dict[str, str] = {}
+    for _path, path_item in openapi_spec.get("paths", {}).items():
+        for method, operation in path_item.items():
+            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            op_id = operation.get("operationId")
+            if op_id:
+                op_id_to_method[op_id] = method.lower()
+
+    annotated_count = 0
+    for tool_name in autogen_names:
+        method = op_id_to_method.get(tool_name)
+        if method is None:
+            continue
+        tool = autogen_provider._tools.get(tool_name)
+        if tool is None:
+            continue
+
+        if method == "get":
+            tool.annotations = mt.ToolAnnotations(readOnlyHint=True, openWorldHint=True)
+        elif method == "delete":
+            tool.annotations = mt.ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=True,
+                openWorldHint=True,
+            )
+        elif method in {"put", "patch"}:
+            tool.annotations = mt.ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=True,
+            )
+        else:
+            tool.annotations = mt.ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
+                openWorldHint=True,
+            )
+        annotated_count += 1
+
+    if annotated_count:
+        logger.info("Applied annotations to %d autogen tool(s)", annotated_count)
+
+
 def _remove_autogen_tools_shadowed_by_curated(mcp: FastMCP) -> None:
     """Drop autogen tools whose name a curated `@mcp.tool` registration provides.
 
@@ -755,7 +813,9 @@ def create_rootly_mcp_server(
 
     # Add some custom tools for enhanced functionality
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    )
     def list_endpoints() -> list:
         """List all available Rootly API endpoints with their descriptions."""
         endpoints = []
@@ -778,7 +838,9 @@ def create_rootly_mcp_server(
 
         return endpoints
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    )
     def get_server_version() -> dict:
         """Get the Rootly MCP server version.
 
@@ -879,6 +941,11 @@ def create_rootly_mcp_server(
     # A curated tool and an autogen tool can resolve to the same name; drop the
     # autogen duplicate so only the richer curated implementation is surfaced.
     _remove_autogen_tools_shadowed_by_curated(mcp)
+
+    # Apply MCP tool annotations (readOnlyHint, destructiveHint, etc.) to
+    # autogen tools based on HTTP method. Curated tools set their own annotations
+    # via @mcp.tool(annotations=...) at registration time.
+    _apply_annotations_to_autogen_tools(mcp, filtered_spec)
 
     # Validate the allowlist against the fully-registered tool set (autogen + curated).
     # This must happen after all register_*_tools() calls so curated tool names — which
