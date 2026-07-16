@@ -1693,7 +1693,7 @@ class TestApplyAnnotationsToAutogenTools:
 
     def test_no_autogen_provider_is_noop(self):
         mcp = SimpleNamespace(providers=[SimpleNamespace(_components={})])
-        server_module._apply_annotations_to_autogen_tools(mcp, {"paths": {}})
+        server_module._apply_annotations_to_autogen_tools(mcp, {"paths": {}})  # type: ignore[arg-type]
 
     def test_multiple_methods_all_annotated(self):
         mcp, tools = self._make_mock_mcp(["list_items", "create_item", "delete_item"])
