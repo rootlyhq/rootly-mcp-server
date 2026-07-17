@@ -36,7 +36,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
-    "fastmcp[code-mode]==3.4.3",  # Pin to patched version with Code Mode support
+    "fastmcp[code-mode]==3.4.4",  # Pin to patched version with Code Mode support
     "authlib>=1.7.1",  # Override vulnerable transitive authlib (GHSA-jj8c-mmj3-mmgv, GHSA-w8p2-r796-3vmq)
     "python-dotenv>=1.2.2",  # Override vulnerable transitive python-dotenv (GHSA-m8f7-34r5-grfg)
     "python-multipart>=0.0.31",  # Override vulnerable transitive python-multipart (CVE-2026-40347, GHSA-v9pg-7xvm-68hf and others)
