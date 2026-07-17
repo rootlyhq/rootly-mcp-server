@@ -26,7 +26,10 @@ from .code_mode import (
 from .exceptions import RootlyConfigurationError, RootlyMCPError
 from .security import validate_api_token
 from .server import create_rootly_mcp_server, get_hosted_auth_middleware
-from .server_defaults import enabled_tools_from_env, write_tools_enabled_from_env
+from .server_defaults import (
+    enabled_tools_from_env,
+    resolve_write_tools_enabled,
+)
 from .transport import get_hosted_authenticated_user
 
 TransportName = Literal["stdio", "sse", "streamable-http", "both"]
@@ -201,7 +204,12 @@ def parse_args():
         "--no-enable-write-tools",
         dest="enable_write_tools",
         action="store_false",
-        default=True,
+        # Default None (not True) so we can distinguish "flag not passed" from
+        # "flag passed". When the flag is absent we fall back to the
+        # ROOTLY_MCP_ENABLE_WRITE_TOOLS env var; a True default here would make
+        # `args.enable_write_tools or <env>` short-circuit and silently ignore
+        # the env var.
+        default=None,
         help="Disable write tools to expose read-only operations",
     )
     parser.add_argument(
@@ -285,7 +293,8 @@ def get_server():
     base_url = os.getenv("ROOTLY_BASE_URL")
     transport = normalize_transport_or_default(os.getenv("ROOTLY_TRANSPORT", "stdio"))
     hosted_tool_profile = server_defaults.hosted_tool_profile_from_env()
-    enable_write_tools = write_tools_enabled_from_env(default=True)
+    # No CLI flag on this path, so pass None and let the env var decide.
+    enable_write_tools = resolve_write_tools_enabled(None)
     enabled_tools = enabled_tools_from_env(
         hosted=hosted,
         hosted_tool_profile=hosted_tool_profile,
@@ -668,9 +677,7 @@ def main():
         # argparse already normalizes/validates --transport via type=normalize_transport
         normalized_transport = args.transport
         code_mode_enabled = args.enable_code_mode or code_mode_enabled_from_env(default=True)
-        enable_write_tools = args.enable_write_tools or write_tools_enabled_from_env(
-            default=hosted_mode
-        )
+        enable_write_tools = resolve_write_tools_enabled(args.enable_write_tools)
         code_mode_path = (
             normalize_code_mode_path(args.code_mode_path)
             if args.code_mode_path
