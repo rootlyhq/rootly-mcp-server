@@ -97,19 +97,19 @@ def _run_main_capture_write_flag(extra_argv, env):
     enable_write_tools kwarg passed to create_rootly_mcp_server."""
     env = {"ROOTLY_API_TOKEN": "test-token-0123456789abcdef", **env}
     argv = ["rootly-mcp-server", "--list-tools", *extra_argv]
-    with patch.dict("os.environ", env, clear=True):
+    with (
+        patch.dict("os.environ", env, clear=True),
         # Mock setup_logging so invoking main() doesn't mutate global logging
         # config and leak into other tests.
-        with patch("rootly_mcp_server.__main__.setup_logging"):
-            with patch(
-                "rootly_mcp_server.__main__.create_rootly_mcp_server"
-            ) as mock_create:
-                with patch(
-                    "rootly_mcp_server.__main__._get_sorted_tool_names",
-                    new=AsyncMock(return_value=[]),
-                ):
-                    with patch("sys.argv", argv):
-                        main()
+        patch("rootly_mcp_server.__main__.setup_logging"),
+        patch("rootly_mcp_server.__main__.create_rootly_mcp_server") as mock_create,
+        patch(
+            "rootly_mcp_server.__main__._get_sorted_tool_names",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch("sys.argv", argv),
+    ):
+        main()
     assert mock_create.call_args is not None
     return mock_create.call_args.kwargs["enable_write_tools"]
 
@@ -144,6 +144,24 @@ def test_main_env_true_enables_write_tools():
     assert (
         _run_main_capture_write_flag([], {"ROOTLY_MCP_ENABLE_WRITE_TOOLS": "true"})
         is True
+    )
+
+
+def test_main_flag_forces_read_only_without_env():
+    # An explicit --no-enable-write-tools wins even when the env var is unset,
+    # independent of any env-derived default.
+    assert _run_main_capture_write_flag(["--no-enable-write-tools"], {}) is False
+
+
+def test_main_hosted_env_false_enables_read_only():
+    # In hosted mode the env var is still honored: read-only when it is false.
+    # Locks in the env fallback default (write-enabled) not being tied to
+    # hosted_mode.
+    assert (
+        _run_main_capture_write_flag(
+            ["--hosted"], {"ROOTLY_MCP_ENABLE_WRITE_TOOLS": "false"}
+        )
+        is False
     )
 
 

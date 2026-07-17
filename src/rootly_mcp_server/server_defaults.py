@@ -189,6 +189,20 @@ def write_tools_enabled_from_env(default: bool = False) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def resolve_write_tools_enabled(flag: bool | None) -> bool:
+    """Resolve whether write tools should be exposed.
+
+    Precedence: an explicit --[no-]enable-write-tools flag wins; otherwise fall
+    back to the ROOTLY_MCP_ENABLE_WRITE_TOOLS env var, defaulting to
+    write-enabled (full access by default). `flag` is None when the CLI flag was
+    not passed. Keep get_server() and main() using this single resolver so their
+    precedence rules can't drift apart.
+    """
+    if flag is not None:
+        return flag
+    return write_tools_enabled_from_env(default=True)
+
+
 def normalize_hosted_tool_profile(
     raw: str | None, *, default: str = HOSTED_TOOL_PROFILE_FULL
 ) -> str:

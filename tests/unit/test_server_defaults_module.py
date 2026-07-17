@@ -11,6 +11,7 @@ from rootly_mcp_server.server_defaults import (
     enabled_tools_from_env,
     hosted_tool_profile_from_env,
     normalize_hosted_tool_profile,
+    resolve_write_tools_enabled,
 )
 
 
@@ -131,3 +132,29 @@ class TestServerDefaultsModule:
         for name in DEFAULT_HOSTED_ENABLED_TOOLS:
             assert name == name.lower(), f"{name!r} is not snake_case"
             assert "-" not in name
+
+    def test_resolve_write_tools_explicit_flag_wins(self):
+        # An explicit flag value always wins over the env var.
+        with patch.dict(
+            "os.environ", {"ROOTLY_MCP_ENABLE_WRITE_TOOLS": "true"}, clear=True
+        ):
+            assert resolve_write_tools_enabled(False) is False
+        with patch.dict(
+            "os.environ", {"ROOTLY_MCP_ENABLE_WRITE_TOOLS": "false"}, clear=True
+        ):
+            assert resolve_write_tools_enabled(True) is True
+
+    def test_resolve_write_tools_falls_back_to_env_when_flag_absent(self):
+        with patch.dict(
+            "os.environ", {"ROOTLY_MCP_ENABLE_WRITE_TOOLS": "false"}, clear=True
+        ):
+            assert resolve_write_tools_enabled(None) is False
+        with patch.dict(
+            "os.environ", {"ROOTLY_MCP_ENABLE_WRITE_TOOLS": "true"}, clear=True
+        ):
+            assert resolve_write_tools_enabled(None) is True
+
+    def test_resolve_write_tools_defaults_to_write_enabled(self):
+        # No flag and no env var: full access by default.
+        with patch.dict("os.environ", {}, clear=True):
+            assert resolve_write_tools_enabled(None) is True
