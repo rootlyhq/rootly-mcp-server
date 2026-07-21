@@ -45,6 +45,10 @@ dependencies = [
     "pyjwt>=2.13.0",  # Override vulnerable transitive pyjwt (GHSA-xgmm-8j9v-c9wx and others)
     "msgpack>=1.2.1",  # Override vulnerable transitive msgpack (GHSA-6v7p-g79w-8964)
     "starlette>=1.3.1",  # Override vulnerable transitive starlette (GHSA-82w8-qh3p-5jfq and others)
+    "mcp>=1.28.1",  # Override vulnerable transitive mcp (CVE-2026-52870, CVE-2026-52869, CVE-2026-59950)
+    "joserfc>=1.6.8",  # Override vulnerable transitive joserfc (PYSEC-2026-2528, PYSEC-2026-2530)
+    "idna>=3.15",  # Override vulnerable transitive idna (PYSEC-2026-215)
+    "click>=8.3.3",  # Override vulnerable transitive click (PYSEC-2026-2132)
     "requests==2.34.2", # Pin to patched version
     "httpx==0.28.1",   # Pin to specific version
     "pydantic==2.13.4",  # Pin to specific version
