@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `pyjwt` 2.12.1 → 2.13.0 (GHSA-xgmm-8j9v-c9wx, -993g-76c3-p5m4, -w7vc-732c-9m39, -jq35-7prp-9v3f, -fhv5-28vv-h8m8 — token forgery / DoS)
   - `msgpack` 1.1.2 → 1.2.1 (GHSA-6v7p-g79w-8964 — out-of-bounds read)
   - `authlib` 1.7.0 → 1.7.2 (GHSA-w8p2-r796-3vmq — OAuth open redirect)
+- **Follow-up Dependency Bumps**: Raised override constraints for newly disclosed vulnerabilities in transitive dependencies (`uv.lock` regenerated):
+  - `mcp` 1.26.0 → 1.28.1 (CVE-2026-52870, CVE-2026-52869, CVE-2026-59950)
+  - `joserfc` 1.6.4 → 1.7.4 (PYSEC-2026-2528, PYSEC-2026-2530)
+  - `idna` 3.10 → 3.18 (PYSEC-2026-215)
+  - `click` 8.1.8 → 8.4.2 (PYSEC-2026-2132)
 
 ### Testing
 
