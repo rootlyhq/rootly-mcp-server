@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.3.15] - Unreleased
 
+### Added
+
+- **Meeting Recordings & Transcripts**: Added read-only tools `get_meeting_recording`, `list_meeting_recordings`, and `list_all_meeting_recordings` so agents can read call transcripts (the `meeting_transcript` / `meeting_transcript_formatted` data). Call `get_meeting_recording` with `include=transcript` for the full transcript. Refreshed the bundled `data/swagger.json` from source to pick up these endpoints
+
 ### Fixed
 
 - **Alert Payload Returned on Detail Lookups**: Single-alert lookups now return the full alert payload, including custom fields. Alert responses were stripped to a whitelist of essential attributes to keep payloads small, but this also dropped the raw `data` payload — where custom fields such as runbook links live (the same data shown under the Rootly UI's alert "payload" tab). The strip now applies only to list/search responses; single-resource detail lookups (`GET /v1/alerts/{id}`) preserve their full attribute set, while relationships are still collapsed to counts and sideloaded `included` data is dropped to keep responses bounded. The curated `get_alert_by_short_id` tool also passes through `data`, `alert_field_values`, and `labels` (plus `external_url` and `updated_at`). Verified end-to-end against a live alert

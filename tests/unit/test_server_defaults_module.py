@@ -64,6 +64,9 @@ class TestServerDefaultsModule:
         assert "/causes/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/shifts" in DEFAULT_ALLOWED_PATHS
         assert "/on_call_roles" in DEFAULT_ALLOWED_PATHS
+        assert "/meeting_recordings" in DEFAULT_ALLOWED_PATHS
+        assert "/meeting_recordings/{id}" in DEFAULT_ALLOWED_PATHS
+        assert "/incidents/{incident_id}/meeting_recordings" in DEFAULT_ALLOWED_PATHS
 
     def test_generate_recommendation_when_no_solutions(self):
         result = _generate_recommendation({"solutions": [], "average_resolution_time": None})

@@ -68,6 +68,7 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_escalation_policy",
         "get_functionality",
         "get_incident",
+        "get_meeting_recording",
         "get_oncall_handoff_summary",
         "get_oncall_schedule_summary",
         "get_schedule",
@@ -96,6 +97,7 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "list_incident_roles",
         "list_incident_types",
         "list_incidents",
+        "list_meeting_recordings",
         "list_override_shifts",
         "list_schedule_rotation_active_days",
         "list_schedule_rotation_users",
@@ -414,6 +416,13 @@ DEFAULT_ALLOWED_PATHS = [
     "/incident_retrospective_steps/{id}",
     "/incidents/{incident_id}/status_pages",
     "/incident_status_pages/{id}",
+    # Meeting recordings and transcripts (read-only).  The detail lookup
+    # (`/meeting_recordings/{id}`) returns the full transcript when called
+    # with `include=transcript`; the list endpoints return the transcript
+    # summary per recording.
+    "/meeting_recordings",
+    "/meeting_recordings/{id}",
+    "/incidents/{incident_id}/meeting_recordings",
     # Advanced form management
     "/custom_fields",
     "/custom_fields/{id}",
