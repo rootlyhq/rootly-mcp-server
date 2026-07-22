@@ -32,7 +32,7 @@ INCIDENT_UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
-INCIDENT_SEQUENTIAL_REF_RE = re.compile(r"^(?:#|INC-)?(\d+)$")
+INCIDENT_SEQUENTIAL_REF_RE = re.compile(r"^(?:#|INC-)?(\d+)$", re.IGNORECASE)
 
 
 def _split_csv_values(value: str) -> list[str]:
@@ -122,71 +122,33 @@ async def _resolve_incident_reference_to_uuid(
         return cast(str, normalized_reference)
 
     target_sequential_id = cast(int, normalized_reference)
-    page_cache: dict[int, tuple[list[dict[str, Any]], dict[str, Any]]] = {}
 
-    async def _fetch_page(page_number: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        cached = page_cache.get(page_number)
-        if cached is not None:
-            return cached
+    # Resolve the human-readable incident number (the 123 in INC-123) directly
+    # via the API's filter[sequential_id] rather than walking the incident list.
+    # Deep pagination (a high page[number]) is rejected by the API with a 400,
+    # so the previous page-scanning approach broke for accounts with enough
+    # incidents to push the match onto a deep page.
+    response = await make_authenticated_request(
+        "GET",
+        "/v1/incidents",
+        params={
+            "filter[sequential_id]": target_sequential_id,
+            "page[size]": 1,
+            "fields[incidents]": INCIDENT_REFERENCE_FIELDS,
+        },
+    )
+    response.raise_for_status()
+    response_data = response.json()
+    incidents = cast(list[dict[str, Any]], response_data.get("data", []))
 
-        response = await make_authenticated_request(
-            "GET",
-            "/v1/incidents",
-            params={
-                "page[size]": 100,
-                "page[number]": page_number,
-                "fields[incidents]": INCIDENT_REFERENCE_FIELDS,
-                "include": "",
-                "sort": "-created_at",
-            },
-        )
-        response.raise_for_status()
-        response_data = response.json()
-        incidents = cast(list[dict[str, Any]], response_data.get("data", []))
-        meta = cast(dict[str, Any], response_data.get("meta", {}))
-        page_cache[page_number] = (incidents, meta)
-        return incidents, meta
-
-    incidents, meta = await _fetch_page(1)
-    total_pages = int(meta.get("total_pages") or 1)
-
-    left = 1
-    right = total_pages
-
-    while left <= right:
-        page_number = (left + right) // 2
-        if page_number == 1:
-            page_incidents, _ = incidents, meta
-        else:
-            page_incidents, _ = await _fetch_page(page_number)
-
-        sequential_ids = [
-            sequential_id
-            for sequential_id in (_extract_sequential_id(incident) for incident in page_incidents)
-            if sequential_id is not None
-        ]
-
-        if not sequential_ids:
+    for incident in incidents:
+        # Guard against the filter being ignored/unsupported: only accept an
+        # exact sequential_id match so we never resolve to the wrong incident.
+        if _extract_sequential_id(incident) == target_sequential_id:
+            incident_uuid = incident.get("id")
+            if isinstance(incident_uuid, str) and incident_uuid:
+                return incident_uuid
             break
-
-        page_max = max(sequential_ids)
-        page_min = min(sequential_ids)
-
-        if target_sequential_id > page_max:
-            right = page_number - 1
-            continue
-        if target_sequential_id < page_min:
-            left = page_number + 1
-            continue
-
-        for incident in page_incidents:
-            if _extract_sequential_id(incident) == target_sequential_id:
-                incident_uuid = incident.get("id")
-                if isinstance(incident_uuid, str) and incident_uuid:
-                    return incident_uuid
-                break
-
-        raise LookupError(f"Incident reference not found: INC-{target_sequential_id}")
 
     raise LookupError(f"Incident reference not found: INC-{target_sequential_id}")
 
@@ -1342,7 +1304,7 @@ def register_incident_tools(
 
             # Get incidents for solution mining
             params = {
-                "page[size]": 150,  # Get more incidents for better solution matching
+                "page[size]": 100,  # Max page size; larger values are rejected by the API
                 "page[number]": 1,
                 "include": "",
             }

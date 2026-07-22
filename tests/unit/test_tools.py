@@ -255,9 +255,13 @@ class TestScopedIncidentUpdateTool:
         }
         request.return_value = response
 
-        result = await tools["get_incident"](incident_id="inc-123")
+        result = await tools["get_incident"](
+            incident_id="11111111-1111-4111-8111-111111111111"
+        )
 
-        request.assert_awaited_once_with("GET", "/v1/incidents/inc-123")
+        request.assert_awaited_once_with(
+            "GET", "/v1/incidents/11111111-1111-4111-8111-111111111111"
+        )
         assert result["data"]["id"] == "inc-123"
         assert result["data"]["attributes"]["retrospective_progress_status"] == "active"
 
@@ -268,6 +272,7 @@ class TestScopedIncidentUpdateTool:
             "4460",
             "#4460",
             "INC-4460",
+            "inc-4460",
         ],
     )
     async def test_get_incident_resolves_sequential_references(self, incident_reference: str):
@@ -314,11 +319,9 @@ class TestScopedIncidentUpdateTool:
                 "GET",
                 "/v1/incidents",
                 params={
-                    "page[size]": 100,
-                    "page[number]": 1,
+                    "filter[sequential_id]": 4460,
+                    "page[size]": 1,
                     "fields[incidents]": "id,sequential_id",
-                    "include": "",
-                    "sort": "-created_at",
                 },
             ),
             call("GET", "/v1/incidents/11111111-1111-4111-8111-111111111111"),
@@ -329,120 +332,62 @@ class TestScopedIncidentUpdateTool:
     async def test_get_incident_returns_clear_error_for_unknown_sequential_reference(self):
         tools, request = self._register_tools()
 
-        first_page_response = Mock()
-        first_page_response.raise_for_status.return_value = None
-        first_page_response.json.return_value = {
-            "data": [
-                {
-                    "id": "uuid-page-1",
-                    "type": "incidents",
-                    "attributes": {"sequential_id": 5000},
-                },
-                {
-                    "id": "uuid-page-1-last",
-                    "type": "incidents",
-                    "attributes": {"sequential_id": 4901},
-                },
-            ],
-            "meta": {
-                "current_page": 1,
-                "next_page": 2,
-                "prev_page": None,
-                "total_pages": 8,
-                "total_count": 800,
-            },
+        # The filter[sequential_id] lookup returns no match.
+        empty_response = Mock()
+        empty_response.raise_for_status.return_value = None
+        empty_response.json.return_value = {
+            "data": [],
+            "meta": {"current_page": 1, "total_pages": 1, "total_count": 0},
         }
 
-        mid_page_response = Mock()
-        mid_page_response.raise_for_status.return_value = None
-        mid_page_response.json.return_value = {
-            "data": [
-                {
-                    "id": "uuid-page-4",
-                    "type": "incidents",
-                    "attributes": {"sequential_id": 4700},
-                },
-                {
-                    "id": "uuid-page-4-last",
-                    "type": "incidents",
-                    "attributes": {"sequential_id": 4601},
-                },
-            ],
-            "meta": {
-                "current_page": 4,
-                "next_page": 5,
-                "prev_page": 3,
-                "total_pages": 8,
-                "total_count": 800,
-            },
-        }
-
-        target_range_response = Mock()
-        target_range_response.raise_for_status.return_value = None
-        target_range_response.json.return_value = {
-            "data": [
-                {
-                    "id": "uuid-page-6",
-                    "type": "incidents",
-                    "attributes": {"sequential_id": 4500},
-                },
-                {
-                    "id": "uuid-page-6-last",
-                    "type": "incidents",
-                    "attributes": {"sequential_id": 4401},
-                },
-            ],
-            "meta": {
-                "current_page": 6,
-                "next_page": 7,
-                "prev_page": 5,
-                "total_pages": 8,
-                "total_count": 800,
-            },
-        }
-
-        request.side_effect = [first_page_response, mid_page_response, target_range_response]
+        request.side_effect = [empty_response]
 
         result = await tools["get_incident"](incident_id="4460")
 
         assert result["error"] is True
         assert result["error_type"] == "not_found"
         assert "INC-4460" in result["message"]
+        # A single direct filter lookup — no page walking (deep pagination is
+        # rejected by the API with a 400).
         assert request.await_args_list == [
             call(
                 "GET",
                 "/v1/incidents",
                 params={
-                    "page[size]": 100,
-                    "page[number]": 1,
+                    "filter[sequential_id]": 4460,
+                    "page[size]": 1,
                     "fields[incidents]": "id,sequential_id",
-                    "include": "",
-                    "sort": "-created_at",
-                },
-            ),
-            call(
-                "GET",
-                "/v1/incidents",
-                params={
-                    "page[size]": 100,
-                    "page[number]": 4,
-                    "fields[incidents]": "id,sequential_id",
-                    "include": "",
-                    "sort": "-created_at",
-                },
-            ),
-            call(
-                "GET",
-                "/v1/incidents",
-                params={
-                    "page[size]": 100,
-                    "page[number]": 6,
-                    "fields[incidents]": "id,sequential_id",
-                    "include": "",
-                    "sort": "-created_at",
                 },
             ),
         ]
+
+    @pytest.mark.asyncio
+    async def test_get_incident_rejects_sequential_mismatch_from_ignored_filter(self):
+        # Defensive: if the API ever ignored filter[sequential_id] and returned a
+        # non-matching incident, we must not resolve to the wrong UUID.
+        tools, request = self._register_tools()
+
+        mismatch_response = Mock()
+        mismatch_response.raise_for_status.return_value = None
+        mismatch_response.json.return_value = {
+            "data": [
+                {
+                    "id": "99999999-9999-4999-8999-999999999999",
+                    "type": "incidents",
+                    "attributes": {"sequential_id": 9999},
+                }
+            ],
+            "meta": {"current_page": 1, "total_pages": 1, "total_count": 1},
+        }
+        request.side_effect = [mismatch_response]
+
+        result = await tools["get_incident"](incident_id="4460")
+
+        assert result["error"] is True
+        assert result["error_type"] == "not_found"
+        assert "INC-4460" in result["message"]
+        # Only the filter lookup happened; no incident fetch against a wrong UUID.
+        assert request.await_count == 1
 
     @pytest.mark.asyncio
     async def test_list_incident_roles_tool_is_registered(self):
@@ -647,14 +592,14 @@ class TestScopedIncidentUpdateTool:
         request.return_value = response
 
         result = await tools["update_incident"](
-            incident_id="inc-123",
+            incident_id="11111111-1111-4111-8111-111111111111",
             retrospective_progress_status="active",
             summary="Updated PIR summary",
         )
 
         request.assert_awaited_once_with(
             "PUT",
-            "/v1/incidents/inc-123",
+            "/v1/incidents/11111111-1111-4111-8111-111111111111",
             json={
                 "data": {
                     "type": "incidents",
@@ -710,11 +655,9 @@ class TestScopedIncidentUpdateTool:
                 "GET",
                 "/v1/incidents",
                 params={
-                    "page[size]": 100,
-                    "page[number]": 1,
+                    "filter[sequential_id]": 4460,
+                    "page[size]": 1,
                     "fields[incidents]": "id,sequential_id",
-                    "include": "",
-                    "sort": "-created_at",
                 },
             ),
             call(
@@ -749,13 +692,13 @@ class TestScopedIncidentUpdateTool:
         request.return_value = response
 
         result = await tools["update_incident"](
-            incident_id="inc-123",
+            incident_id="11111111-1111-4111-8111-111111111111",
             retrospective_progress_status="skipped",
         )
 
         request.assert_awaited_once_with(
             "PUT",
-            "/v1/incidents/inc-123",
+            "/v1/incidents/11111111-1111-4111-8111-111111111111",
             json={
                 "data": {
                     "type": "incidents",
