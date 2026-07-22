@@ -39,19 +39,23 @@ uv pip install <package>
 
 ### 3. Set Up Git Hooks (Recommended)
 
-Install pre-commit hooks to automatically run linting and tests before commits:
+Install pre-commit hooks to automatically run the quality gate before commits:
 
 ```bash
-./scripts/setup-hooks.sh
+make hooks   # or: ./scripts/setup-hooks.sh
 ```
 
-This ensures code quality by running:
-- Ruff linting
-- Pyright type checking
-- Unit tests
+The hook runs `make check` (lint, format check, type checks, unit tests) —
+the same gate CI enforces.
 
 ### 4. Verify Installation
 
 The server should now be ready to use with your MCP-compatible editor.
 
 Additional testing tools are available in the `tests/` directory.
+
+## Common Tasks
+
+The `Makefile` wraps the toolchain; run `make help` to list every target.
+Common ones: `make check` (pre-push gate), `make test`, and `make fetch-spec`
+to refresh the bundled OpenAPI spec from source.
