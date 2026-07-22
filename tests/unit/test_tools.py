@@ -14,9 +14,16 @@ from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
+from rootly_mcp_server.mcp_error import MCPError
 from rootly_mcp_server.server import DEFAULT_ALLOWED_PATHS, create_rootly_mcp_server
 from rootly_mcp_server.server_defaults import _generate_recommendation
-from rootly_mcp_server.tools.incidents import INCIDENT_LIST_FIELDS, register_incident_tools
+from rootly_mcp_server.tools.incidents import (
+    INCIDENT_LIST_FIELDS,
+    _augment_pagination_error,
+    _normalize_incident_reference,
+    _summarize_incident_record,
+    register_incident_tools,
+)
 from rootly_mcp_server.tools.resources import register_resource_handlers
 
 
@@ -1354,3 +1361,178 @@ class TestIncidentReferenceResolutionAcrossTools:
             "GET", "/v1/incidents/11111111-1111-4111-8111-111111111111"
         )
         assert "Resolved Incident ID: 11111111-1111-4111-8111-111111111111" in result["text"]
+
+
+@pytest.mark.unit
+class TestPureHelpers:
+    """Direct tests for module-level incident helpers."""
+
+    def test_summarize_incident_record_tolerates_null_attributes(self):
+        # API returning `"attributes": null` (present but null) must not crash.
+        summary = _summarize_incident_record({"id": "abc", "attributes": None})
+        assert summary["incident_id"] == "abc"
+        assert summary["title"] is None
+        assert summary["incident_number"] is None
+
+    @pytest.mark.parametrize(
+        "reference",
+        ["../../v1/users", "foo/bar", "a b", "with\\slash", "..", "seg/../seg"],
+    )
+    def test_normalize_incident_reference_rejects_path_altering_direct_refs(self, reference):
+        with pytest.raises(ValueError):
+            _normalize_incident_reference(reference)
+
+    def test_normalize_incident_reference_allows_plain_slug(self):
+        assert _normalize_incident_reference("database-outage") == ("direct", "database-outage")
+
+    def test_augment_pagination_error_appends_hint_on_deep_client_error(self):
+        result = _augment_pagination_error(
+            {"error": True, "error_type": "client_error", "message": "Client error: 400"},
+            page_number=250,
+        )
+        assert "collect_incidents" in result["message"]
+
+    def test_augment_pagination_error_noop_on_first_page(self):
+        original = {"error": True, "error_type": "client_error", "message": "Client error: 400"}
+        result = _augment_pagination_error(dict(original), page_number=1)
+        assert result["message"] == original["message"]
+
+    def test_augment_pagination_error_noop_on_non_client_error(self):
+        original = {"error": True, "error_type": "server_error", "message": "Server error: 500"}
+        result = _augment_pagination_error(dict(original), page_number=250)
+        assert result["message"] == original["message"]
+
+
+@pytest.mark.unit
+class TestIncidentToolsHardening:
+    """Error taxonomy, input hardening, and pagination-signal behavior.
+
+    Uses the real MCPError so error_type categorization (e.g. client_error for
+    4xx) matches production rather than the minimal FakeMCPError double.
+    """
+
+    def _register_tools(self):
+        mcp = FakeMCP()
+        request = AsyncMock()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=MCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+        return mcp.tools, request
+
+    def _empty_filter_response(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {"total_pages": 1, "total_count": 0}}
+        return response
+
+    @pytest.mark.asyncio
+    async def test_get_incident_rejects_path_traversal_reference(self):
+        tools, request = self._register_tools()
+
+        result = await tools["get_incident"](incident_id="../../v1/users")
+
+        assert result["error"] is True
+        assert result["error_type"] == "validation_error"
+        request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_incident_maps_unknown_sequential_to_not_found(self):
+        tools, request = self._register_tools()
+        request.side_effect = [self._empty_filter_response()]
+
+        result = await tools["update_incident"](
+            incident_id="4460", retrospective_progress_status="active"
+        )
+
+        assert result["error"] is True
+        assert result["error_type"] == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_find_related_incidents_maps_unknown_sequential_to_not_found(self):
+        mcp_tools, request = self._register_tools()
+        request.side_effect = [self._empty_filter_response()]
+
+        result = await mcp_tools["find_related_incidents"](incident_id="4460")
+
+        assert result["error"] is True
+        assert result["error_type"] == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_suggest_solutions_maps_unknown_sequential_to_not_found(self):
+        mcp_tools, request = self._register_tools()
+        request.side_effect = [self._empty_filter_response()]
+
+        result = await mcp_tools["suggest_solutions"](incident_id="4460")
+
+        assert result["error"] is True
+        assert result["error_type"] == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_update_incident_treats_whitespace_summary_as_no_field(self):
+        tools, request = self._register_tools()
+
+        result = await tools["update_incident"](
+            incident_id="11111111-1111-4111-8111-111111111111", summary="   "
+        )
+
+        assert result["error"] is True
+        assert result["error_type"] == "validation_error"
+        assert "Must provide at least one" in result["message"]
+        request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_list_incidents_tolerates_null_attributes_record(self):
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [
+                {"id": "null-attrs", "attributes": None},
+                {"id": "ok", "attributes": {"title": "Real", "sequential_id": 5}},
+            ],
+            "meta": {"current_page": 1, "total_pages": 1},
+        }
+        request.return_value = response
+
+        result = await tools["list_incidents"]()
+
+        assert result["returned_incidents"] == 2
+        assert result["incidents"][0]["incident_id"] == "null-attrs"
+        assert result["incidents"][1]["incident_number"] == "INC-5"
+
+    @pytest.mark.asyncio
+    async def test_list_incidents_appends_pagination_hint_on_deep_client_error(self):
+        tools, request = self._register_tools()
+        request.side_effect = Exception("400 Bad Request")
+
+        result = await tools["list_incidents"](page_number=250)
+
+        assert result["error"] is True
+        assert result["error_type"] == "client_error"
+        assert "collect_incidents" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_search_incidents_flags_partial_results_on_mid_page_error(self):
+        tools, request = self._register_tools()
+
+        # Full first page (== page_size, and < max_results) so the loop fetches
+        # a second page, which then fails with a non-auth error mid-scan.
+        first_page = Mock()
+        first_page.raise_for_status.return_value = None
+        first_page.json.return_value = {
+            "data": [{"id": f"i-{n}", "attributes": {"title": f"t{n}"}} for n in range(5)],
+            "meta": {"current_page": 1, "total_pages": 5},
+        }
+        second_page = Mock()
+        second_page.raise_for_status.side_effect = Exception("500 Server Error")
+        request.side_effect = [first_page, second_page]
+
+        result = await tools["search_incidents"](page_number=0, page_size=5, max_results=10)
+
+        assert result["meta"]["partial"] is True
+        assert "error" in result["meta"]
