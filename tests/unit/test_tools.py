@@ -255,9 +255,7 @@ class TestScopedIncidentUpdateTool:
         }
         request.return_value = response
 
-        result = await tools["get_incident"](
-            incident_id="11111111-1111-4111-8111-111111111111"
-        )
+        result = await tools["get_incident"](incident_id="11111111-1111-4111-8111-111111111111")
 
         request.assert_awaited_once_with(
             "GET", "/v1/incidents/11111111-1111-4111-8111-111111111111"
