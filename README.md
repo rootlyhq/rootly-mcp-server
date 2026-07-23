@@ -356,7 +356,7 @@ Choose one transport per server process:
 
 - **Streamable HTTP** endpoint path: `/mcp`
 - **SSE** endpoint path: `/sse`
-- **Code Mode (experimental)** endpoint path: `/mcp-codemode` in hosted dual-transport mode
+- **Code Mode (recommended)** endpoint path: `/mcp-codemode` in hosted dual-transport mode
 
 Hosted and self-hosted deployments now both expose the full tool surface by default.
 
