@@ -1,12 +1,25 @@
-name: Publish Python 🐍 distribution 📦 to PyPI on tag
+name: Publish Python 🐍 distribution 📦 to PyPI
+
+# Releases are driven by the version in pyproject.toml. The workflow only runs
+# when pyproject.toml changes on main (i.e. a version bump), on a manually
+# pushed tag (kept for backwards compatibility), or via manual dispatch. It then
+# checks whether the current version is already on PyPI and, only if not, builds,
+# publishes, and creates the matching v<version> tag. This removes the manual
+# "git tag && push" step that, when skipped, silently left new versions
+# unpublished (PyPI stalled at 2.3.9 while the repo advanced to 2.3.16).
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - 'pyproject.toml'
     tags:
       - '*'
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # needed to create and push the release tag
 
 jobs:
   build-and-publish:
@@ -14,24 +27,61 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
 
-      - name: Install uv and build tools
+      - name: Read version from pyproject.toml
+        id: version
+        run: |
+          VERSION="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Project version: $VERSION"
+
+      - name: Check whether this version is already on PyPI
+        id: pypi
+        run: |
+          if curl -fsSL "https://pypi.org/pypi/rootly-mcp-server/${{ steps.version.outputs.version }}/json" >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "Version ${{ steps.version.outputs.version }} is already on PyPI — nothing to do."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "Version ${{ steps.version.outputs.version }} is not on PyPI — releasing."
+          fi
+
+      - name: Install build tools
+        if: steps.pypi.outputs.published == 'false'
         run: |
           pip install uv
           uv pip install --system build twine
 
       - name: Build package
-        run: |
-          python -m build
+        if: steps.pypi.outputs.published == 'false'
+        run: python -m build
 
       - name: Publish to PyPI
+        if: steps.pypi.outputs.published == 'false'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+      - name: Create and push release tag
+        if: steps.pypi.outputs.published == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          twine upload dist/* 
+          if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists on origin — skipping tag creation."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "Created and pushed $TAG."
+          fi
