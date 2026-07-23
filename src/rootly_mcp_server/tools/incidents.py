@@ -59,7 +59,7 @@ def _extract_incident_severity(severity_value: Any) -> str | None:
             return cast(str | None, severity_value.get("slug") or severity_value.get("name"))
         severity_data = severity_value.get("data")
         if isinstance(severity_data, dict):
-            attributes = severity_data.get("attributes", {})
+            attributes = severity_data.get("attributes") or {}
             if isinstance(attributes, dict):
                 return cast(str | None, attributes.get("slug") or attributes.get("name"))
     return None
@@ -67,7 +67,8 @@ def _extract_incident_severity(severity_value: Any) -> str | None:
 
 def _summarize_incident_record(incident: dict[str, Any]) -> dict[str, Any]:
     """Return a compact incident summary suitable for list/query workflows."""
-    attrs = incident.get("attributes", {})
+    # `or {}` (not a default) so a present-but-null "attributes" doesn't crash.
+    attrs = incident.get("attributes") or {}
     sequential_id = attrs.get("sequential_id")
     incident_number = f"INC-{sequential_id}" if sequential_id is not None else None
 
@@ -89,7 +90,7 @@ def _summarize_incident_record(incident: dict[str, Any]) -> dict[str, Any]:
 
 def _extract_sequential_id(incident: dict[str, Any]) -> int | None:
     """Extract a numeric sequential incident ID from a Rootly incident record."""
-    attrs = incident.get("attributes", {})
+    attrs = incident.get("attributes") or {}
     sequential_id = attrs.get("sequential_id")
     if sequential_id is None:
         return None
@@ -97,6 +98,28 @@ def _extract_sequential_id(incident: dict[str, Any]) -> int | None:
         return int(sequential_id)
     except (TypeError, ValueError):
         return None
+
+
+def _augment_pagination_error(result: JsonDict, page_number: int) -> JsonDict:
+    """Append deep-pagination guidance to a client error from a paged list call.
+
+    The Rootly API rejects deep offset pagination (a large ``page[number]``) with
+    a 400. When a paged list request fails with a client error on a page beyond
+    the first, point the caller at filters or ``collect_incidents`` instead of
+    leaving a bare 400. Advisory only — does not change the error type.
+    """
+    if (
+        page_number > 1
+        and result.get("error")
+        and result.get("error_type") == "client_error"
+        and isinstance(result.get("message"), str)
+    ):
+        result["message"] += (
+            " If you were paging deep, note the API rejects large page numbers; "
+            "narrow the query with filters (team, service, severity, date range) "
+            "or use collect_incidents instead of a high page_number."
+        )
+    return result
 
 
 def _normalize_incident_reference(reference: str) -> tuple[str, str | int]:
@@ -109,6 +132,16 @@ def _normalize_incident_reference(reference: str) -> tuple[str, str | int]:
     sequential_match = INCIDENT_SEQUENTIAL_REF_RE.match(normalized)
     if sequential_match:
         return ("sequential", int(sequential_match.group(1)))
+    # A "direct" reference is interpolated into the request path
+    # (/v1/incidents/{ref}), so reject anything that could redirect the target
+    # (path traversal, extra segments, query/whitespace injection).
+    if (
+        "/" in normalized
+        or "\\" in normalized
+        or ".." in normalized
+        or any(char.isspace() for char in normalized)
+    ):
+        raise ValueError(f"Invalid incident reference: {reference!r}")
     return ("direct", normalized)
 
 
@@ -166,6 +199,21 @@ def register_incident_tools(
     # Initialize smart analysis tools
     similarity_analyzer = TextSimilarityAnalyzer()
     solution_extractor = SolutionExtractor()
+
+    def _reference_tool_error(action: str, exc: Exception) -> JsonDict:
+        """Map an incident-reference operation failure to a consistent tool error.
+
+        Every tool that resolves an incident reference shares this taxonomy:
+        a bad/blank reference is a ``validation_error``, an unresolved
+        sequential number is ``not_found``, and anything else is categorized by
+        ``mcp_error``. Centralized here so the tools can't drift apart.
+        """
+        if isinstance(exc, ValueError):
+            return cast(JsonDict, mcp_error.tool_error(f"{action}: {exc}", "validation_error"))
+        if isinstance(exc, LookupError):
+            return cast(JsonDict, mcp_error.tool_error(f"{action}: {exc}", "not_found"))
+        error_type, error_message = mcp_error.categorize_error(exc)
+        return cast(JsonDict, mcp_error.tool_error(f"{action}: {error_message}", error_type))
 
     async def _resolve_team_names_to_ids(teams: str) -> tuple[str, dict[str, str]]:
         """Resolve comma-separated team names/slugs to Rootly team IDs."""
@@ -414,7 +462,10 @@ def register_incident_tools(
             }
         except Exception as e:
             error_type, error_message = mcp_error.categorize_error(e)
-            return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
+            return _augment_pagination_error(
+                cast(JsonDict, mcp_error.tool_error(error_message, error_type)),
+                page_number,
+            )
 
     @mcp.tool(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
@@ -627,13 +678,17 @@ def register_incident_tools(
                 return strip_heavy_nested_data(response.json())
             except Exception as e:
                 error_type, error_message = mcp_error.categorize_error(e)
-                return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
+                return _augment_pagination_error(
+                    cast(JsonDict, mcp_error.tool_error(error_message, error_type)),
+                    page_number,
+                )
 
         # Multi-page mode (page_number = 0)
         all_incidents: list[dict[str, Any]] = []
         current_page = 1
         effective_page_size = page_size  # Use requested page size (already limited to max 20)
         max_pages = 10  # Safety limit to prevent infinite loops
+        page_error: str | None = None  # Set if a page fetch fails mid-scan
 
         try:
             while len(all_incidents) < max_results and current_page <= max_pages:
@@ -688,7 +743,9 @@ def register_incident_tools(
                     ):
                         error_type, error_message = mcp_error.categorize_error(e)
                         return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
-                    # For other errors, break loop and return partial results
+                    # For other errors, stop paging but flag the result as partial
+                    # so callers don't mistake a truncated set for a complete one.
+                    _, page_error = mcp_error.categorize_error(e)
                     break
 
             # Limit to max_results
@@ -704,6 +761,10 @@ def register_incident_tools(
                         "query": query,
                         "pages_fetched": current_page - 1,
                         "page_size": effective_page_size,
+                        # True when paging stopped early due to a page error; the
+                        # result set is incomplete.
+                        "partial": page_error is not None,
+                        **({"error": page_error} if page_error else {}),
                     },
                 }
             )
@@ -742,31 +803,8 @@ def register_incident_tools(
                 stripped = strip_heavy_nested_data({"data": [response_data["data"]]})
                 response_data["data"] = stripped["data"][0]
             return cast(JsonDict, response_data)
-        except ValueError as e:
-            return cast(
-                JsonDict,
-                mcp_error.tool_error(
-                    f"Failed to retrieve incident: {e}",
-                    "validation_error",
-                ),
-            )
-        except LookupError as e:
-            return cast(
-                JsonDict,
-                mcp_error.tool_error(
-                    f"Failed to retrieve incident: {e}",
-                    "not_found",
-                ),
-            )
         except Exception as e:
-            error_type, error_message = mcp_error.categorize_error(e)
-            return cast(
-                JsonDict,
-                mcp_error.tool_error(
-                    f"Failed to retrieve incident: {error_message}",
-                    error_type,
-                ),
-            )
+            return _reference_tool_error("Failed to retrieve incident", e)
 
     @mcp.tool(
         name="list_incident_roles",
@@ -862,31 +900,8 @@ def register_incident_tools(
                     },
                 },
             )
-        except ValueError as e:
-            return cast(
-                JsonDict,
-                mcp_error.tool_error(
-                    f"Failed to list incident roles: {e}",
-                    "validation_error",
-                ),
-            )
-        except LookupError as e:
-            return cast(
-                JsonDict,
-                mcp_error.tool_error(
-                    f"Failed to list incident roles: {e}",
-                    "not_found",
-                ),
-            )
         except Exception as e:
-            error_type, error_message = mcp_error.categorize_error(e)
-            return cast(
-                JsonDict,
-                mcp_error.tool_error(
-                    f"Failed to list incident roles: {error_message}",
-                    error_type,
-                ),
-            )
+            return _reference_tool_error("Failed to list incident roles", e)
 
     if enable_write_tools:
 
@@ -1034,6 +1049,9 @@ def register_incident_tools(
                     )
                 attributes["retrospective_progress_status"] = retrospective_progress_status
 
+            # Normalize like create_incident so a whitespace-only summary isn't
+            # sent to the API verbatim.
+            summary = _normalize_optional_text(summary)
             if summary is not None:
                 attributes["summary"] = summary
 
@@ -1068,14 +1086,7 @@ def register_incident_tools(
                     response_data["data"] = stripped["data"][0]
                 return cast(JsonDict, response_data)
             except Exception as e:
-                error_type, error_message = mcp_error.categorize_error(e)
-                return cast(
-                    JsonDict,
-                    mcp_error.tool_error(
-                        f"Failed to update incident: {error_message}",
-                        error_type,
-                    ),
-                )
+                return _reference_tool_error("Failed to update incident", e)
 
     @mcp.tool(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
@@ -1228,13 +1239,7 @@ def register_incident_tools(
             }
 
         except Exception as e:
-            error_type, error_message = mcp_error.categorize_error(e)
-            return cast(
-                JsonDict,
-                mcp_error.tool_error(
-                    f"Failed to find related incidents: {error_message}", error_type
-                ),
-            )
+            return _reference_tool_error("Failed to find related incidents", e)
 
     @mcp.tool(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
@@ -1375,11 +1380,4 @@ def register_incident_tools(
             }
 
         except Exception as e:
-            error_type, error_message = mcp_error.categorize_error(e)
-            return cast(
-                JsonDict,
-                mcp_error.tool_error(
-                    f"Failed to suggest solutions: {error_message}",
-                    error_type,
-                ),
-            )
+            return _reference_tool_error("Failed to suggest solutions", e)
