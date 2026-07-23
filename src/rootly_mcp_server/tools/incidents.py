@@ -122,6 +122,122 @@ def _augment_pagination_error(result: JsonDict, page_number: int) -> JsonDict:
     return result
 
 
+# Generic incident vocabulary that doesn't help narrow a topical search.
+_SEARCH_STOPTERMS = frozenset(
+    {
+        "down",
+        "up",
+        "error",
+        "errors",
+        "issue",
+        "issues",
+        "failing",
+        "fail",
+        "failed",
+        "all",
+        "calls",
+        "call",
+        "hard",
+        "slow",
+        "broken",
+        "outage",
+        "incident",
+        "incidents",
+        "alert",
+        "alerts",
+        "high",
+        "low",
+        "not",
+        "working",
+        "unavailable",
+        "degraded",
+        "problem",
+        "problems",
+        "major",
+        "minor",
+        "critical",
+        "prod",
+        "production",
+        "staging",
+    }
+)
+
+
+def _extract_incident_search_terms(
+    target_incident: dict[str, Any], max_terms: int = 3
+) -> list[str]:
+    """Pick the most distinctive tokens from a target incident's text.
+
+    Used to retrieve topically-relevant historical candidates via
+    ``filter[search]`` (which reaches incidents of any age) instead of only
+    scanning the most-recent page. Longer tokens are treated as more specific.
+    """
+    attributes = target_incident.get("attributes", {}) or {}
+    text = " ".join(
+        str(attributes.get(field) or "") for field in ("title", "summary", "description")
+    ).lower()
+    ranked: list[str] = []
+    seen: set[str] = set()
+    for token in sorted(re.findall(r"[a-z0-9][a-z0-9._-]{2,}", text), key=len, reverse=True):
+        if token in _SEARCH_STOPTERMS or token in seen:
+            continue
+        seen.add(token)
+        ranked.append(token)
+    return ranked[:max_terms]
+
+
+async def _fetch_similarity_candidates(
+    make_authenticated_request: MakeAuthenticatedRequest,
+    strip_heavy_nested_data: Callable[[JsonDict], JsonDict],
+    target_incident: dict[str, Any],
+    *,
+    status_filter: str = "",
+    fields: str | None = None,
+    max_candidates: int = 400,
+) -> list[dict[str, Any]]:
+    """Build the candidate pool for incident similarity analysis.
+
+    Combines the most-recent page (so results never regress below the previous
+    behavior) with targeted ``filter[search]`` queries on the target's most
+    distinctive terms. The search queries surface relevant incidents of *any*
+    age rather than only those in the last ~100 by recency. Both the baseline
+    and each search are best-effort: a failure (e.g. a deployment that ignores
+    ``filter[search]``) degrades gracefully to whatever else was collected.
+    """
+    base_params: dict[str, Any] = {"include": "", "page[size]": 100, "page[number]": 1}
+    if fields:
+        base_params["fields[incidents]"] = fields
+    if status_filter:
+        base_params["filter[status]"] = status_filter
+
+    candidates: dict[str, dict[str, Any]] = {}
+
+    async def _collect(params: dict[str, Any]) -> None:
+        response = await make_authenticated_request("GET", "/v1/incidents", params=params)
+        response.raise_for_status()
+        for incident in strip_heavy_nested_data(response.json()).get("data", []):
+            incident_id = str(incident.get("id") or "")
+            if incident_id:
+                candidates.setdefault(incident_id, incident)
+
+    # 1. Recent baseline — preserves the previous behavior as a floor.
+    try:
+        await _collect(dict(base_params))
+    except Exception:  # noqa: BLE001 - baseline is best-effort
+        logger.debug("Similarity candidate baseline fetch failed", exc_info=True)
+
+    # 2. Topical search across all history for the target's distinctive terms.
+    for term in _extract_incident_search_terms(target_incident):
+        if len(candidates) >= max_candidates:
+            break
+        try:
+            await _collect({**base_params, "filter[search]": term})
+        except Exception:  # noqa: BLE001 - search is optional/best-effort
+            logger.debug("Similarity candidate search failed for %r", term, exc_info=True)
+
+    return list(candidates.values())[:max_candidates]
+
+
 def _normalize_incident_reference(reference: str) -> tuple[str, str | int]:
     """Classify and normalize an incident reference."""
     normalized = _normalize_optional_text(reference)
@@ -1159,24 +1275,16 @@ def register_incident_tools(
                     ),
                 )
 
-            # Get historical incidents for comparison
-            params = {
-                "page[size]": 100,  # Get more incidents for better matching
-                "page[number]": 1,
-                "include": "",
-                "fields[incidents]": "id,title,summary,status,created_at,url",
-            }
-
-            # Only add status filter if specified
-            if status_filter:
-                params["filter[status]"] = status_filter
-
-            historical_response = await make_authenticated_request(
-                "GET", "/v1/incidents", params=params
+            # Build the candidate pool: recent incidents plus topical search
+            # matches (so relevant incidents older than the most-recent page are
+            # still considered, not just the last ~100 by recency).
+            historical_incidents = await _fetch_similarity_candidates(
+                make_authenticated_request,
+                strip_heavy_nested_data,
+                target_incident,
+                status_filter=status_filter,
+                fields="id,title,summary,status,created_at,url",
             )
-            historical_response.raise_for_status()
-            historical_data = strip_heavy_nested_data(historical_response.json())
-            historical_incidents = historical_data.get("data", [])
 
             # Filter out the target incident itself if it exists
             if incident_id:
@@ -1307,23 +1415,15 @@ def register_incident_tools(
                     ),
                 )
 
-            # Get incidents for solution mining
-            params = {
-                "page[size]": 100,  # Max page size; larger values are rejected by the API
-                "page[number]": 1,
-                "include": "",
-            }
-
-            # Only add status filter if specified
-            if status_filter:
-                params["filter[status]"] = status_filter
-
-            historical_response = await make_authenticated_request(
-                "GET", "/v1/incidents", params=params
+            # Mine solutions from recent incidents plus topical search matches,
+            # so proven resolutions from older (but similar) incidents are not
+            # missed just because they fell outside the most-recent page.
+            historical_incidents = await _fetch_similarity_candidates(
+                make_authenticated_request,
+                strip_heavy_nested_data,
+                target_incident,
+                status_filter=status_filter,
             )
-            historical_response.raise_for_status()
-            historical_data = strip_heavy_nested_data(historical_response.json())
-            historical_incidents = historical_data.get("data", [])
 
             # Filter out target incident if it exists
             if incident_id:

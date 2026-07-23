@@ -1249,7 +1249,14 @@ class TestIncidentReferenceResolutionAcrossTools:
             ]
         }
 
-        request.side_effect = [list_response, incident_response, historical_response]
+        def _route(method, path, params=None):
+            if params and "filter[sequential_id]" in params:
+                return list_response
+            if path.startswith("/v1/incidents/"):
+                return incident_response
+            return historical_response
+
+        request.side_effect = _route
 
         result = await mcp.tools["find_related_incidents"](incident_id="INC-4460")
 
@@ -1258,6 +1265,61 @@ class TestIncidentReferenceResolutionAcrossTools:
         )
         assert result["target_incident"]["resolved_incident_id"] == (
             "11111111-1111-4111-8111-111111111111"
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_related_incidents_surfaces_search_matched_older_incident(self):
+        """A relevant incident absent from the recent page is still found via search."""
+        mcp, request = self._register_tools()
+
+        recent_response = Mock()
+        recent_response.raise_for_status.return_value = None
+        recent_response.json.return_value = {
+            "data": [
+                {
+                    "id": "recent-unrelated",
+                    "attributes": {
+                        "title": "Checkout page latency",
+                        "summary": "slow rendering on the storefront",
+                        "status": "resolved",
+                    },
+                }
+            ]
+        }
+
+        # Only returned by the filter[search] query, not the recent baseline.
+        search_response = Mock()
+        search_response.raise_for_status.return_value = None
+        search_response.json.return_value = {
+            "data": [
+                {
+                    "id": "old-easypost",
+                    "attributes": {
+                        "title": "EasyPost outage",
+                        "summary": "easypost hard down, all calls failing",
+                        "status": "resolved",
+                    },
+                }
+            ]
+        }
+
+        def _route(method, path, params=None):
+            if params and "filter[search]" in params:
+                return search_response
+            return recent_response
+
+        request.side_effect = _route
+
+        result = await mcp.tools["find_related_incidents"](
+            incident_description="EasyPost is hard down, all calls failing",
+        )
+
+        returned_ids = [inc["incident_id"] for inc in result["related_incidents"]]
+        assert "old-easypost" in returned_ids
+        # A filter[search] request was actually issued for a distinctive term.
+        assert any(
+            (c.kwargs.get("params") or {}).get("filter[search]") == "easypost"
+            for c in request.await_args_list
         )
 
     @pytest.mark.asyncio
@@ -1306,7 +1368,14 @@ class TestIncidentReferenceResolutionAcrossTools:
             ]
         }
 
-        request.side_effect = [list_response, incident_response, historical_response]
+        def _route(method, path, params=None):
+            if params and "filter[sequential_id]" in params:
+                return list_response
+            if path.startswith("/v1/incidents/"):
+                return incident_response
+            return historical_response
+
+        request.side_effect = _route
 
         result = await mcp.tools["suggest_solutions"](incident_id="4460")
 

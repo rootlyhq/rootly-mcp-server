@@ -5,6 +5,12 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Related-Incident Recall Beyond the Recent Page**: `find_related_incidents` and `suggest_solutions` no longer compare only against the most-recent ~100 incidents. Previously both fetched a single page sorted by recency, so a relevant older incident (for high-volume accounts, anything past ~the last month) was never loaded and therefore could never be returned — while low-signal recent incidents slipped through the similarity threshold as false positives. Both tools now build the candidate pool from the recent page **plus** targeted `filter[search]` queries on the target incident's most distinctive terms, so topically similar incidents of any age are considered before TF-IDF ranking. The recent page is retained as a floor (no regression) and each search is best-effort (a deployment that ignores `filter[search]` degrades gracefully)
+
 ## [2.3.16] - Released 2026-07-23
 
 ### Added
