@@ -1323,6 +1323,66 @@ class TestIncidentReferenceResolutionAcrossTools:
         )
 
     @pytest.mark.asyncio
+    async def test_find_related_incidents_seeds_from_service_tags(self):
+        """A same-service incident is retrieved via the target's service tag."""
+        mcp, request = self._register_tools()
+        uuid = "11111111-1111-4111-8111-111111111111"
+
+        target_response = Mock()
+        target_response.raise_for_status.return_value = None
+        target_response.json.return_value = {
+            "data": {
+                "id": uuid,
+                "attributes": {"title": "Checkout errors", "summary": "500s on checkout"},
+                "relationships": {
+                    "services": {"data": [{"id": "svc-1", "type": "services"}]},
+                    "functionalities": {"data": []},
+                },
+            }
+        }
+
+        # Only returned by the filter[services] query, not by search or recency.
+        service_response = Mock()
+        service_response.raise_for_status.return_value = None
+        service_response.json.return_value = {
+            "data": [
+                {
+                    "id": "same-service-old",
+                    "attributes": {
+                        "title": "Checkout 500s",
+                        "summary": "errors on the checkout flow",
+                        "status": "resolved",
+                        "created_at": "2025-01-01T00:00:00Z",
+                    },
+                }
+            ]
+        }
+
+        empty = Mock()
+        empty.raise_for_status.return_value = None
+        empty.json.return_value = {"data": []}
+
+        def _route(method, path, params=None):
+            if path.startswith("/v1/incidents/"):
+                return target_response
+            if params and "filter[services]" in params:
+                return service_response
+            return empty
+
+        request.side_effect = _route
+
+        result = await mcp.tools["find_related_incidents"](
+            incident_id=uuid, similarity_threshold=0.0
+        )
+
+        returned_ids = [inc["incident_id"] for inc in result["related_incidents"]]
+        assert "same-service-old" in returned_ids
+        assert any(
+            (c.kwargs.get("params") or {}).get("filter[services]") == "svc-1"
+            for c in request.await_args_list
+        )
+
+    @pytest.mark.asyncio
     async def test_suggest_solutions_resolves_sequential_reference(self):
         mcp, request = self._register_tools()
 
