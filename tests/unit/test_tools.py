@@ -1365,7 +1365,7 @@ class TestIncidentReferenceResolutionAcrossTools:
         def _route(method, path, params=None):
             if path.startswith("/v1/incidents/"):
                 return target_response
-            if params and "filter[services]" in params:
+            if params and "filter[service_ids]" in params:
                 return service_response
             return empty
 
@@ -1378,7 +1378,7 @@ class TestIncidentReferenceResolutionAcrossTools:
         returned_ids = [inc["incident_id"] for inc in result["related_incidents"]]
         assert "same-service-old" in returned_ids
         assert any(
-            (c.kwargs.get("params") or {}).get("filter[services]") == "svc-1"
+            (c.kwargs.get("params") or {}).get("filter[service_ids]") == "svc-1"
             for c in request.await_args_list
         )
 

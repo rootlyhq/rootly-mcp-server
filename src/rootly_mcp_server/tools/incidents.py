@@ -264,25 +264,30 @@ async def _fetch_similarity_candidates(
             page = strip_heavy_nested_data(response.json()).get("data", [])
             if not page:
                 return
-            oldest: str | None = None
+            # The page is sorted -created_at, so the last row's created_at is the
+            # oldest — use it verbatim as the next cursor (robust to mixed tz
+            # offsets, unlike a string min()).
+            next_cursor: str | None = None
             for incident in page:
                 incident_id = str(incident.get("id") or "")
                 if incident_id:
                     candidates.setdefault(incident_id, incident)
                 created_at = (incident.get("attributes") or {}).get("created_at")
-                if created_at and (oldest is None or created_at < oldest):
-                    oldest = created_at
+                if created_at:
+                    next_cursor = created_at
             # Stop once the match set is exhausted or the cursor can't advance.
-            if len(page) < 100 or not oldest or oldest == cursor:
+            if len(page) < 100 or not next_cursor or next_cursor == cursor:
                 return
-            cursor = oldest
+            cursor = next_cursor
 
     # 1. Precise targeting: incidents sharing the target's service / functionality.
+    #    Use the *_ids filters (they take UUIDs, matching what list_incidents uses);
+    #    filter[services]/filter[functionalities] expect names/slugs.
     if service_ids:
-        await _sweep({"filter[services]": ",".join(service_ids)}, max_pages=max_pages_per_query)
+        await _sweep({"filter[service_ids]": ",".join(service_ids)}, max_pages=max_pages_per_query)
     if functionality_ids:
         await _sweep(
-            {"filter[functionalities]": ",".join(functionality_ids)},
+            {"filter[functionality_ids]": ",".join(functionality_ids)},
             max_pages=max_pages_per_query,
         )
 
