@@ -11,8 +11,10 @@ Code Mode:
 import pytest
 from starlette.testclient import TestClient
 
-from rootly_mcp_server.code_mode import build_code_mode_transform
+from rootly_mcp_server.code_mode import build_code_mode_transform, create_rootly_codemode_server
 from rootly_mcp_server.server import create_rootly_mcp_server
+
+_DISCOVERY_TOOL_NAMES = ("list_tools", "tool_search", "get_schema", "tags")
 
 SWAGGER_PATH = "src/rootly_mcp_server/data/swagger.json"
 CHALLENGE_PATH = "/.well-known/openai-apps-challenge"
@@ -57,6 +59,46 @@ class TestCodeModeAnnotations:
             "required": ["result"],
             "x-fastmcp-wrap-result": True,
         }
+
+
+@pytest.mark.unit
+class TestCodeModeServerExposedAnnotations:
+    """End-to-end: assert on the tools the Code Mode server actually exposes.
+
+    This guards the whole chain the OpenAI scanner sees (transform -> registration
+    -> the served tool list), not just the internal builder methods, so a future
+    FastMCP change that drops the annotations is caught here.
+    """
+
+    async def test_exposed_code_mode_tools_carry_annotations(self):
+        server = create_rootly_codemode_server(swagger_path=SWAGGER_PATH, hosted=True)
+        tools = {t.name: t for t in await server.list_tools()}
+
+        # The Code Mode discovery + execute tools are exposed...
+        for name in (*_DISCOVERY_TOOL_NAMES, "execute"):
+            assert name in tools, f"{name} not exposed by the Code Mode server"
+
+        # ...every exposed tool is annotated (catches any raw-tool leak too)...
+        for name, tool in tools.items():
+            assert tool.annotations is not None, f"{name} exposed without annotations"
+
+        # ...and the hints match the submission requirements.
+        for name in _DISCOVERY_TOOL_NAMES:
+            ann = tools[name].annotations
+            assert (
+                ann.readOnlyHint,
+                ann.destructiveHint,
+                ann.idempotentHint,
+                ann.openWorldHint,
+            ) == (True, False, True, False)
+
+        execute = tools["execute"].annotations
+        assert (
+            execute.readOnlyHint,
+            execute.destructiveHint,
+            execute.idempotentHint,
+            execute.openWorldHint,
+        ) == (False, True, False, True)
 
 
 @pytest.mark.unit
