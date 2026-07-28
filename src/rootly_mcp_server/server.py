@@ -721,7 +721,20 @@ def create_rootly_mcp_server(
     # OAuth 2.0 Protected Resource Metadata (RFC 9728)
     # MCP clients fetch this to discover which authorization server to use.
     if hosted:
-        from starlette.responses import JSONResponse
+        from starlette.responses import JSONResponse, PlainTextResponse, Response
+
+        # OpenAI Apps domain-verification endpoint (unauthenticated).
+        # The portal-generated token is supplied at deploy time via
+        # ROOTLY_OPENAI_APPS_CHALLENGE_TOKEN and must never be hardcoded/committed.
+        # Returns the exact token as text/plain, or 404 when unset/empty. This
+        # path is not an MCP transport path, so the hosted auth middleware lets it
+        # through without a Bearer token.
+        @mcp.custom_route("/.well-known/openai-apps-challenge", methods=["GET"])
+        async def openai_apps_challenge(request):
+            token = os.getenv("ROOTLY_OPENAI_APPS_CHALLENGE_TOKEN", "").strip()
+            if not token:
+                return Response(status_code=404)
+            return PlainTextResponse(token, headers={"Cache-Control": "no-store"})
 
         async def _oauth_protected_resource_handler(request):
             mcp_server_url = resolve_mcp_server_url(request)
