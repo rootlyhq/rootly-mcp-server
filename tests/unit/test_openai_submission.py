@@ -74,17 +74,17 @@ class TestCodeModeServerExposedAnnotations:
         server = create_rootly_codemode_server(swagger_path=SWAGGER_PATH, hosted=True)
         tools = {t.name: t for t in await server.list_tools()}
 
-        # The Code Mode discovery + execute tools are exposed...
-        for name in (*_DISCOVERY_TOOL_NAMES, "execute"):
-            assert name in tools, f"{name} not exposed by the Code Mode server"
+        # Only the Code Mode discovery + execute tools are exposed.
+        assert set(tools) == {*_DISCOVERY_TOOL_NAMES, "execute"}
 
-        # ...every exposed tool is annotated (catches any raw-tool leak too)...
+        # Every exposed tool is annotated.
         for name, tool in tools.items():
             assert tool.annotations is not None, f"{name} exposed without annotations"
 
-        # ...and the hints match the submission requirements.
+        # The hints match the submission requirements.
         for name in _DISCOVERY_TOOL_NAMES:
             ann = tools[name].annotations
+            assert ann is not None
             assert (
                 ann.readOnlyHint,
                 ann.destructiveHint,
@@ -93,6 +93,7 @@ class TestCodeModeServerExposedAnnotations:
             ) == (True, False, True, False)
 
         execute = tools["execute"].annotations
+        assert execute is not None
         assert (
             execute.readOnlyHint,
             execute.destructiveHint,
