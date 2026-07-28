@@ -20,6 +20,7 @@ from fastmcp.experimental.transforms.code_mode import (
 )
 from fastmcp.server.context import Context
 from fastmcp.tools import Tool
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from .server import create_rootly_mcp_server
@@ -27,6 +28,29 @@ from .server import create_rootly_mcp_server
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
+
+# Discovery tools (list_tools, tool_search, get_schema, tags) only read the tool
+# catalog — safe, idempotent, no external side effects.
+_DISCOVERY_TOOL_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+# execute is a gateway that can invoke ANY Rootly tool, including writes and
+# destructive actions, so it gets the most conservative annotations.
+_EXECUTE_TOOL_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=True,
+)
+_EXECUTE_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"result": {}},
+    "required": ["result"],
+    "x-fastmcp-wrap-result": True,
+}
 
 DEFAULT_CODE_MODE_PATH = "/mcp-codemode"
 _TOOL_NAME_PREFIXES = (
@@ -192,6 +216,15 @@ class CompatibleMontySandboxProvider(MontySandboxProvider):
 class RootlyCodeMode(CodeMode):
     """Rootly-specific Code Mode transform with friendlier execute ergonomics."""
 
+    def _build_discovery_tools(self) -> list[Tool]:
+        # Attach read-only annotations to the actual Tool objects FastMCP exposes
+        # (list_tools, tool_search, get_schema, tags). The base result is cached,
+        # so we annotate the concrete objects the runtime returns.
+        tools = super()._build_discovery_tools()
+        for tool in tools:
+            tool.annotations = _DISCOVERY_TOOL_ANNOTATIONS
+        return tools
+
     def _make_execute_tool(self) -> Tool:
         transform = self
 
@@ -242,6 +275,8 @@ class RootlyCodeMode(CodeMode):
             fn=execute,
             name=self.execute_tool_name,
             description=self._build_execute_description(),
+            annotations=_EXECUTE_TOOL_ANNOTATIONS,
+            output_schema=_EXECUTE_OUTPUT_SCHEMA,
         )
 
 

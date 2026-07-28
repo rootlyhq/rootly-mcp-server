@@ -375,6 +375,15 @@ To override the hosted or self-hosted default profile entirely, set `ROOTLY_MCP_
 
 To expose only a specific subset of MCP tools on a self-hosted deployment, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names, for example `list_incidents,get_incident,get_server_version`.
 
+### OpenAI Apps domain verification
+
+Hosted deployments expose an unauthenticated domain-verification endpoint used by the OpenAI plugin directory:
+
+- **Endpoint:** `GET /.well-known/openai-apps-challenge`
+- **Environment variable:** `ROOTLY_OPENAI_APPS_CHALLENGE_TOKEN`
+
+Set `ROOTLY_OPENAI_APPS_CHALLENGE_TOKEN` to the token generated in the OpenAI submission portal. The endpoint returns that exact token as `text/plain` (with `Cache-Control: no-store`), and returns `404` when the variable is unset or empty. The token is read from the environment at request time — never hardcode or commit it. The route is served on both the dual-transport (`--transport both`) and profiled streamable-HTTP hosted deployments and is not subject to Bearer authentication.
+
 To discover the exact tool names available under your current self-hosted configuration, run:
 
 ```bash
