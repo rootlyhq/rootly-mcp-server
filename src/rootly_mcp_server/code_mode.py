@@ -45,6 +45,12 @@ _EXECUTE_TOOL_ANNOTATIONS = ToolAnnotations(
     idempotentHint=False,
     openWorldHint=True,
 )
+_EXECUTE_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"result": {}},
+    "required": ["result"],
+    "x-fastmcp-wrap-result": True,
+}
 
 DEFAULT_CODE_MODE_PATH = "/mcp-codemode"
 _TOOL_NAME_PREFIXES = (
@@ -270,6 +276,7 @@ class RootlyCodeMode(CodeMode):
             name=self.execute_tool_name,
             description=self._build_execute_description(),
             annotations=_EXECUTE_TOOL_ANNOTATIONS,
+            output_schema=_EXECUTE_OUTPUT_SCHEMA,
         )
 
 

@@ -49,6 +49,15 @@ class TestCodeModeAnnotations:
         assert ann.idempotentHint is False
         assert ann.openWorldHint is True
 
+    def test_execute_declares_generic_wrapped_output_schema(self):
+        schema = self._tools_by_name()["execute"].output_schema
+        assert schema == {
+            "type": "object",
+            "properties": {"result": {}},
+            "required": ["result"],
+            "x-fastmcp-wrap-result": True,
+        }
+
 
 @pytest.mark.unit
 class TestOpenAIAppsChallenge:
