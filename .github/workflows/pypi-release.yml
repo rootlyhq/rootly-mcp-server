@@ -18,6 +18,10 @@ on:
       - '*'
   workflow_dispatch:
 
+concurrency:
+  group: pypi-release
+  cancel-in-progress: false
+
 permissions:
   contents: write # needed to create and push the release tag
 
@@ -26,12 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
 
@@ -43,16 +47,43 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "Project version: $VERSION"
 
+      - name: Validate manually pushed release tag
+        if: github.ref_type == 'tag'
+        env:
+          EXPECTED_TAG: ${{ steps.version.outputs.tag }}
+          PUSHED_TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$PUSHED_TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::Pushed tag $PUSHED_TAG does not match pyproject.toml version tag $EXPECTED_TAG."
+            exit 1
+          fi
+
       - name: Check whether this version is already on PyPI
         id: pypi
         run: |
-          if curl -fsSL "https://pypi.org/pypi/rootly-mcp-server/${{ steps.version.outputs.version }}/json" >/dev/null 2>&1; then
-            echo "published=true" >> "$GITHUB_OUTPUT"
-            echo "Version ${{ steps.version.outputs.version }} is already on PyPI — nothing to do."
-          else
-            echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "Version ${{ steps.version.outputs.version }} is not on PyPI — releasing."
+          URL="https://pypi.org/pypi/rootly-mcp-server/${{ steps.version.outputs.version }}/json"
+          if ! HTTP_STATUS="$(curl --silent --show-error --location \
+            --output /dev/null --write-out '%{http_code}' \
+            --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
+            "$URL")"; then
+            echo "::error::Could not query PyPI for version availability."
+            exit 1
           fi
+
+          case "$HTTP_STATUS" in
+            200)
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "Version ${{ steps.version.outputs.version }} is already on PyPI — nothing to do."
+              ;;
+            404)
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              echo "Version ${{ steps.version.outputs.version }} is not on PyPI — releasing."
+              ;;
+            *)
+              echo "::error::PyPI returned unexpected HTTP status $HTTP_STATUS."
+              exit 1
+              ;;
+          esac
 
       - name: Install build tools
         if: steps.pypi.outputs.published == 'false'
