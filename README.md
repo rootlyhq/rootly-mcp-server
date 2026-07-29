@@ -371,6 +371,15 @@ To restrict either deployment to read-only tools, start the server with `--no-en
 
 For hosted clients that want the smaller remote profile, append `?tool_profile=slim` to the MCP URL or send `X-Rootly-Tool-Profile: slim`.
 
+### AgentCat and Sentry telemetry
+
+Hosted deployments can send MCP telemetry to AgentCat by setting
+`ROOTLY_MCPCAT_PROJECT_ID`. To also export AgentCat events to Sentry, provide
+`SENTRY_DSN` through the deployment's secret store. The optional
+`SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` variables default to `production` and
+the installed Rootly MCP Server version, respectively. Sentry performance
+tracing is enabled when the exporter is configured.
+
 To override the hosted or self-hosted default profile entirely, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names. When that variable is set, it fully replaces the default selection.
 
 To expose only a specific subset of MCP tools on a self-hosted deployment, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names, for example `list_incidents,get_incident,get_server_version`.

@@ -200,6 +200,86 @@ def test_maybe_enable_mcpcat_tracking_tracks_when_available():
     assert callable(call.args[2].identify)
 
 
+def test_maybe_enable_mcpcat_tracking_configures_sentry_exporter():
+    server = object()
+    logger = Mock()
+    agentcat_module = SimpleNamespace(track=Mock())
+    agentcat_types_module = SimpleNamespace(
+        AgentCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+    )
+
+    def import_side_effect(module_name: str):
+        if module_name == "agentcat":
+            return agentcat_module
+        if module_name == "agentcat.types":
+            return agentcat_types_module
+        raise ImportError(module_name)
+
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "SENTRY_DSN": "https://public@example.ingest.sentry.io/123",
+                "SENTRY_ENVIRONMENT": "staging",
+                "SENTRY_RELEASE": "rootly-mcp-server@test",
+            },
+            clear=True,
+        ),
+        patch(
+            "rootly_mcp_server.__main__.importlib.import_module",
+            side_effect=import_side_effect,
+        ),
+    ):
+        maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
+
+    options = agentcat_module.track.call_args.args[2]
+    assert options.exporters == {
+        "sentry": {
+            "type": "sentry",
+            "dsn": "https://public@example.ingest.sentry.io/123",
+            "environment": "staging",
+            "release": "rootly-mcp-server@test",
+            "enable_tracing": True,
+        }
+    }
+
+
+def test_maybe_enable_mcpcat_tracking_supports_sentry_without_agentcat_project():
+    server = object()
+    logger = Mock()
+    agentcat_module = SimpleNamespace(track=Mock())
+    agentcat_types_module = SimpleNamespace(
+        AgentCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+    )
+
+    def import_side_effect(module_name: str):
+        if module_name == "agentcat":
+            return agentcat_module
+        if module_name == "agentcat.types":
+            return agentcat_types_module
+        raise ImportError(module_name)
+
+    with (
+        patch.dict(
+            "os.environ",
+            {"SENTRY_DSN": "https://public@example.ingest.sentry.io/123"},
+            clear=True,
+        ),
+        patch(
+            "rootly_mcp_server.__main__.importlib.import_module",
+            side_effect=import_side_effect,
+        ),
+    ):
+        maybe_enable_mcpcat_tracking(server, None, logger)
+
+    assert agentcat_module.track.call_args.args[:2] == (server, None)
+    options = agentcat_module.track.call_args.args[2]
+    assert options.exporters["sentry"]["environment"] == "production"
+    assert options.exporters["sentry"]["release"].startswith("rootly-mcp-server@")
+
+
 def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
     server = object()
     logger = Mock()

@@ -16,7 +16,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from . import server_defaults
+from . import __version__, server_defaults
 from .code_mode import (
     code_mode_enabled_from_env,
     code_mode_path_from_env,
@@ -107,7 +107,8 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
     unchanged for self-hosted users and local development environments that do
     not install AgentCat.
     """
-    if not project_id:
+    sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not project_id and not sentry_dsn:
         return
 
     try:
@@ -120,9 +121,23 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
         return
 
     try:
-        options = agentcat_types.AgentCatOptions(
-            identify=build_mcpcat_identify_callback(agentcat_types.UserIdentity),
-        )
+        options_kwargs: dict[str, Any] = {
+            "identify": build_mcpcat_identify_callback(agentcat_types.UserIdentity),
+        }
+        if sentry_dsn:
+            options_kwargs["exporters"] = {
+                "sentry": {
+                    "type": "sentry",
+                    "dsn": sentry_dsn,
+                    "environment": os.getenv("SENTRY_ENVIRONMENT", "production"),
+                    "release": os.getenv(
+                        "SENTRY_RELEASE",
+                        f"rootly-mcp-server@{__version__}",
+                    ),
+                    "enable_tracing": True,
+                }
+            }
+        options = agentcat_types.AgentCatOptions(**options_kwargs)
         agentcat.track(server, project_id, options)
     except Exception:
         logger.warning("AgentCat tracking could not be enabled; skipping", exc_info=True)
