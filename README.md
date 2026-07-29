@@ -379,6 +379,8 @@ Hosted deployments can send MCP telemetry to AgentCat by setting
 `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` variables default to `production` and
 the installed Rootly MCP Server version, respectively. Sentry performance
 tracing is enabled when the exporter is configured.
+Free-form event text is redacted and actor names are omitted from Sentry-bound
+telemetry; stable internal actor IDs remain available for correlation.
 
 To override the hosted or self-hosted default profile entirely, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names. When that variable is set, it fully replaces the default selection.
 

@@ -223,7 +223,7 @@ def test_maybe_enable_mcpcat_tracking_configures_sentry_exporter():
         patch.dict(
             "os.environ",
             {
-                "SENTRY_DSN": "https://public@example.ingest.sentry.io/123",
+                "SENTRY_DSN": "https://abcdef@example.ingest.sentry.io/123",
                 "SENTRY_ENVIRONMENT": "staging",
                 "SENTRY_RELEASE": "rootly-mcp-server@test",
             },
@@ -237,10 +237,13 @@ def test_maybe_enable_mcpcat_tracking_configures_sentry_exporter():
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
     options = agentcat_module.track.call_args.args[2]
+    assert options.redact_sensitive_information("Bearer production-secret") == "[REDACTED]"
+    identity = options.identify({}, SimpleNamespace())
+    assert identity is None
     assert options.exporters == {
         "sentry": {
             "type": "sentry",
-            "dsn": "https://public@example.ingest.sentry.io/123",
+            "dsn": "https://abcdef@example.ingest.sentry.io/123",
             "environment": "staging",
             "release": "rootly-mcp-server@test",
             "enable_tracing": True,
@@ -267,7 +270,7 @@ def test_maybe_enable_mcpcat_tracking_supports_sentry_without_agentcat_project()
     with (
         patch.dict(
             "os.environ",
-            {"SENTRY_DSN": "https://public@example.ingest.sentry.io/123"},
+            {"SENTRY_DSN": "https://abcdef@example.ingest.sentry.io/123"},
             clear=True,
         ),
         patch(
@@ -281,6 +284,24 @@ def test_maybe_enable_mcpcat_tracking_supports_sentry_without_agentcat_project()
     options = agentcat_module.track.call_args.args[2]
     assert options.exporters["sentry"]["environment"] == "production"
     assert options.exporters["sentry"]["release"].startswith("rootly-mcp-server@")
+
+
+def test_maybe_enable_mcpcat_tracking_rejects_invalid_sentry_dsn_without_logging_it():
+    server = object()
+    logger = Mock()
+    invalid_dsn = "not-a-valid-dsn-containing-a-secret"
+
+    with (
+        patch.dict("os.environ", {"SENTRY_DSN": invalid_dsn}, clear=True),
+        patch("rootly_mcp_server.__main__.importlib.import_module") as mock_import,
+    ):
+        maybe_enable_mcpcat_tracking(server, None, logger)
+
+    mock_import.assert_not_called()
+    logger.warning.assert_called_once_with(
+        "Sentry telemetry is disabled because SENTRY_DSN is invalid"
+    )
+    assert invalid_dsn not in repr(logger.mock_calls)
 
 
 def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
@@ -306,8 +327,8 @@ def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
 
     assert agentcat_module.track.call_args.args[:2] == (server, "proj_test_123")
     logger.warning.assert_called_once_with(
-        "AgentCat tracking could not be enabled; skipping",
-        exc_info=True,
+        "AgentCat tracking could not be enabled; skipping (%s)",
+        "RuntimeError",
     )
 
 
@@ -328,6 +349,25 @@ def test_build_mcpcat_identify_callback_returns_authenticated_user_identity():
 
     assert identity.user_id == "user_123"
     assert identity.user_name == "[Acme Reliability] Example User"
+
+
+def test_build_mcpcat_identify_callback_omits_user_name_for_sentry():
+    user_identity_cls = Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs))
+    callback = build_mcpcat_identify_callback(user_identity_cls, include_user_name=False)
+
+    with patch(
+        "rootly_mcp_server.__main__.get_hosted_authenticated_user",
+        return_value={
+            "id": "user_123",
+            "email": "example.user@example.test",
+            "name": "Example User",
+            "full_name_with_team": "[Acme Reliability] Example User",
+        },
+    ):
+        identity = callback({}, SimpleNamespace())
+
+    assert identity.user_id == "user_123"
+    assert identity.user_name is None
     assert identity.user_data is None
 
 

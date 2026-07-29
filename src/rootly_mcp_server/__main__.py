@@ -10,6 +10,7 @@ import asyncio
 import importlib
 import logging
 import os
+import re
 import sys
 from collections.abc import Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -44,6 +45,8 @@ TRANSPORT_ALIASES: dict[str, TransportName] = {
 }
 HOSTED_TOOL_PROFILE_QUERY_PARAM = "tool_profile"
 HOSTED_TOOL_PROFILE_HEADER = "x-rootly-tool-profile"
+SENTRY_DSN_PATTERN = re.compile(r"^https://[a-f0-9]+@[\w.-]+(?::\d+)?(?:/.*)?/\d+$")
+REDACTED_TELEMETRY_TEXT = "[REDACTED]"
 
 
 def normalize_transport(value: str) -> TransportName:
@@ -110,6 +113,11 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
     sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
     if not project_id and not sentry_dsn:
         return
+    if sentry_dsn and not SENTRY_DSN_PATTERN.fullmatch(sentry_dsn):
+        logger.warning("Sentry telemetry is disabled because SENTRY_DSN is invalid")
+        sentry_dsn = ""
+        if not project_id:
+            return
 
     try:
         agentcat = importlib.import_module("agentcat")
@@ -123,9 +131,13 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
 
     try:
         options_kwargs: dict[str, Any] = {
-            "identify": build_mcpcat_identify_callback(agentcat_types.UserIdentity),
+            "identify": build_mcpcat_identify_callback(
+                agentcat_types.UserIdentity,
+                include_user_name=not bool(sentry_dsn),
+            ),
         }
         if sentry_dsn:
+            options_kwargs["redact_sensitive_information"] = redact_agentcat_telemetry_text
             options_kwargs["exporters"] = {
                 "sentry": {
                     "type": "sentry",
@@ -140,11 +152,23 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
             }
         options = agentcat_types.AgentCatOptions(**options_kwargs)
         agentcat.track(server, project_id, options)
-    except Exception:
-        logger.warning("AgentCat tracking could not be enabled; skipping", exc_info=True)
+    except Exception as error:
+        logger.warning(
+            "AgentCat tracking could not be enabled; skipping (%s)",
+            type(error).__name__,
+        )
 
 
-def build_mcpcat_identify_callback(user_identity_cls: type[Any]):
+def redact_agentcat_telemetry_text(_value: str) -> str:
+    """Remove free-form text before AgentCat sends events to telemetry backends."""
+    return REDACTED_TELEMETRY_TEXT
+
+
+def build_mcpcat_identify_callback(
+    user_identity_cls: type[Any],
+    *,
+    include_user_name: bool = True,
+):
     """Build a lightweight AgentCat identify callback from hosted auth context."""
 
     def identify(_request: dict[str, Any], _context: Any) -> Any:
@@ -154,7 +178,11 @@ def build_mcpcat_identify_callback(user_identity_cls: type[Any]):
 
         return user_identity_cls(
             user_id=user["id"],
-            user_name=(user.get("full_name_with_team") or user.get("name") or user.get("email")),
+            user_name=(
+                user.get("full_name_with_team") or user.get("name") or user.get("email")
+                if include_user_name
+                else None
+            ),
             user_data=None,
         )
 
