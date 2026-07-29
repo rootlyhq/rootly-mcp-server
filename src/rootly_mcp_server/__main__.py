@@ -116,7 +116,8 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
         agentcat_types = importlib.import_module("agentcat.types")
     except ImportError:
         logger.warning(
-            "ROOTLY_MCPCAT_PROJECT_ID is set but agentcat is not installed; skipping AgentCat tracking"
+            "AgentCat or Sentry telemetry is configured but agentcat is not installed; "
+            "skipping telemetry"
         )
         return
 

@@ -170,7 +170,10 @@ def test_maybe_enable_mcpcat_tracking_logs_when_package_missing():
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
     mock_import.assert_called_once_with("agentcat")
-    logger.warning.assert_called_once()
+    logger.warning.assert_called_once_with(
+        "AgentCat or Sentry telemetry is configured but agentcat is not installed; "
+        "skipping telemetry"
+    )
 
 
 def test_maybe_enable_mcpcat_tracking_tracks_when_available():
