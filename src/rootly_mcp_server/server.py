@@ -456,11 +456,52 @@ class CamelCaseAliasMiddleware(fastmcp_middleware.Middleware):
 
 
 _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
+    "collect_incidents": {
+        "end": "started_before",
+        "limit": "max_results",
+        "max_incidents": "max_results",
+        "start": "started_after",
+        "start_time": "started_after",
+    },
+    "find_related_incidents": {
+        "alert_description": "incident_description",
+        "alert_name": "incident_description",
+        "alert_summary": "incident_description",
+        "description": "incident_description",
+        "incident_title": "incident_description",
+        "limit": "max_results",
+        "max_solutions": "max_results",
+        "query": "incident_description",
+    },
+    "get_incident": {"id": "incident_id"},
+    "list_incidents": {
+        "created_after": "started_after",
+        "created_at_gt": "started_after",
+        "created_at_gte": "started_after",
+        "declared_after": "started_after",
+        "description": "query",
+        "incident_states": "status",
+        "limit": "page_size",
+        "per_page": "page_size",
+        "service_name": "query",
+    },
     "list_shifts": {"from": "from_date", "to": "to_date"},
-    "search_incidents": {"max_tokens": "max_results"},
+    "search_incidents": {
+        "description": "query",
+        "limit": "max_results",
+        "max_tokens": "max_results",
+        "pattern": "query",
+        "search": "query",
+        "search_term": "query",
+    },
+    "suggest_solutions": {
+        "description": "incident_description",
+        "query": "incident_description",
+    },
 }
 
 _LIST_TO_CSV_ARGS: dict[str, set[str]] = {
+    "list_incidents": {"status"},
     "list_shifts": {"schedule_ids", "user_ids"},
     "get_oncall_shift_metrics": {"schedule_ids", "user_ids", "team_ids"},
     "get_oncall_schedule_summary": {"schedule_ids", "team_ids"},
