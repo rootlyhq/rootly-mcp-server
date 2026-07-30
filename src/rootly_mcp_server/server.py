@@ -475,15 +475,19 @@ _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
     },
     "get_incident": {"id": "incident_id"},
     "list_incidents": {
-        "created_after": "started_after",
-        "created_at_gt": "started_after",
-        "created_at_gte": "started_after",
+        # "declared_after" has no distinct upstream filter; "declared" is a
+        # reasonable synonym for when the incident started. We deliberately do
+        # NOT alias created_at* here: /v1/incidents exposes filter[created_at]
+        # and filter[started_at] as separate filters, so redirecting a
+        # created_at request onto started_at would silently return wrong rows.
+        # We also do NOT alias service_name -> query: that turns a service
+        # filter into a free-text title/summary search, which is lossy and
+        # reinterprets a resource identifier the tool cannot resolve.
         "declared_after": "started_after",
         "description": "query",
         "incident_states": "status",
         "limit": "page_size",
         "per_page": "page_size",
-        "service_name": "query",
     },
     "list_shifts": {"from": "from_date", "to": "to_date"},
     "search_incidents": {

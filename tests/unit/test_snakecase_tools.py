@@ -152,7 +152,7 @@ class TestArgumentNormalizationMiddleware:
             ("search_incidents", "search_term", "query"),
             ("search_incidents", "pattern", "query"),
             ("list_incidents", "declared_after", "started_after"),
-            ("list_incidents", "created_at_gte", "started_after"),
+            ("list_incidents", "limit", "page_size"),
             ("list_incidents", "per_page", "page_size"),
             ("list_incidents", "description", "query"),
             ("collect_incidents", "max_incidents", "max_results"),
@@ -173,10 +173,33 @@ class TestArgumentNormalizationMiddleware:
     async def test_converts_incident_states_list_to_status_csv(self):
         _, args = await self._run(
             "list_incidents",
-            {"incident_states": ["ACTIVE", "MITIGATED", "RESOLVED"]},
+            {"incident_states": ["started", "mitigated", "resolved"]},
         )
-        assert args["status"] == "ACTIVE,MITIGATED,RESOLVED"
+        assert args["status"] == "started,mitigated,resolved"
         assert "incident_states" not in args
+
+    async def test_canonical_argument_wins_over_alias(self):
+        # When both the alias and its canonical target are supplied, the
+        # canonical value is preserved and the alias is left untouched.
+        _, args = await self._run(
+            "list_incidents",
+            {"limit": "50", "page_size": "10"},
+        )
+        assert args["page_size"] == "10"
+        assert args["limit"] == "50"
+
+    async def test_service_name_is_not_aliased_to_query(self):
+        # service_name must not be reinterpreted as a free-text search.
+        _, args = await self._run("list_incidents", {"service_name": "search-svc"})
+        assert "query" not in args
+        assert args["service_name"] == "search-svc"
+
+    async def test_created_at_is_not_aliased_to_started_after(self):
+        # created_at and started_at are distinct upstream filters; a created_at
+        # request must not be silently redirected onto started_at.
+        _, args = await self._run("list_incidents", {"created_at_gte": "2026-01-01"})
+        assert "started_after" not in args
+        assert args["created_at_gte"] == "2026-01-01"
 
     async def test_converts_list_schedule_ids_to_csv(self):
         _, args = await self._run(
