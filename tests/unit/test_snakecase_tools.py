@@ -145,6 +145,39 @@ class TestArgumentNormalizationMiddleware:
         assert args["max_results"] == "3000"
         assert "max_tokens" not in args
 
+    @pytest.mark.parametrize(
+        ("tool", "old_key", "new_key"),
+        [
+            ("search_incidents", "limit", "max_results"),
+            ("search_incidents", "search_term", "query"),
+            ("search_incidents", "pattern", "query"),
+            ("list_incidents", "declared_after", "started_after"),
+            ("list_incidents", "created_at_gte", "started_after"),
+            ("list_incidents", "per_page", "page_size"),
+            ("list_incidents", "description", "query"),
+            ("collect_incidents", "max_incidents", "max_results"),
+            ("collect_incidents", "start_time", "started_after"),
+            ("collect_incidents", "end", "started_before"),
+            ("find_related_incidents", "query", "incident_description"),
+            ("find_related_incidents", "alert_summary", "incident_description"),
+            ("find_related_incidents", "limit", "max_results"),
+            ("suggest_solutions", "description", "incident_description"),
+            ("get_incident", "id", "incident_id"),
+        ],
+    )
+    async def test_renames_common_llm_argument_variants(self, tool, old_key, new_key):
+        _, args = await self._run(tool, {old_key: "value"})
+        assert args[new_key] == "value"
+        assert old_key not in args
+
+    async def test_converts_incident_states_list_to_status_csv(self):
+        _, args = await self._run(
+            "list_incidents",
+            {"incident_states": ["ACTIVE", "MITIGATED", "RESOLVED"]},
+        )
+        assert args["status"] == "ACTIVE,MITIGATED,RESOLVED"
+        assert "incident_states" not in args
+
     async def test_converts_list_schedule_ids_to_csv(self):
         _, args = await self._run(
             "list_shifts",
