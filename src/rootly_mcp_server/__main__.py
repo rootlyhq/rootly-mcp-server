@@ -10,13 +10,14 @@ import asyncio
 import importlib
 import logging
 import os
+import re
 import sys
 from collections.abc import Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from . import server_defaults
+from . import __version__, server_defaults
 from .code_mode import (
     code_mode_enabled_from_env,
     code_mode_path_from_env,
@@ -44,6 +45,8 @@ TRANSPORT_ALIASES: dict[str, TransportName] = {
 }
 HOSTED_TOOL_PROFILE_QUERY_PARAM = "tool_profile"
 HOSTED_TOOL_PROFILE_HEADER = "x-rootly-tool-profile"
+SENTRY_DSN_PATTERN = re.compile(r"^https://[a-f0-9]+@[\w.-]+(?::\d+)?(?:/.*)?/\d+$")
+REDACTED_TELEMETRY_TEXT = "[REDACTED]"
 
 
 def normalize_transport(value: str) -> TransportName:
@@ -107,28 +110,65 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
     unchanged for self-hosted users and local development environments that do
     not install AgentCat.
     """
-    if not project_id:
+    sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not project_id and not sentry_dsn:
         return
+    if sentry_dsn and not SENTRY_DSN_PATTERN.fullmatch(sentry_dsn):
+        logger.warning("Sentry telemetry is disabled because SENTRY_DSN is invalid")
+        sentry_dsn = ""
+        if not project_id:
+            return
 
     try:
         agentcat = importlib.import_module("agentcat")
         agentcat_types = importlib.import_module("agentcat.types")
     except ImportError:
         logger.warning(
-            "ROOTLY_MCPCAT_PROJECT_ID is set but agentcat is not installed; skipping AgentCat tracking"
+            "AgentCat or Sentry telemetry is configured but agentcat is not installed; "
+            "skipping telemetry"
         )
         return
 
     try:
-        options = agentcat_types.AgentCatOptions(
-            identify=build_mcpcat_identify_callback(agentcat_types.UserIdentity),
-        )
+        options_kwargs: dict[str, Any] = {
+            "identify": build_mcpcat_identify_callback(
+                agentcat_types.UserIdentity,
+                include_user_name=not bool(sentry_dsn),
+            ),
+        }
+        if sentry_dsn:
+            options_kwargs["redact_sensitive_information"] = redact_agentcat_telemetry_text
+            options_kwargs["exporters"] = {
+                "sentry": {
+                    "type": "sentry",
+                    "dsn": sentry_dsn,
+                    "environment": os.getenv("ENVIRONMENT", "production"),
+                    "release": os.getenv(
+                        "SENTRY_RELEASE",
+                        f"rootly-mcp-server@{__version__}",
+                    ),
+                    "enable_tracing": True,
+                }
+            }
+        options = agentcat_types.AgentCatOptions(**options_kwargs)
         agentcat.track(server, project_id, options)
-    except Exception:
-        logger.warning("AgentCat tracking could not be enabled; skipping", exc_info=True)
+    except Exception as error:
+        logger.warning(
+            "AgentCat tracking could not be enabled; skipping (%s)",
+            type(error).__name__,
+        )
 
 
-def build_mcpcat_identify_callback(user_identity_cls: type[Any]):
+def redact_agentcat_telemetry_text(_value: str) -> str:
+    """Remove free-form text before AgentCat sends events to telemetry backends."""
+    return REDACTED_TELEMETRY_TEXT
+
+
+def build_mcpcat_identify_callback(
+    user_identity_cls: type[Any],
+    *,
+    include_user_name: bool = True,
+):
     """Build a lightweight AgentCat identify callback from hosted auth context."""
 
     def identify(_request: dict[str, Any], _context: Any) -> Any:
@@ -138,7 +178,11 @@ def build_mcpcat_identify_callback(user_identity_cls: type[Any]):
 
         return user_identity_cls(
             user_id=user["id"],
-            user_name=(user.get("full_name_with_team") or user.get("name") or user.get("email")),
+            user_name=(
+                user.get("full_name_with_team") or user.get("name") or user.get("email")
+                if include_user_name
+                else None
+            ),
             user_data=None,
         )
 
