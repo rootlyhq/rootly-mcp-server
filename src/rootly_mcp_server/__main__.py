@@ -142,7 +142,7 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
                 "sentry": {
                     "type": "sentry",
                     "dsn": sentry_dsn,
-                    "environment": os.getenv("SENTRY_ENVIRONMENT", "production"),
+                    "environment": os.getenv("ENVIRONMENT", "production"),
                     "release": os.getenv(
                         "SENTRY_RELEASE",
                         f"rootly-mcp-server@{__version__}",

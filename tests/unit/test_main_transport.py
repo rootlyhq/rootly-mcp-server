@@ -224,7 +224,7 @@ def test_maybe_enable_mcpcat_tracking_configures_sentry_exporter():
             "os.environ",
             {
                 "SENTRY_DSN": "https://abcdef@example.ingest.sentry.io/123",
-                "SENTRY_ENVIRONMENT": "staging",
+                "ENVIRONMENT": "staging",
                 "SENTRY_RELEASE": "rootly-mcp-server@test",
             },
             clear=True,
@@ -270,7 +270,10 @@ def test_maybe_enable_mcpcat_tracking_supports_sentry_without_agentcat_project()
     with (
         patch.dict(
             "os.environ",
-            {"SENTRY_DSN": "https://abcdef@example.ingest.sentry.io/123"},
+            {
+                "SENTRY_DSN": "https://abcdef@example.ingest.sentry.io/123",
+                "ENVIRONMENT": "production-us-east-1",
+            },
             clear=True,
         ),
         patch(
@@ -282,7 +285,7 @@ def test_maybe_enable_mcpcat_tracking_supports_sentry_without_agentcat_project()
 
     assert agentcat_module.track.call_args.args[:2] == (server, None)
     options = agentcat_module.track.call_args.args[2]
-    assert options.exporters["sentry"]["environment"] == "production"
+    assert options.exporters["sentry"]["environment"] == "production-us-east-1"
     assert options.exporters["sentry"]["release"].startswith("rootly-mcp-server@")
 
 
