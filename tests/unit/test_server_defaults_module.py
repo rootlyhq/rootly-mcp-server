@@ -10,6 +10,7 @@ from rootly_mcp_server.server_defaults import (
     HOSTED_TOOL_PROFILE_SLIM,
     _generate_recommendation,
     enabled_tools_from_env,
+    has_explicit_tool_allowlist,
     hosted_tool_profile_from_env,
     normalize_hosted_tool_profile,
     resolve_write_tools_enabled,
@@ -147,6 +148,17 @@ class TestServerDefaultsModule:
     def test_hosted_tool_profile_from_env_defaults_to_full(self):
         with patch.dict("os.environ", {}, clear=True):
             assert hosted_tool_profile_from_env() == HOSTED_TOOL_PROFILE_FULL
+
+    def test_has_explicit_tool_allowlist_true_only_for_non_empty(self):
+        # A real allowlist pins the surface...
+        assert has_explicit_tool_allowlist("list_incidents") is True
+        assert has_explicit_tool_allowlist(None, "get_incident,list_teams") is True
+        # ...but presence of a defined-but-empty value does not.
+        assert has_explicit_tool_allowlist(None, None) is False
+        assert has_explicit_tool_allowlist("") is False
+        assert has_explicit_tool_allowlist("   ") is False
+        assert has_explicit_tool_allowlist(" , ,") is False
+        assert has_explicit_tool_allowlist("", "") is False
 
     def test_hosted_tool_profile_from_env_coerces_reads_default_to_full(self):
         # `reads` is only meaningful as a per-connection selection; as an operator

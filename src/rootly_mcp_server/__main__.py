@@ -704,8 +704,12 @@ def main():
         allowed_paths = None
         if args.allowed_paths:
             allowed_paths = [path.strip() for path in args.allowed_paths.split(",")]
-        explicit_enabled_tools = bool(args.enabled_tools) or (
-            os.getenv(server_defaults.EnvVars.ENABLED_TOOLS) is not None
+        # Only a *non-empty* allowlist pins the surface. A defined-but-empty
+        # ROOTLY_MCP_ENABLED_TOOLS (e.g. "" rendered by a deploy template) yields
+        # no allowlist and must not suppress the slim/reads profiles — otherwise a
+        # ?tool_profile=reads request would silently fall back to write-capable.
+        explicit_enabled_tools = server_defaults.has_explicit_tool_allowlist(
+            args.enabled_tools, os.getenv(server_defaults.EnvVars.ENABLED_TOOLS)
         )
         default_hosted_tool_profile = server_defaults.hosted_tool_profile_from_env()
         enabled_tools = (

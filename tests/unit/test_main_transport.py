@@ -663,6 +663,53 @@ def test_main_hosted_streamable_http_passes_stateless_default():
     assert mock_run.call_args.kwargs["default_tool_profile"] == "full"
 
 
+def test_main_empty_enabled_tools_env_does_not_suppress_reads_profile():
+    # A defined-but-empty ROOTLY_MCP_ENABLED_TOOLS must not be treated as an
+    # explicit allowlist: the slim/reads profiles are still built, so a
+    # ?tool_profile=reads request keeps its read-only isolation.
+    args = SimpleNamespace(
+        swagger_path=None,
+        log_level="ERROR",
+        name="Rootly",
+        transport="streamable-http",
+        debug=False,
+        base_url=None,
+        allowed_paths=None,
+        hosted=True,
+        enable_code_mode=False,
+        enable_write_tools=True,
+        enabled_tools=None,
+        list_tools=False,
+        code_mode_path=None,
+        host=False,
+    )
+    main_server = SimpleNamespace()
+    slim_server = SimpleNamespace()
+    reads_server = SimpleNamespace()
+
+    with patch.dict("os.environ", {"ROOTLY_MCP_ENABLED_TOOLS": "  "}, clear=True):
+        with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
+            with patch("rootly_mcp_server.__main__.setup_logging"):
+                with patch(
+                    "rootly_mcp_server.__main__.create_rootly_mcp_server",
+                    side_effect=[main_server, slim_server, reads_server],
+                ):
+                    with patch(
+                        "rootly_mcp_server.__main__.get_hosted_auth_middleware", return_value=[]
+                    ):
+                        with patch(
+                            "rootly_mcp_server.__main__.run_profiled_streamable_http_server"
+                        ) as mock_run:
+                            main()
+
+    mock_run.assert_called_once()
+    assert mock_run.call_args.kwargs["profiled_servers"] == {
+        "full": main_server,
+        "slim": slim_server,
+        "reads": reads_server,
+    }
+
+
 def test_main_hosted_streamable_http_uses_slim_as_default_when_requested_by_env():
     args = SimpleNamespace(
         swagger_path=None,

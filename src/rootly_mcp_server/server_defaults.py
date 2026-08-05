@@ -57,6 +57,18 @@ def _parse_csv_set(raw: str | None) -> set[str] | None:
     return parsed or None
 
 
+def has_explicit_tool_allowlist(*values: str | None) -> bool:
+    """Whether any value pins a *non-empty* tool allowlist.
+
+    Presence alone is not enough: a defined-but-empty value (``""``,
+    whitespace, or ``" , ,"`` from a deploy template) parses to no allowlist
+    and must not be treated as an operator-pinned surface — otherwise it would
+    silently suppress the slim/reads profiles and let a ``?tool_profile=reads``
+    request fall back to the write-capable default.
+    """
+    return any(_parse_csv_set(value) for value in values)
+
+
 # Default hosted tool surface tuned from one month of production popularity data.
 # This keeps the slim remote/serverless profile near 70 tools while still
 # covering the overwhelming majority of observed requests. Operators can always
