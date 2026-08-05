@@ -293,6 +293,24 @@ def test_resolve_requested_hosted_tool_profile_falls_back_to_default_on_unknown_
     assert profile == "slim"
 
 
+def test_resolve_requested_hosted_tool_profile_resolves_reads_from_query_param():
+    profile = resolve_requested_hosted_tool_profile(
+        query_params={"tool_profile": "reads"},
+        headers={},
+    )
+
+    assert profile == "reads"
+
+
+def test_resolve_requested_hosted_tool_profile_resolves_reads_alias_from_header():
+    profile = resolve_requested_hosted_tool_profile(
+        query_params={},
+        headers={"x-rootly-tool-profile": "read-only"},
+    )
+
+    assert profile == "reads"
+
+
 def test_streamable_http_defaults_hosted_mode_to_stateless_when_unset():
     with patch.dict("os.environ", {}, clear=True):
         assert streamable_http_stateless_enabled(hosted=True, fastmcp_stateless_http=False) is True
@@ -618,13 +636,14 @@ def test_main_hosted_streamable_http_passes_stateless_default():
     )
     main_server = SimpleNamespace()
     slim_server = SimpleNamespace()
+    reads_server = SimpleNamespace()
 
     with patch.dict("os.environ", {}, clear=True):
         with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
             with patch("rootly_mcp_server.__main__.setup_logging"):
                 with patch(
                     "rootly_mcp_server.__main__.create_rootly_mcp_server",
-                    side_effect=[main_server, slim_server],
+                    side_effect=[main_server, slim_server, reads_server],
                 ):
                     with patch(
                         "rootly_mcp_server.__main__.get_hosted_auth_middleware", return_value=[]
@@ -639,6 +658,7 @@ def test_main_hosted_streamable_http_passes_stateless_default():
     assert mock_run.call_args.kwargs["profiled_servers"] == {
         "full": main_server,
         "slim": slim_server,
+        "reads": reads_server,
     }
     assert mock_run.call_args.kwargs["default_tool_profile"] == "full"
 
@@ -662,13 +682,14 @@ def test_main_hosted_streamable_http_uses_slim_as_default_when_requested_by_env(
     )
     slim_server = SimpleNamespace()
     full_server = SimpleNamespace()
+    reads_server = SimpleNamespace()
 
     with patch.dict("os.environ", {"ROOTLY_MCP_HOSTED_TOOL_PROFILE": "slim"}, clear=True):
         with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
             with patch("rootly_mcp_server.__main__.setup_logging"):
                 with patch(
                     "rootly_mcp_server.__main__.create_rootly_mcp_server",
-                    side_effect=[slim_server, full_server],
+                    side_effect=[slim_server, full_server, reads_server],
                 ):
                     with patch(
                         "rootly_mcp_server.__main__.get_hosted_auth_middleware", return_value=[]
@@ -683,6 +704,7 @@ def test_main_hosted_streamable_http_uses_slim_as_default_when_requested_by_env(
     assert mock_run.call_args.kwargs["profiled_servers"] == {
         "slim": slim_server,
         "full": full_server,
+        "reads": reads_server,
     }
     assert mock_run.call_args.kwargs["default_tool_profile"] == "slim"
 
@@ -748,19 +770,25 @@ def test_main_tracks_main_and_code_mode_servers_when_mcpcat_project_id_set():
     )
     main_server = SimpleNamespace()
     slim_server = SimpleNamespace()
+    reads_server = SimpleNamespace()
     code_mode_server = SimpleNamespace()
     slim_code_mode_server = SimpleNamespace()
+    reads_code_mode_server = SimpleNamespace()
 
     with patch.dict("os.environ", {"ROOTLY_MCPCAT_PROJECT_ID": "proj_test_123"}, clear=True):
         with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
             with patch("rootly_mcp_server.__main__.setup_logging"):
                 with patch(
                     "rootly_mcp_server.__main__.create_rootly_mcp_server",
-                    side_effect=[main_server, slim_server],
+                    side_effect=[main_server, slim_server, reads_server],
                 ):
                     with patch(
                         "rootly_mcp_server.__main__.create_rootly_codemode_server",
-                        side_effect=[code_mode_server, slim_code_mode_server],
+                        side_effect=[
+                            code_mode_server,
+                            slim_code_mode_server,
+                            reads_code_mode_server,
+                        ],
                     ):
                         with patch("rootly_mcp_server.__main__.run_dual_http_server"):
                             with patch(
@@ -768,11 +796,15 @@ def test_main_tracks_main_and_code_mode_servers_when_mcpcat_project_id_set():
                             ) as mock_track:
                                 main()
 
-    assert len(mock_track.call_args_list) == 4
+    # main + slim + reads server profiles, then code-mode servers for each
+    # profile (the default code-mode server plus the slim and reads variants).
+    assert len(mock_track.call_args_list) == 6
     assert mock_track.call_args_list[0].args[:2] == (main_server, "proj_test_123")
     assert mock_track.call_args_list[1].args[:2] == (slim_server, "proj_test_123")
-    assert mock_track.call_args_list[2].args[:2] == (code_mode_server, "proj_test_123")
-    assert mock_track.call_args_list[3].args[:2] == (slim_code_mode_server, "proj_test_123")
+    assert mock_track.call_args_list[2].args[:2] == (reads_server, "proj_test_123")
+    assert mock_track.call_args_list[3].args[:2] == (code_mode_server, "proj_test_123")
+    assert mock_track.call_args_list[4].args[:2] == (slim_code_mode_server, "proj_test_123")
+    assert mock_track.call_args_list[5].args[:2] == (reads_code_mode_server, "proj_test_123")
 
 
 @pytest.mark.asyncio

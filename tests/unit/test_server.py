@@ -1714,3 +1714,74 @@ class TestApplyAnnotationsToAutogenTools:
         assert tools["list_items"].annotations.readOnlyHint is True
         assert tools["create_item"].annotations.readOnlyHint is False
         assert tools["delete_item"].annotations.destructiveHint is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestReadsProfileSurface:
+    """The hosted `reads` profile == full read surface with writes hidden.
+
+    The profile is built with ``enable_write_tools=False`` and no name
+    allowlist, so it stays current automatically: any newly shipped read tool
+    is included, while every write/destructive tool is filtered out.
+    """
+
+    # Write-ish tool names that are actually read-only (annotated readOnlyHint)
+    # and therefore legitimately remain in the reads surface despite the prefix.
+    _READ_ONLY_WRITE_PREFIXED = {"create_override_recommendation"}
+    _WRITE_PREFIXES = ("create_", "update_", "delete_", "attach_", "remove_", "add_")
+
+    def _reads_server(self):
+        return create_rootly_mcp_server(hosted=True, enable_write_tools=False, enabled_tools=None)
+
+    def _full_server(self):
+        return create_rootly_mcp_server(hosted=True, enable_write_tools=True, enabled_tools=None)
+
+    async def test_reads_profile_exposes_representative_read_tools(self, mock_environment_token):
+        tools = {t.name for t in await self._reads_server().list_tools()}
+
+        for name in (
+            "list_incidents",
+            "get_incident",
+            "search_incidents",
+            "find_related_incidents",
+            "list_workflow_tasks",
+            "get_workflow_task",
+        ):
+            assert name in tools, f"expected read tool {name!r} missing from reads profile"
+
+    async def test_reads_profile_hides_write_tools(self, mock_environment_token):
+        tools = {t.name for t in await self._reads_server().list_tools()}
+
+        for name in (
+            "create_incident",
+            "update_incident",
+            "create_workflow_task",
+            "update_workflow_task",
+            "create_incident_action_item",
+            "update_incident_form_field_selection",
+        ):
+            assert name not in tools, f"write tool {name!r} leaked into reads profile"
+
+    async def test_reads_profile_has_no_mutating_tools(self, mock_environment_token):
+        """Regression guard: nothing that mutates state should survive.
+
+        Any write-prefixed tool present must be an explicitly known read-only
+        tool (e.g. ``create_override_recommendation``, which only recommends).
+        A new genuine write tool added without a write guard would trip this.
+        """
+        tools = {t.name for t in await self._reads_server().list_tools()}
+
+        leaked = {
+            name
+            for name in tools
+            if name.startswith(self._WRITE_PREFIXES) and name not in self._READ_ONLY_WRITE_PREFIXED
+        }
+        assert leaked == set(), f"mutating tools leaked into reads profile: {sorted(leaked)}"
+
+    async def test_reads_profile_is_strict_subset_of_full(self, mock_environment_token):
+        reads = {t.name for t in await self._reads_server().list_tools()}
+        full = {t.name for t in await self._full_server().list_tools()}
+
+        assert reads < full, "reads profile must be a strict subset of the full surface"
+        assert not (reads - full), f"reads exposed tools absent from full: {sorted(reads - full)}"

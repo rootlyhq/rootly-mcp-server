@@ -6,6 +6,7 @@ from rootly_mcp_server.server_defaults import (
     DEFAULT_ALLOWED_PATHS,
     DEFAULT_HOSTED_ENABLED_TOOLS,
     HOSTED_TOOL_PROFILE_FULL,
+    HOSTED_TOOL_PROFILE_READS,
     HOSTED_TOOL_PROFILE_SLIM,
     _generate_recommendation,
     enabled_tools_from_env,
@@ -125,8 +126,36 @@ class TestServerDefaultsModule:
         assert normalize_hosted_tool_profile("default") == HOSTED_TOOL_PROFILE_FULL
         assert normalize_hosted_tool_profile("all") == HOSTED_TOOL_PROFILE_FULL
 
+    def test_normalize_hosted_tool_profile_accepts_reads_aliases(self):
+        for alias in ("reads", "read", "readonly", "read-only", "reads-only", "reads_only"):
+            assert normalize_hosted_tool_profile(alias) == HOSTED_TOOL_PROFILE_READS
+        # Case-insensitive, like the other profiles.
+        assert normalize_hosted_tool_profile("READS") == HOSTED_TOOL_PROFILE_READS
+
+    def test_enabled_tools_from_env_reads_profile_keeps_full_read_surface(self):
+        # `reads` uses no name allowlist — writes are hidden via
+        # enable_write_tools=False, not by pruning the allowlist here.
+        with patch.dict("os.environ", {}, clear=True):
+            assert (
+                enabled_tools_from_env(
+                    hosted=True,
+                    hosted_tool_profile=HOSTED_TOOL_PROFILE_READS,
+                )
+                is None
+            )
+
     def test_hosted_tool_profile_from_env_defaults_to_full(self):
         with patch.dict("os.environ", {}, clear=True):
+            assert hosted_tool_profile_from_env() == HOSTED_TOOL_PROFILE_FULL
+
+    def test_hosted_tool_profile_from_env_coerces_reads_default_to_full(self):
+        # `reads` is only meaningful as a per-connection selection; as an operator
+        # default it can't express "hide writes", so it degrades to `full`.
+        with patch.dict(
+            "os.environ",
+            {"ROOTLY_MCP_HOSTED_TOOL_PROFILE": "reads"},
+            clear=True,
+        ):
             assert hosted_tool_profile_from_env() == HOSTED_TOOL_PROFILE_FULL
 
     def test_default_hosted_enabled_tools_are_all_snake_case(self):
