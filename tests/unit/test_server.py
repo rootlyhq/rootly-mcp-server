@@ -1785,3 +1785,31 @@ class TestReadsProfileSurface:
 
         assert reads < full, "reads profile must be a strict subset of the full surface"
         assert not (reads - full), f"reads exposed tools absent from full: {sorted(reads - full)}"
+
+    async def test_reads_profile_every_tool_is_annotated_read_only(self, mock_environment_token):
+        """Name-independent guard: no tool in the reads surface may be mutating.
+
+        Stronger than the write-prefix check — a future mutating tool with a
+        non-write-ish name (e.g. ``escalate_incident``) would still be caught
+        here via its ``readOnlyHint=False`` / ``destructiveHint=True`` annotation.
+        """
+        tools = await self._reads_server().list_tools()
+
+        offenders = [
+            t.name
+            for t in tools
+            if t.annotations
+            and (t.annotations.readOnlyHint is False or t.annotations.destructiveHint is True)
+        ]
+        assert offenders == [], f"non-read-only tools in reads profile: {sorted(offenders)}"
+
+    async def test_reads_server_cannot_resolve_write_tools(self, mock_environment_token):
+        """Code Mode safety: ``execute`` dispatches through this server's
+        ``call_tool``, so a write tool must be unresolvable here — otherwise
+        ``/mcp-codemode?tool_profile=reads`` could invoke writes via execute."""
+        from fastmcp.exceptions import NotFoundError
+
+        server = self._reads_server()
+        for write_tool in ("create_incident", "update_incident", "delete_incident"):
+            with pytest.raises(NotFoundError):
+                await server.call_tool(write_tool, {})
