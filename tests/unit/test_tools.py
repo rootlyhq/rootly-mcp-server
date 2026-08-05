@@ -246,6 +246,45 @@ class TestScopedIncidentUpdateTool:
         assert "Must provide at least one of title or summary" in result["message"]
 
     @pytest.mark.asyncio
+    async def test_create_incident_forwards_idempotency_key_header(self):
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": {"id": "inc-9", "type": "incidents", "attributes": {}}
+        }
+        request.return_value = response
+
+        await tools["create_incident"](title="Prod outage", idempotency_key="  intake-42  ")
+
+        # Trimmed key is forwarded as the Idempotency-Key header for replay safety.
+        request.assert_awaited_once_with(
+            "POST",
+            "/v1/incidents",
+            json={"data": {"type": "incidents", "attributes": {"title": "Prod outage"}}},
+            headers={"Idempotency-Key": "intake-42"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_incident_omits_idempotency_header_when_blank(self):
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": {"id": "inc-9", "type": "incidents", "attributes": {}}
+        }
+        request.return_value = response
+
+        await tools["create_incident"](title="Prod outage", idempotency_key="   ")
+
+        # A blank key sends no header at all (not an empty one).
+        request.assert_awaited_once_with(
+            "POST",
+            "/v1/incidents",
+            json={"data": {"type": "incidents", "attributes": {"title": "Prod outage"}}},
+        )
+
+    @pytest.mark.asyncio
     async def test_get_incident_fetches_single_incident(self):
         tools, request = self._register_tools()
         response = Mock()

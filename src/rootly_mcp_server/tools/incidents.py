@@ -943,6 +943,18 @@ def register_incident_tools(
                 str | None,
                 Field(description="Comma-separated incident type IDs to attach to the incident."),
             ] = None,
+            idempotency_key: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Optional idempotency key forwarded as the Idempotency-Key request "
+                        "header. Repeating a create with the same key returns the original "
+                        "incident instead of creating a duplicate. Use a stable, unique value "
+                        "per logical incident (e.g. the source alert or intake ID) to make "
+                        "unattended declaration safe to retry."
+                    )
+                ),
+            ] = None,
         ) -> JsonDict:
             """Create an incident with a scoped set of fields for agent-driven workflows."""
             normalized_title = _normalize_optional_text(title)
@@ -988,8 +1000,19 @@ def register_incident_tools(
                 }
             }
 
+            # Forward an optional idempotency key as the Idempotency-Key header so
+            # Rootly's replay behavior dedupes retried declarations. Only send the
+            # header when a non-blank key is provided; make_authenticated_request
+            # merges in Authorization on top of whatever headers we pass.
+            request_kwargs: dict[str, Any] = {"json": payload}
+            normalized_idempotency_key = _normalize_optional_text(idempotency_key)
+            if normalized_idempotency_key is not None:
+                request_kwargs["headers"] = {"Idempotency-Key": normalized_idempotency_key}
+
             try:
-                response = await make_authenticated_request("POST", "/v1/incidents", json=payload)
+                response = await make_authenticated_request(
+                    "POST", "/v1/incidents", **request_kwargs
+                )
                 response.raise_for_status()
 
                 response_data = response.json()
