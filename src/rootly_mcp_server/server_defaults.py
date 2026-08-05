@@ -57,6 +57,16 @@ def _parse_csv_set(raw: str | None) -> set[str] | None:
     return parsed or None
 
 
+def parse_tool_allowlist(raw: str | None) -> set[str] | None:
+    """Parse a comma-separated tool allowlist into a set (``None`` if empty).
+
+    A value that is a non-empty string but contains no real entries (``" , "``,
+    whitespace) parses to ``None`` — the same as unset — so callers can treat
+    "no effective allowlist" uniformly regardless of the raw string shape.
+    """
+    return _parse_csv_set(raw)
+
+
 def has_explicit_tool_allowlist(*values: str | None) -> bool:
     """Whether any value pins a *non-empty* tool allowlist.
 

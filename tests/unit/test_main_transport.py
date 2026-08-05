@@ -150,7 +150,11 @@ def test_main_write_tools_hosted_path_respects_flag_then_env(flag, env, expected
                             main()
 
     # every profile server is built with the resolved value
-    assert mock_create.call_args.kwargs["enable_write_tools"] is expected
+    # Assert on the FIRST create call (the operator-facing server). The hosted
+    # path also builds slim and reads profile servers afterwards, and the reads
+    # profile is intentionally constructed with enable_write_tools=False, so
+    # call_args (the last call) would report that instead.
+    assert mock_create.call_args_list[0].kwargs["enable_write_tools"] is expected
 
 
 def test_get_server_passes_enabled_tools_env_flag():
@@ -708,6 +712,50 @@ def test_main_empty_enabled_tools_env_does_not_suppress_reads_profile():
         "slim": slim_server,
         "reads": reads_server,
     }
+
+
+def test_main_empty_cli_allowlist_does_not_discard_env_allowlist():
+    # `--enabled-tools " , "` is a truthy string that parses to no entries. It
+    # must not clear a real ROOTLY_MCP_ENABLED_TOOLS allowlist (which would build
+    # the write-capable full surface) — the env allowlist wins.
+    args = SimpleNamespace(
+        swagger_path=None,
+        log_level="ERROR",
+        name="Rootly",
+        transport="streamable-http",
+        debug=False,
+        base_url=None,
+        allowed_paths=None,
+        hosted=True,
+        enable_code_mode=False,
+        enable_write_tools=True,
+        enabled_tools=" , ",
+        list_tools=False,
+        code_mode_path=None,
+        host=False,
+    )
+    main_server = SimpleNamespace(run=Mock())
+
+    with patch.dict("os.environ", {"ROOTLY_MCP_ENABLED_TOOLS": "list_incidents"}, clear=True):
+        with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
+            with patch("rootly_mcp_server.__main__.setup_logging"):
+                with patch(
+                    "rootly_mcp_server.__main__.create_rootly_mcp_server",
+                    return_value=main_server,
+                ) as mock_create:
+                    with patch(
+                        "rootly_mcp_server.__main__.get_hosted_auth_middleware", return_value=[]
+                    ):
+                        with patch(
+                            "rootly_mcp_server.__main__.run_profiled_streamable_http_server"
+                        ) as mock_profiled_run:
+                            main()
+
+    # env allowlist honored (not cleared by the empty CLI value); pinned surface
+    # means no profiled reads/slim servers are built.
+    assert mock_create.call_args.kwargs["enabled_tools"] == {"list_incidents"}
+    mock_profiled_run.assert_not_called()
+    main_server.run.assert_called_once()
 
 
 def test_main_hosted_streamable_http_uses_slim_as_default_when_requested_by_env():

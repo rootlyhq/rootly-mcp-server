@@ -712,13 +712,15 @@ def main():
             args.enabled_tools, os.getenv(server_defaults.EnvVars.ENABLED_TOOLS)
         )
         default_hosted_tool_profile = server_defaults.hosted_tool_profile_from_env()
-        enabled_tools = (
-            {tool.strip() for tool in args.enabled_tools.split(",") if tool.strip()}
-            if args.enabled_tools
-            else enabled_tools_from_env(
-                hosted=hosted_mode,
-                hosted_tool_profile=default_hosted_tool_profile,
-            )
+        # Resolve through the same parser as `explicit_enabled_tools` so the two
+        # never disagree: the CLI allowlist wins only when it parses to a
+        # non-empty set. A truthy-but-empty CLI value (e.g. `--enabled-tools " , "`)
+        # falls through to the env/profile surface instead of silently clearing it.
+        enabled_tools = server_defaults.parse_tool_allowlist(
+            args.enabled_tools
+        ) or enabled_tools_from_env(
+            hosted=hosted_mode,
+            hosted_tool_profile=default_hosted_tool_profile,
         )
 
         logger.info(f"Initializing server with name: {args.name}")
