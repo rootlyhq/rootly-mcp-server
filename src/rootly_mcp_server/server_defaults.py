@@ -12,12 +12,23 @@ logger = logging.getLogger(__name__)
 
 HOSTED_TOOL_PROFILE_SLIM = "slim"
 HOSTED_TOOL_PROFILE_FULL = "full"
+# Reads-only profile: the full read surface with every write/destructive tool
+# hidden. Unlike a name allowlist it stays current automatically — new read
+# tools are included the moment they ship, because the filter keys off the
+# read/write classification, not a hand-maintained list.
+HOSTED_TOOL_PROFILE_READS = "reads"
 _HOSTED_TOOL_PROFILE_ALIASES = {
     "core": HOSTED_TOOL_PROFILE_SLIM,
     "default": HOSTED_TOOL_PROFILE_FULL,
     "slim": HOSTED_TOOL_PROFILE_SLIM,
     "full": HOSTED_TOOL_PROFILE_FULL,
     "all": HOSTED_TOOL_PROFILE_FULL,
+    "reads": HOSTED_TOOL_PROFILE_READS,
+    "read": HOSTED_TOOL_PROFILE_READS,
+    "readonly": HOSTED_TOOL_PROFILE_READS,
+    "read-only": HOSTED_TOOL_PROFILE_READS,
+    "reads-only": HOSTED_TOOL_PROFILE_READS,
+    "reads_only": HOSTED_TOOL_PROFILE_READS,
 }
 
 
@@ -44,6 +55,28 @@ def _parse_csv_set(raw: str | None) -> set[str] | None:
         return None
     parsed = {item.strip() for item in raw.split(",") if item.strip()}
     return parsed or None
+
+
+def parse_tool_allowlist(raw: str | None) -> set[str] | None:
+    """Parse a comma-separated tool allowlist into a set (``None`` if empty).
+
+    A value that is a non-empty string but contains no real entries (``" , "``,
+    whitespace) parses to ``None`` — the same as unset — so callers can treat
+    "no effective allowlist" uniformly regardless of the raw string shape.
+    """
+    return _parse_csv_set(raw)
+
+
+def has_explicit_tool_allowlist(*values: str | None) -> bool:
+    """Whether any value pins a *non-empty* tool allowlist.
+
+    Presence alone is not enough: a defined-but-empty value (``""``,
+    whitespace, or ``" , ,"`` from a deploy template) parses to no allowlist
+    and must not be treated as an operator-pinned surface — otherwise it would
+    silently suppress the slim/reads profiles and let a ``?tool_profile=reads``
+    request fall back to the write-capable default.
+    """
+    return any(_parse_csv_set(value) for value in values)
 
 
 # Default hosted tool surface tuned from one month of production popularity data.
@@ -225,6 +258,19 @@ def hosted_tool_profile_from_env(default: str = HOSTED_TOOL_PROFILE_FULL) -> str
             raw,
             normalized,
         )
+    # `reads` is a per-connection selection (?tool_profile=reads), not a coherent
+    # operator default: the default-server build path can't express "hide writes".
+    # Coerce it to `full` so a misconfigured default never silently serves the
+    # wrong surface; clients can still request reads per connection.
+    if normalized == HOSTED_TOOL_PROFILE_READS:
+        logger.warning(
+            "%s=%r selects the reads-only profile, which is only available as a "
+            "per-connection selection (?tool_profile=reads); using %r as the default surface.",
+            EnvVars.HOSTED_TOOL_PROFILE,
+            raw,
+            HOSTED_TOOL_PROFILE_FULL,
+        )
+        return HOSTED_TOOL_PROFILE_FULL
     return normalized
 
 
@@ -256,7 +302,9 @@ def enabled_tools_from_env(
     if configured is not None:
         return configured
     if hosted:
-        if hosted_tool_profile == HOSTED_TOOL_PROFILE_FULL:
+        # `reads` exposes the full read surface (no name allowlist); its writes
+        # are hidden separately via enable_write_tools=False, not here.
+        if hosted_tool_profile in (HOSTED_TOOL_PROFILE_FULL, HOSTED_TOOL_PROFILE_READS):
             return None
         return set(DEFAULT_HOSTED_ENABLED_TOOLS)
     return None

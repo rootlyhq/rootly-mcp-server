@@ -23,8 +23,9 @@ Hosted tool profiles:
 
 - **Full (default):** use the URLs above as-is
 - **Slim (~70 tools):** add `?tool_profile=slim` to the hosted URL, for example `https://mcp.rootly.com/mcp?tool_profile=slim`
-- **Header alternative:** send `X-Rootly-Tool-Profile: slim`
-- **Server-wide default:** set `ROOTLY_MCP_HOSTED_TOOL_PROFILE=full|slim`
+- **Reads (read-only):** add `?tool_profile=reads` for the full read surface with every write/destructive tool hidden, for example `https://mcp.rootly.com/mcp?tool_profile=reads`. Unlike a hand-maintained allowlist it stays current automatically — new read tools are included the moment they ship. (Self-hosted equivalent: `ROOTLY_MCP_ENABLE_WRITE_TOOLS=false`.) Note: this is a client-selected surface filter, not an authorization boundary — a caller with the same token can still select `full`. To *enforce* read-only access, scope the OAuth token/API key to read scopes.
+- **Header alternative:** send `X-Rootly-Tool-Profile: slim` (or `reads`)
+- **Server-wide default:** set `ROOTLY_MCP_HOSTED_TOOL_PROFILE=full|slim` (`reads` is per-connection only)
 - **Exact custom override:** set `ROOTLY_MCP_ENABLED_TOOLS=...`
 
 ### General Remote Setup

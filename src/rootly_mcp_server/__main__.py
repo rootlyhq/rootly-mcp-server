@@ -704,17 +704,23 @@ def main():
         allowed_paths = None
         if args.allowed_paths:
             allowed_paths = [path.strip() for path in args.allowed_paths.split(",")]
-        explicit_enabled_tools = bool(args.enabled_tools) or (
-            os.getenv(server_defaults.EnvVars.ENABLED_TOOLS) is not None
+        # Only a *non-empty* allowlist pins the surface. A defined-but-empty
+        # ROOTLY_MCP_ENABLED_TOOLS (e.g. "" rendered by a deploy template) yields
+        # no allowlist and must not suppress the slim/reads profiles — otherwise a
+        # ?tool_profile=reads request would silently fall back to write-capable.
+        explicit_enabled_tools = server_defaults.has_explicit_tool_allowlist(
+            args.enabled_tools, os.getenv(server_defaults.EnvVars.ENABLED_TOOLS)
         )
         default_hosted_tool_profile = server_defaults.hosted_tool_profile_from_env()
-        enabled_tools = (
-            {tool.strip() for tool in args.enabled_tools.split(",") if tool.strip()}
-            if args.enabled_tools
-            else enabled_tools_from_env(
-                hosted=hosted_mode,
-                hosted_tool_profile=default_hosted_tool_profile,
-            )
+        # Resolve through the same parser as `explicit_enabled_tools` so the two
+        # never disagree: the CLI allowlist wins only when it parses to a
+        # non-empty set. A truthy-but-empty CLI value (e.g. `--enabled-tools " , "`)
+        # falls through to the env/profile surface instead of silently clearing it.
+        enabled_tools = server_defaults.parse_tool_allowlist(
+            args.enabled_tools
+        ) or enabled_tools_from_env(
+            hosted=hosted_mode,
+            hosted_tool_profile=default_hosted_tool_profile,
         )
 
         logger.info(f"Initializing server with name: {args.name}")
@@ -808,9 +814,50 @@ def main():
         elif code_mode_server is not None:
             profiled_code_mode_servers[default_hosted_tool_profile] = code_mode_server
 
+        # Reads-only profile: the full read surface with every write/destructive
+        # tool hidden, selectable via ?tool_profile=reads (or the
+        # x-rootly-tool-profile header). It uses no name allowlist, so it stays
+        # current automatically as new read tools ship. Offered on the hosted
+        # streamable endpoint alongside the operator's full/slim profiles; skipped
+        # when the operator pins an explicit allowlist (their surface wins).
+        reads_server = None
+        if (
+            hosted_mode
+            and not explicit_enabled_tools
+            and normalized_transport in {"both", "streamable-http"}
+            and server_defaults.HOSTED_TOOL_PROFILE_READS not in profiled_servers
+        ):
+            reads_server = create_rootly_mcp_server(
+                swagger_path=args.swagger_path,
+                name=args.name,
+                allowed_paths=allowed_paths,
+                hosted=hosted_mode,
+                base_url=args.base_url,
+                transport=normalized_transport,
+                enable_write_tools=False,
+                enabled_tools=None,
+            )
+            profiled_servers[server_defaults.HOSTED_TOOL_PROFILE_READS] = reads_server
+
+            if code_mode_server is not None:
+                profiled_code_mode_servers.setdefault(default_hosted_tool_profile, code_mode_server)
+                profiled_code_mode_servers[server_defaults.HOSTED_TOOL_PROFILE_READS] = (
+                    create_rootly_codemode_server(
+                        swagger_path=args.swagger_path,
+                        name=f"{args.name} Code Mode",
+                        allowed_paths=allowed_paths,
+                        hosted=hosted_mode,
+                        base_url=args.base_url,
+                        enable_write_tools=False,
+                        enabled_tools=None,
+                    )
+                )
+
         maybe_enable_mcpcat_tracking(server, mcpcat_project_id, logger)
         if alternate_server is not None:
             maybe_enable_mcpcat_tracking(alternate_server, mcpcat_project_id, logger)
+        if reads_server is not None:
+            maybe_enable_mcpcat_tracking(reads_server, mcpcat_project_id, logger)
         if code_mode_server is not None:
             maybe_enable_mcpcat_tracking(code_mode_server, mcpcat_project_id, logger)
         for _profile, profiled_code_mode_server in profiled_code_mode_servers.items():
