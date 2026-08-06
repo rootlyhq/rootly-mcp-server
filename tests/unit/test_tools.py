@@ -1702,51 +1702,62 @@ class TestRelatedIncidentCandidateRetrieval:
         find_related_incidents issues several independent lookups; running them
         serially multiplies latency on a tool that already contributes to
         upstream timeouts.
+
+        Asserts on peak in-flight requests rather than elapsed time: wall-clock
+        is flaky on a loaded runner, and a timing threshold can still pass when
+        only *some* of the queries overlap. Counting concurrency directly tests
+        the property and catches a partial regression.
         """
         import asyncio
-        import time
 
-        delay = 0.15
+        in_flight = 0
+        peak_in_flight = 0
         seen: list[dict] = []
 
-        async def slow_request(method, url, params=None, **kwargs):
+        async def tracked_request(method, url, params=None, **kwargs):
+            nonlocal in_flight, peak_in_flight
             seen.append(params or {})
-            await asyncio.sleep(delay)
-            response = Mock()
-            response.raise_for_status.return_value = None
-            response.json.return_value = {
-                "data": [
-                    {
-                        "id": "i1",
-                        "attributes": {
-                            "title": "EasyPost shipping api down",
-                            "summary": "easypost carrier timeout",
-                            "created_at": "2026-01-01",
-                            "status": "resolved",
-                        },
-                    }
-                ],
-                "meta": {"total_pages": 1},
-            }
-            return response
+            in_flight += 1
+            peak_in_flight = max(peak_in_flight, in_flight)
+            try:
+                # Yield so sibling coroutines can start before this one resolves.
+                await asyncio.sleep(0)
+                response = Mock()
+                response.raise_for_status.return_value = None
+                response.json.return_value = {
+                    "data": [
+                        {
+                            "id": "i1",
+                            "attributes": {
+                                "title": "EasyPost shipping api down",
+                                "summary": "easypost carrier timeout",
+                                "created_at": "2026-01-01",
+                                "status": "resolved",
+                            },
+                        }
+                    ],
+                    "meta": {"total_pages": 1},
+                }
+                return response
+            finally:
+                in_flight -= 1
 
         mcp = FakeMCP()
         register_incident_tools(
             mcp=mcp,
-            make_authenticated_request=slow_request,
+            make_authenticated_request=tracked_request,
             strip_heavy_nested_data=lambda data: data,
             mcp_error=FakeMCPError(),
             generate_recommendation=_generate_recommendation,
             enable_write_tools=True,
         )
 
-        started = time.perf_counter()
         await mcp.tools["find_related_incidents"](
             incident_description="EasyPost shipping carrier timeout"
         )
-        elapsed = time.perf_counter() - started
 
         assert len(seen) > 1, "expected multiple targeted queries"
-        # Serial execution would take len(seen) * delay; concurrency collapses
-        # the targeted queries into roughly one round-trip.
-        assert elapsed < len(seen) * delay * 0.8
+        assert peak_in_flight > 1, (
+            f"targeted queries ran serially (peak in-flight={peak_in_flight}); "
+            "they should overlap under asyncio.gather"
+        )
