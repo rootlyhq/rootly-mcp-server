@@ -382,6 +382,11 @@ the exporter is configured.
 Free-form event text is redacted and actor names are omitted from Sentry-bound
 telemetry; stable internal actor IDs remain available for correlation.
 
+Telemetry runs on AgentCat v2 (MCP 2026-07-28 spec). Sessions are correlated via
+a session_id carried in the tool list rather than stateful connections, which
+suits our stateless hosted transport; `initialize` and `tools/list` events are no
+longer published by the SDK.
+
 To override the hosted or self-hosted default profile entirely, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names. When that variable is set, it fully replaces the default selection.
 
 To expose only a specific subset of MCP tools on a self-hosted deployment, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names, for example `list_incidents,get_incident,get_server_version`.
