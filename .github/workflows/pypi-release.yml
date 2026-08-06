@@ -29,6 +29,11 @@ jobs:
         run: |
           python -m build
 
+      - name: Verify bundled swagger.json shipped in the wheel
+        run: |
+          python -m zipfile -l dist/*.whl | grep -q "rootly_mcp_server/data/swagger.json" \
+            || { echo "::error::swagger.json missing from wheel — the server would fetch it and write swagger.json into the host CWD on every launch (#153)"; exit 1; }
+
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__

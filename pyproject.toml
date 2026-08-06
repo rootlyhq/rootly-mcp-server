@@ -65,6 +65,16 @@ Issues = "https://github.com/rootlyhq/rootly-mcp-server/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# The bundled OpenAPI spec (data/swagger.json) is git-ignored, so hatchling's
+# default VCS-aware file selection excludes it from BOTH the sdist and the wheel.
+# The previous `[...wheel.include]` mapping didn't ship it, so the server fell
+# back to fetching the spec and writing swagger.json into the host CWD on every
+# launch (#153). `artifacts` force-includes VCS-ignored paths across all build
+# targets — critically the sdist too, since `python -m build` builds the wheel
+# *from* the sdist (a wheel-only force-include fails there with FileNotFound).
+[tool.hatch.build]
+artifacts = ["src/rootly_mcp_server/data/swagger.json"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/rootly_mcp_server"]
 
@@ -73,9 +83,6 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel.sources]
 "src" = ""
-
-[tool.hatch.build.targets.wheel.include]
-"src/rootly_mcp_server/data" = "rootly_mcp_server/data"
 
 [project.scripts]
 rootly-mcp-server = "rootly_mcp_server.__main__:main"
