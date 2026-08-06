@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -159,6 +160,44 @@ _SEARCH_STOPTERMS = frozenset(
         "prod",
         "production",
         "staging",
+        # Common short English words. The tokenizer keeps anything 3+ chars, so
+        # without these a terse title like "Checkout errors but not fatal"
+        # yields "but" as a search term — one wasted upstream query whose
+        # results also dilute the similarity ranking.
+        "and",
+        "are",
+        "but",
+        "for",
+        "from",
+        "has",
+        "have",
+        "into",
+        "its",
+        "new",
+        "now",
+        "off",
+        "old",
+        "our",
+        "out",
+        "over",
+        "some",
+        "than",
+        "that",
+        "the",
+        "then",
+        "them",
+        "there",
+        "these",
+        "they",
+        "this",
+        "was",
+        "were",
+        "when",
+        "which",
+        "while",
+        "with",
+        "you",
+        "your",
     }
 )
 
@@ -280,22 +319,29 @@ async def _fetch_similarity_candidates(
                 return
             cursor = next_cursor
 
-    # 1. Precise targeting: incidents sharing the target's service / functionality.
-    #    Use the *_ids filters (they take UUIDs, matching what list_incidents uses);
-    #    filter[services]/filter[functionalities] expect names/slugs.
+    # 1+2. Targeted retrieval: incidents sharing the target's service or
+    #      functionality, plus a topical search on its distinctive terms.
+    #      These queries are independent and each only adds to `candidates`, so
+    #      they run concurrently — the extra recall this tool adds costs one
+    #      round-trip of latency instead of up to five. Bounded by design:
+    #      at most 2 relationship queries + `max_terms` (3) search queries.
+    #      Use the *_ids filters (they take UUIDs, matching what list_incidents
+    #      uses); filter[services]/filter[functionalities] expect names/slugs.
+    targeted: list[dict[str, str]] = []
     if service_ids:
-        await _sweep({"filter[service_ids]": ",".join(service_ids)}, max_pages=max_pages_per_query)
+        targeted.append({"filter[service_ids]": ",".join(service_ids)})
     if functionality_ids:
-        await _sweep(
-            {"filter[functionality_ids]": ",".join(functionality_ids)},
-            max_pages=max_pages_per_query,
+        targeted.append({"filter[functionality_ids]": ",".join(functionality_ids)})
+    targeted.extend(
+        {"filter[search]": term} for term in _extract_incident_search_terms(target_incident)
+    )
+    if targeted:
+        # _sweep already swallows per-query failures; return_exceptions keeps a
+        # surprise from one query from cancelling the rest.
+        await asyncio.gather(
+            *(_sweep(query, max_pages=max_pages_per_query) for query in targeted),
+            return_exceptions=True,
         )
-
-    # 2. Topical search on the target's distinctive terms.
-    for term in _extract_incident_search_terms(target_incident):
-        if len(candidates) >= max_candidates:
-            break
-        await _sweep({"filter[search]": term}, max_pages=max_pages_per_query)
 
     # 3. Most-recent-page floor (single page) so results never regress.
     if len(candidates) < max_candidates:

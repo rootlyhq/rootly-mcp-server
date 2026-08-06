@@ -1663,3 +1663,90 @@ class TestIncidentToolsHardening:
 
         assert result["meta"]["partial"] is True
         assert "error" in result["meta"]
+
+
+@pytest.mark.unit
+class TestRelatedIncidentCandidateRetrieval:
+    """Guards for the targeted candidate retrieval in find_related_incidents."""
+
+    def test_common_short_words_are_not_used_as_search_terms(self):
+        """A terse title must not spend an upstream query on a filler word.
+
+        The tokenizer keeps anything 3+ characters, so without stopterms
+        "Checkout errors but not fatal" yields "but" — one wasted query whose
+        results also dilute the similarity ranking.
+        """
+        from rootly_mcp_server.tools.incidents import _extract_incident_search_terms
+
+        terms = _extract_incident_search_terms(
+            {"attributes": {"title": "Checkout errors but not fatal", "summary": ""}}
+        )
+        assert "but" not in terms
+        assert "checkout" in terms
+
+        terms = _extract_incident_search_terms(
+            {
+                "attributes": {
+                    "title": "There was an issue with the new payment flow",
+                    "summary": "",
+                }
+            }
+        )
+        assert {"there", "was", "the", "new", "with"}.isdisjoint(terms)
+        assert "payment" in terms
+
+    @pytest.mark.asyncio
+    async def test_targeted_candidate_queries_run_concurrently(self):
+        """The added recall must cost one round-trip, not one per query.
+
+        find_related_incidents issues several independent lookups; running them
+        serially multiplies latency on a tool that already contributes to
+        upstream timeouts.
+        """
+        import asyncio
+        import time
+
+        delay = 0.15
+        seen: list[dict] = []
+
+        async def slow_request(method, url, params=None, **kwargs):
+            seen.append(params or {})
+            await asyncio.sleep(delay)
+            response = Mock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {
+                "data": [
+                    {
+                        "id": "i1",
+                        "attributes": {
+                            "title": "EasyPost shipping api down",
+                            "summary": "easypost carrier timeout",
+                            "created_at": "2026-01-01",
+                            "status": "resolved",
+                        },
+                    }
+                ],
+                "meta": {"total_pages": 1},
+            }
+            return response
+
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=slow_request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+
+        started = time.perf_counter()
+        await mcp.tools["find_related_incidents"](
+            incident_description="EasyPost shipping carrier timeout"
+        )
+        elapsed = time.perf_counter() - started
+
+        assert len(seen) > 1, "expected multiple targeted queries"
+        # Serial execution would take len(seen) * delay; concurrency collapses
+        # the targeted queries into roughly one round-trip.
+        assert elapsed < len(seen) * delay * 0.8
