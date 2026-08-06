@@ -58,6 +58,101 @@ def test_get_server_passes_write_tool_env_flag():
     assert mock_create.call_args.kwargs["enable_write_tools"] is True
 
 
+@pytest.mark.parametrize(
+    ("flag", "env", "expected"),
+    [
+        # Regression for #149: env var must take effect when the flag is absent.
+        (None, "false", False),
+        (None, "true", True),
+        (None, None, True),  # nothing set -> full access preserved
+        (False, None, False),  # --no-enable-write-tools honored
+        (False, "true", False),  # explicit flag wins over env
+    ],
+)
+def test_main_write_tools_respects_flag_then_env(flag, env, expected):
+    args = SimpleNamespace(
+        swagger_path=None,
+        log_level="ERROR",
+        name="Rootly",
+        transport="stdio",
+        debug=False,
+        base_url=None,
+        allowed_paths=None,
+        hosted=False,
+        enable_code_mode=False,
+        enable_write_tools=flag,
+        enabled_tools=None,
+        list_tools=False,
+        code_mode_path=None,
+        host=False,
+    )
+    server = SimpleNamespace(run=Mock())
+    environ = {"ROOTLY_API_TOKEN": "x" * 40}  # stdio path requires a valid-length token
+    if env is not None:
+        environ["ROOTLY_MCP_ENABLE_WRITE_TOOLS"] = env
+
+    with patch.dict("os.environ", environ, clear=True):
+        with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
+            with patch("rootly_mcp_server.__main__.setup_logging"):
+                with patch(
+                    "rootly_mcp_server.__main__.create_rootly_mcp_server",
+                    return_value=server,
+                ) as mock_create:
+                    main()
+
+    assert mock_create.call_args.kwargs["enable_write_tools"] is expected
+
+
+@pytest.mark.parametrize(
+    ("flag", "env", "expected"),
+    [
+        (None, "false", False),  # #149 2nd bug: env=false must apply on hosted too
+        (False, None, False),  # #149 2nd bug: --no-enable-write-tools honored on hosted
+        (None, None, True),  # hosted default preserved: full access
+    ],
+)
+def test_main_write_tools_hosted_path_respects_flag_then_env(flag, env, expected):
+    # The resolution is transport-independent; this guards the hosted streamable
+    # path specifically (where --no-enable-write-tools + no env was previously
+    # ignored via `False or write_tools_enabled_from_env(default=hosted_mode)`).
+    args = SimpleNamespace(
+        swagger_path=None,
+        log_level="ERROR",
+        name="Rootly",
+        transport="streamable-http",
+        debug=False,
+        base_url=None,
+        allowed_paths=None,
+        hosted=True,
+        enable_code_mode=False,
+        enable_write_tools=flag,
+        enabled_tools=None,
+        list_tools=False,
+        code_mode_path=None,
+        host=False,
+    )
+    environ = {} if env is None else {"ROOTLY_MCP_ENABLE_WRITE_TOOLS": env}
+
+    with patch.dict("os.environ", environ, clear=True):
+        with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
+            with patch("rootly_mcp_server.__main__.setup_logging"):
+                with patch(
+                    "rootly_mcp_server.__main__.create_rootly_mcp_server",
+                    return_value=SimpleNamespace(),
+                ) as mock_create:
+                    with patch(
+                        "rootly_mcp_server.__main__.get_hosted_auth_middleware",
+                        return_value=[],
+                    ):
+                        with patch(
+                            "rootly_mcp_server.__main__.run_profiled_streamable_http_server"
+                        ):
+                            main()
+
+    # every profile server is built with the resolved value
+    assert mock_create.call_args.kwargs["enable_write_tools"] is expected
+
+
 def test_get_server_passes_enabled_tools_env_flag():
     with patch.dict(
         "os.environ",
