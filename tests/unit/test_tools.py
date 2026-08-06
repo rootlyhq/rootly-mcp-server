@@ -1249,7 +1249,14 @@ class TestIncidentReferenceResolutionAcrossTools:
             ]
         }
 
-        request.side_effect = [list_response, incident_response, historical_response]
+        def _route(method, path, params=None):
+            if params and "filter[sequential_id]" in params:
+                return list_response
+            if path.startswith("/v1/incidents/"):
+                return incident_response
+            return historical_response
+
+        request.side_effect = _route
 
         result = await mcp.tools["find_related_incidents"](incident_id="INC-4460")
 
@@ -1258,6 +1265,121 @@ class TestIncidentReferenceResolutionAcrossTools:
         )
         assert result["target_incident"]["resolved_incident_id"] == (
             "11111111-1111-4111-8111-111111111111"
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_related_incidents_surfaces_search_matched_older_incident(self):
+        """A relevant incident absent from the recent page is still found via search."""
+        mcp, request = self._register_tools()
+
+        recent_response = Mock()
+        recent_response.raise_for_status.return_value = None
+        recent_response.json.return_value = {
+            "data": [
+                {
+                    "id": "recent-unrelated",
+                    "attributes": {
+                        "title": "Checkout page latency",
+                        "summary": "slow rendering on the storefront",
+                        "status": "resolved",
+                    },
+                }
+            ]
+        }
+
+        # Only returned by the filter[search] query, not the recent baseline.
+        search_response = Mock()
+        search_response.raise_for_status.return_value = None
+        search_response.json.return_value = {
+            "data": [
+                {
+                    "id": "old-easypost",
+                    "attributes": {
+                        "title": "EasyPost outage",
+                        "summary": "easypost hard down, all calls failing",
+                        "status": "resolved",
+                    },
+                }
+            ]
+        }
+
+        def _route(method, path, params=None):
+            if params and "filter[search]" in params:
+                return search_response
+            return recent_response
+
+        request.side_effect = _route
+
+        result = await mcp.tools["find_related_incidents"](
+            incident_description="EasyPost is hard down, all calls failing",
+        )
+
+        returned_ids = [inc["incident_id"] for inc in result["related_incidents"]]
+        assert "old-easypost" in returned_ids
+        # A filter[search] request was actually issued for a distinctive term.
+        assert any(
+            (c.kwargs.get("params") or {}).get("filter[search]") == "easypost"
+            for c in request.await_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_find_related_incidents_seeds_from_service_tags(self):
+        """A same-service incident is retrieved via the target's service tag."""
+        mcp, request = self._register_tools()
+        uuid = "11111111-1111-4111-8111-111111111111"
+
+        target_response = Mock()
+        target_response.raise_for_status.return_value = None
+        target_response.json.return_value = {
+            "data": {
+                "id": uuid,
+                "attributes": {"title": "Checkout errors", "summary": "500s on checkout"},
+                "relationships": {
+                    "services": {"data": [{"id": "svc-1", "type": "services"}]},
+                    "functionalities": {"data": []},
+                },
+            }
+        }
+
+        # Only returned by the filter[services] query, not by search or recency.
+        service_response = Mock()
+        service_response.raise_for_status.return_value = None
+        service_response.json.return_value = {
+            "data": [
+                {
+                    "id": "same-service-old",
+                    "attributes": {
+                        "title": "Checkout 500s",
+                        "summary": "errors on the checkout flow",
+                        "status": "resolved",
+                        "created_at": "2025-01-01T00:00:00Z",
+                    },
+                }
+            ]
+        }
+
+        empty = Mock()
+        empty.raise_for_status.return_value = None
+        empty.json.return_value = {"data": []}
+
+        def _route(method, path, params=None):
+            if path.startswith("/v1/incidents/"):
+                return target_response
+            if params and "filter[service_ids]" in params:
+                return service_response
+            return empty
+
+        request.side_effect = _route
+
+        result = await mcp.tools["find_related_incidents"](
+            incident_id=uuid, similarity_threshold=0.0
+        )
+
+        returned_ids = [inc["incident_id"] for inc in result["related_incidents"]]
+        assert "same-service-old" in returned_ids
+        assert any(
+            (c.kwargs.get("params") or {}).get("filter[service_ids]") == "svc-1"
+            for c in request.await_args_list
         )
 
     @pytest.mark.asyncio
@@ -1306,7 +1428,14 @@ class TestIncidentReferenceResolutionAcrossTools:
             ]
         }
 
-        request.side_effect = [list_response, incident_response, historical_response]
+        def _route(method, path, params=None):
+            if params and "filter[sequential_id]" in params:
+                return list_response
+            if path.startswith("/v1/incidents/"):
+                return incident_response
+            return historical_response
+
+        request.side_effect = _route
 
         result = await mcp.tools["suggest_solutions"](incident_id="4460")
 
@@ -1534,3 +1663,101 @@ class TestIncidentToolsHardening:
 
         assert result["meta"]["partial"] is True
         assert "error" in result["meta"]
+
+
+@pytest.mark.unit
+class TestRelatedIncidentCandidateRetrieval:
+    """Guards for the targeted candidate retrieval in find_related_incidents."""
+
+    def test_common_short_words_are_not_used_as_search_terms(self):
+        """A terse title must not spend an upstream query on a filler word.
+
+        The tokenizer keeps anything 3+ characters, so without stopterms
+        "Checkout errors but not fatal" yields "but" — one wasted query whose
+        results also dilute the similarity ranking.
+        """
+        from rootly_mcp_server.tools.incidents import _extract_incident_search_terms
+
+        terms = _extract_incident_search_terms(
+            {"attributes": {"title": "Checkout errors but not fatal", "summary": ""}}
+        )
+        assert "but" not in terms
+        assert "checkout" in terms
+
+        terms = _extract_incident_search_terms(
+            {
+                "attributes": {
+                    "title": "There was an issue with the new payment flow",
+                    "summary": "",
+                }
+            }
+        )
+        assert {"there", "was", "the", "new", "with"}.isdisjoint(terms)
+        assert "payment" in terms
+
+    @pytest.mark.asyncio
+    async def test_targeted_candidate_queries_run_concurrently(self):
+        """The added recall must cost one round-trip, not one per query.
+
+        find_related_incidents issues several independent lookups; running them
+        serially multiplies latency on a tool that already contributes to
+        upstream timeouts.
+
+        Asserts on peak in-flight requests rather than elapsed time: wall-clock
+        is flaky on a loaded runner, and a timing threshold can still pass when
+        only *some* of the queries overlap. Counting concurrency directly tests
+        the property and catches a partial regression.
+        """
+        import asyncio
+
+        in_flight = 0
+        peak_in_flight = 0
+        seen: list[dict] = []
+
+        async def tracked_request(method, url, params=None, **kwargs):
+            nonlocal in_flight, peak_in_flight
+            seen.append(params or {})
+            in_flight += 1
+            peak_in_flight = max(peak_in_flight, in_flight)
+            try:
+                # Yield so sibling coroutines can start before this one resolves.
+                await asyncio.sleep(0)
+                response = Mock()
+                response.raise_for_status.return_value = None
+                response.json.return_value = {
+                    "data": [
+                        {
+                            "id": "i1",
+                            "attributes": {
+                                "title": "EasyPost shipping api down",
+                                "summary": "easypost carrier timeout",
+                                "created_at": "2026-01-01",
+                                "status": "resolved",
+                            },
+                        }
+                    ],
+                    "meta": {"total_pages": 1},
+                }
+                return response
+            finally:
+                in_flight -= 1
+
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=tracked_request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+
+        await mcp.tools["find_related_incidents"](
+            incident_description="EasyPost shipping carrier timeout"
+        )
+
+        assert len(seen) > 1, "expected multiple targeted queries"
+        assert peak_in_flight > 1, (
+            f"targeted queries ran serially (peak in-flight={peak_in_flight}); "
+            "they should overlap under asyncio.gather"
+        )

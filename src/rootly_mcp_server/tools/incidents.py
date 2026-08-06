@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -120,6 +121,233 @@ def _augment_pagination_error(result: JsonDict, page_number: int) -> JsonDict:
             "or use collect_incidents instead of a high page_number."
         )
     return result
+
+
+# Generic incident vocabulary that doesn't help narrow a topical search.
+_SEARCH_STOPTERMS = frozenset(
+    {
+        "down",
+        "up",
+        "error",
+        "errors",
+        "issue",
+        "issues",
+        "failing",
+        "fail",
+        "failed",
+        "all",
+        "calls",
+        "call",
+        "hard",
+        "slow",
+        "broken",
+        "outage",
+        "incident",
+        "incidents",
+        "alert",
+        "alerts",
+        "high",
+        "low",
+        "not",
+        "working",
+        "unavailable",
+        "degraded",
+        "problem",
+        "problems",
+        "major",
+        "minor",
+        "critical",
+        "prod",
+        "production",
+        "staging",
+        # Common short English words. The tokenizer keeps anything 3+ chars, so
+        # without these a terse title like "Checkout errors but not fatal"
+        # yields "but" as a search term — one wasted upstream query whose
+        # results also dilute the similarity ranking.
+        "and",
+        "are",
+        "but",
+        "for",
+        "from",
+        "has",
+        "have",
+        "into",
+        "its",
+        "new",
+        "now",
+        "off",
+        "old",
+        "our",
+        "out",
+        "over",
+        "some",
+        "than",
+        "that",
+        "the",
+        "then",
+        "them",
+        "there",
+        "these",
+        "they",
+        "this",
+        "was",
+        "were",
+        "when",
+        "which",
+        "while",
+        "with",
+        "you",
+        "your",
+    }
+)
+
+
+def _extract_incident_search_terms(
+    target_incident: dict[str, Any], max_terms: int = 3
+) -> list[str]:
+    """Pick the most distinctive tokens from a target incident's text.
+
+    Used to retrieve topically-relevant historical candidates via
+    ``filter[search]`` (which reaches incidents of any age) instead of only
+    scanning the most-recent page. Longer tokens are treated as more specific.
+    """
+    attributes = target_incident.get("attributes", {}) or {}
+    text = " ".join(
+        str(attributes.get(field) or "") for field in ("title", "summary", "description")
+    ).lower()
+    ranked: list[str] = []
+    seen: set[str] = set()
+    for token in sorted(re.findall(r"[a-z0-9][a-z0-9._-]{2,}", text), key=len, reverse=True):
+        if token in _SEARCH_STOPTERMS or token in seen:
+            continue
+        seen.add(token)
+        ranked.append(token)
+    return ranked[:max_terms]
+
+
+def _extract_relationship_ids(
+    incident: dict[str, Any], relationship: str, limit: int = 5
+) -> list[str]:
+    """Pull related resource IDs (e.g. services, functionalities) from an incident.
+
+    Must be read from the raw API response *before* relationships are collapsed
+    to counts by ``strip_heavy_nested_data``.
+    """
+    data = ((incident.get("relationships") or {}).get(relationship) or {}).get("data")
+    if not isinstance(data, list):
+        return []
+    ids: list[str] = []
+    for item in data:
+        if isinstance(item, dict) and item.get("id"):
+            ids.append(str(item["id"]))
+            if len(ids) >= limit:
+                break
+    return ids
+
+
+async def _fetch_similarity_candidates(
+    make_authenticated_request: MakeAuthenticatedRequest,
+    strip_heavy_nested_data: Callable[[JsonDict], JsonDict],
+    target_incident: dict[str, Any],
+    *,
+    status_filter: str = "",
+    fields: str | None = None,
+    service_ids: list[str] | None = None,
+    functionality_ids: list[str] | None = None,
+    max_candidates: int = 400,
+    max_pages_per_query: int = 5,
+) -> list[dict[str, Any]]:
+    """Build the candidate pool for incident similarity analysis.
+
+    Targets relevant incidents of *any* age — not just the most-recent page — by,
+    in order of precision:
+
+    1. same service / functionality as the target (structured tags),
+    2. topical ``filter[search]`` on the target's most distinctive terms,
+    3. a most-recent-page floor, so results never regress below the old behavior.
+
+    Each query is cursor-paginated backwards through ``created_at`` (via
+    ``filter[created_at][lt]`` with ``page[number]=1``) rather than deep offset
+    pagination, which the API rejects with a 400. Small match sets are exhausted;
+    large (generic) ones are capped at ``max_pages_per_query`` so they cannot
+    flood the pool. Every request is best-effort — a failure degrades gracefully
+    to whatever else was collected.
+    """
+    # created_at is required to advance the cursor, so make sure it is requested.
+    if fields and "created_at" not in fields:
+        fields = fields + ",created_at"
+
+    base_params: dict[str, Any] = {"include": "", "page[size]": 100, "sort": "-created_at"}
+    if fields:
+        base_params["fields[incidents]"] = fields
+    if status_filter:
+        base_params["filter[status]"] = status_filter
+
+    candidates: dict[str, dict[str, Any]] = {}
+
+    async def _sweep(query: dict[str, Any], *, max_pages: int) -> None:
+        """Cursor-paginate one query backwards through created_at, bounded."""
+        cursor: str | None = None
+        for _ in range(max_pages):
+            if len(candidates) >= max_candidates:
+                return
+            params = {**base_params, **query, "page[number]": 1}
+            if cursor:
+                params["filter[created_at][lt]"] = cursor
+            try:
+                response = await make_authenticated_request("GET", "/v1/incidents", params=params)
+                response.raise_for_status()
+            except Exception:  # noqa: BLE001 - each query is best-effort
+                logger.debug("Similarity candidate query failed: %s", query, exc_info=True)
+                return
+            page = strip_heavy_nested_data(response.json()).get("data", [])
+            if not page:
+                return
+            # The page is sorted -created_at, so the last row's created_at is the
+            # oldest — use it verbatim as the next cursor (robust to mixed tz
+            # offsets, unlike a string min()).
+            next_cursor: str | None = None
+            for incident in page:
+                incident_id = str(incident.get("id") or "")
+                if incident_id:
+                    candidates.setdefault(incident_id, incident)
+                created_at = (incident.get("attributes") or {}).get("created_at")
+                if created_at:
+                    next_cursor = created_at
+            # Stop once the match set is exhausted or the cursor can't advance.
+            if len(page) < 100 or not next_cursor or next_cursor == cursor:
+                return
+            cursor = next_cursor
+
+    # 1+2. Targeted retrieval: incidents sharing the target's service or
+    #      functionality, plus a topical search on its distinctive terms.
+    #      These queries are independent and each only adds to `candidates`, so
+    #      they run concurrently — the extra recall this tool adds costs one
+    #      round-trip of latency instead of up to five. Bounded by design:
+    #      at most 2 relationship queries + `max_terms` (3) search queries.
+    #      Use the *_ids filters (they take UUIDs, matching what list_incidents
+    #      uses); filter[services]/filter[functionalities] expect names/slugs.
+    targeted: list[dict[str, str]] = []
+    if service_ids:
+        targeted.append({"filter[service_ids]": ",".join(service_ids)})
+    if functionality_ids:
+        targeted.append({"filter[functionality_ids]": ",".join(functionality_ids)})
+    targeted.extend(
+        {"filter[search]": term} for term in _extract_incident_search_terms(target_incident)
+    )
+    if targeted:
+        # _sweep already swallows per-query failures; return_exceptions keeps a
+        # surprise from one query from cancelling the rest.
+        await asyncio.gather(
+            *(_sweep(query, max_pages=max_pages_per_query) for query in targeted),
+            return_exceptions=True,
+        )
+
+    # 3. Most-recent-page floor (single page) so results never regress.
+    if len(candidates) < max_candidates:
+        await _sweep({}, max_pages=1)
+
+    return list(candidates.values())[:max_candidates]
 
 
 def _normalize_incident_reference(reference: str) -> tuple[str, str | int]:
@@ -1122,6 +1350,8 @@ def register_incident_tools(
         try:
             target_incident: dict[str, Any] = {}
             resolved_incident_id = ""
+            target_service_ids: list[str] = []
+            target_functionality_ids: list[str] = []
 
             if incident_id:
                 # Get the target incident details by ID
@@ -1132,9 +1362,11 @@ def register_incident_tools(
                     "GET", f"/v1/incidents/{resolved_incident_id}"
                 )
                 target_response.raise_for_status()
-                target_incident_data = strip_heavy_nested_data(
-                    {"data": [target_response.json().get("data", {})]}
-                )
+                raw_target = target_response.json().get("data", {})
+                # Capture service/functionality tags before strip collapses them.
+                target_service_ids = _extract_relationship_ids(raw_target, "services")
+                target_functionality_ids = _extract_relationship_ids(raw_target, "functionalities")
+                target_incident_data = strip_heavy_nested_data({"data": [raw_target]})
                 target_incident = target_incident_data.get("data", [{}])[0]
 
                 if not target_incident:
@@ -1159,24 +1391,18 @@ def register_incident_tools(
                     ),
                 )
 
-            # Get historical incidents for comparison
-            params = {
-                "page[size]": 100,  # Get more incidents for better matching
-                "page[number]": 1,
-                "include": "",
-                "fields[incidents]": "id,title,summary,status,created_at,url",
-            }
-
-            # Only add status filter if specified
-            if status_filter:
-                params["filter[status]"] = status_filter
-
-            historical_response = await make_authenticated_request(
-                "GET", "/v1/incidents", params=params
+            # Build the candidate pool: same-service/functionality incidents plus
+            # topical search matches (so relevant incidents older than the most-
+            # recent page are still considered, not just the last ~100 by recency).
+            historical_incidents = await _fetch_similarity_candidates(
+                make_authenticated_request,
+                strip_heavy_nested_data,
+                target_incident,
+                status_filter=status_filter,
+                fields="id,title,summary,status,created_at,url",
+                service_ids=target_service_ids,
+                functionality_ids=target_functionality_ids,
             )
-            historical_response.raise_for_status()
-            historical_data = strip_heavy_nested_data(historical_response.json())
-            historical_incidents = historical_data.get("data", [])
 
             # Filter out the target incident itself if it exists
             if incident_id:
@@ -1272,6 +1498,8 @@ def register_incident_tools(
         try:
             target_incident: dict[str, Any] = {}
             resolved_incident_id = ""
+            target_service_ids: list[str] = []
+            target_functionality_ids: list[str] = []
 
             if incident_id:
                 # Get incident details by ID
@@ -1282,7 +1510,11 @@ def register_incident_tools(
                     "GET", f"/v1/incidents/{resolved_incident_id}"
                 )
                 response.raise_for_status()
-                incident_data = strip_heavy_nested_data({"data": [response.json().get("data", {})]})
+                raw_target = response.json().get("data", {})
+                # Capture service/functionality tags before strip collapses them.
+                target_service_ids = _extract_relationship_ids(raw_target, "services")
+                target_functionality_ids = _extract_relationship_ids(raw_target, "functionalities")
+                incident_data = strip_heavy_nested_data({"data": [raw_target]})
                 target_incident = incident_data.get("data", [{}])[0]
 
                 if not target_incident:
@@ -1307,23 +1539,17 @@ def register_incident_tools(
                     ),
                 )
 
-            # Get incidents for solution mining
-            params = {
-                "page[size]": 100,  # Max page size; larger values are rejected by the API
-                "page[number]": 1,
-                "include": "",
-            }
-
-            # Only add status filter if specified
-            if status_filter:
-                params["filter[status]"] = status_filter
-
-            historical_response = await make_authenticated_request(
-                "GET", "/v1/incidents", params=params
+            # Mine solutions from same-service/functionality and topically similar
+            # incidents, so proven resolutions from older (but similar) incidents
+            # are not missed just because they fell outside the most-recent page.
+            historical_incidents = await _fetch_similarity_candidates(
+                make_authenticated_request,
+                strip_heavy_nested_data,
+                target_incident,
+                status_filter=status_filter,
+                service_ids=target_service_ids,
+                functionality_ids=target_functionality_ids,
             )
-            historical_response.raise_for_status()
-            historical_data = strip_heavy_nested_data(historical_response.json())
-            historical_incidents = historical_data.get("data", [])
 
             # Filter out target incident if it exists
             if incident_id:
