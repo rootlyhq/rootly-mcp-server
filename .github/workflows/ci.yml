@@ -174,6 +174,15 @@ jobs:
       - name: Build package
         run: uv build
 
+      - name: Verify sdist and wheel bundle the OpenAPI spec (#153)
+        run: |
+          # uv build produces sdist then wheel-from-sdist (like `python -m build`),
+          # so a sdist that omits the spec fails here rather than at release time.
+          python -m zipfile -l dist/*.whl | grep -q "rootly_mcp_server/data/swagger.json" \
+            || { echo "::error::swagger.json missing from wheel — would litter host CWD (#153)"; exit 1; }
+          tar tzf dist/*.tar.gz | grep -q "data/swagger.json" \
+            || { echo "::error::swagger.json missing from sdist — wheel-from-sdist build would drop it (#153)"; exit 1; }
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
