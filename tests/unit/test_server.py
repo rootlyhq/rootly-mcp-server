@@ -1714,3 +1714,67 @@ class TestApplyAnnotationsToAutogenTools:
         assert tools["list_items"].annotations.readOnlyHint is True
         assert tools["create_item"].annotations.readOnlyHint is False
         assert tools["delete_item"].annotations.destructiveHint is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestDerivedPathParamAliasesOnRealServer:
+    """End-to-end: the alias map is populated from the real registered tool set.
+
+    Asserts against the built server rather than the spec dict, so a change that
+    only edits the OpenAPI spec (which curated tools shadow) cannot pass.
+    """
+
+    def _middleware(self, server):
+        from rootly_mcp_server.server import ArgumentNormalizationMiddleware
+
+        return next(m for m in server.middleware if isinstance(m, ArgumentNormalizationMiddleware))
+
+    async def _normalize(self, middleware, tool, arguments):
+        captured: dict = {}
+
+        async def call_next(context):
+            captured.update(context.message.arguments)
+            return "ok"
+
+        context = SimpleNamespace(message=SimpleNamespace(name=tool, arguments=dict(arguments)))
+        await middleware.on_call_tool(context, call_next)
+        return captured
+
+    async def test_semantic_id_is_rewritten_to_the_path_parameter(self, mock_environment_token):
+        server = create_rootly_mcp_server(hosted=False)
+        middleware = self._middleware(server)
+
+        assert await self._normalize(middleware, "get_team", {"team_id": "T1"}) == {"id": "T1"}
+        assert await self._normalize(middleware, "get_alert", {"alert_id": "A1"}) == {"id": "A1"}
+
+    async def test_curated_tools_taking_resource_id_are_not_rewritten(self, mock_environment_token):
+        """get_incident really takes incident_id; rewriting it would break it."""
+        server = create_rootly_mcp_server(hosted=False)
+        middleware = self._middleware(server)
+
+        assert await self._normalize(middleware, "get_incident", {"incident_id": "INC-1"}) == {
+            "incident_id": "INC-1"
+        }
+
+    async def test_canonical_id_wins_over_the_derived_alias(self, mock_environment_token):
+        server = create_rootly_mcp_server(hosted=False)
+        middleware = self._middleware(server)
+
+        result = await self._normalize(middleware, "get_team", {"team_id": "WRONG", "id": "RIGHT"})
+        assert result["id"] == "RIGHT"
+
+    async def test_every_derived_alias_targets_a_real_parameter(self, mock_environment_token):
+        """No alias may point at a parameter the tool does not expose."""
+        from rootly_mcp_server.server import _registered_tool_parameters
+
+        server = create_rootly_mcp_server(hosted=False)
+        middleware = self._middleware(server)
+        parameters = _registered_tool_parameters(server)
+
+        assert middleware.derived_renames, "expected derived aliases to be populated"
+        for tool, renames in middleware.derived_renames.items():
+            params = parameters[tool]
+            for alias, target in renames.items():
+                assert target in params, f"{tool}: target {target} missing"
+                assert alias not in params, f"{tool}: alias {alias} shadows a real param"

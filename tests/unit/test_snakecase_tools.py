@@ -169,3 +169,74 @@ class TestArgumentNormalizationMiddleware:
     async def test_no_op_for_unrelated_tools(self):
         _, args = await self._run("get_incident", {"incident_id": "123"})
         assert args == {"incident_id": "123"}
+
+
+@pytest.mark.unit
+class TestDerivedResourceIdAliases:
+    """Spec-derived `<resource>_id -> id` aliases for autogen single-resource tools.
+
+    Callers reach for the semantic name (`get_team(team_id=...)`) while the
+    autogen tool exposes the generic `id`. Those tools do not enforce
+    `required`, so the mismatch slips past validation and only fails when the
+    unsubstituted `/v1/teams/{id}` URL is rejected upstream.
+    """
+
+    def test_derives_alias_from_single_resource_paths(self):
+        from rootly_mcp_server.spec_transform import derive_resource_id_aliases
+
+        spec = {
+            "paths": {
+                "/v1/teams/{id}": {"get": {"operationId": "getTeam"}},
+                "/v1/alerts/{id}": {
+                    "get": {"operationId": "getAlert"},
+                    "put": {"operationId": "updateAlert"},
+                },
+                # collection endpoints and nested paths are not single-resource
+                "/v1/teams": {"get": {"operationId": "listTeams"}},
+                "/v1/alerts/{alert_id}/events": {"get": {"operationId": "listAlertEvents"}},
+            }
+        }
+
+        aliases = derive_resource_id_aliases(spec)
+
+        assert aliases["get_team"] == "team_id"
+        assert aliases["get_alert"] == "alert_id"
+        assert aliases["update_alert"] == "alert_id"
+        assert "list_teams" not in aliases
+        assert "list_alert_events" not in aliases
+
+    def test_filters_aliases_that_would_shadow_a_real_parameter(self):
+        from rootly_mcp_server.spec_transform import filter_colliding_aliases
+
+        aliases = {
+            "get_team": "team_id",
+            "get_incident": "incident_id",  # curated tool really takes incident_id
+            "get_thing": "thing_id",  # no `id` parameter to map onto
+        }
+        tool_parameters = {
+            "get_team": {"id", "include"},
+            "get_incident": {"incident_id", "context"},
+            "get_thing": {"slug"},
+        }
+
+        safe = filter_colliding_aliases(aliases, tool_parameters)
+
+        assert safe == {"get_team": {"team_id": "id"}}
+
+    def test_derived_aliases_cover_known_irregular_plurals(self):
+        """English pluralization is ambiguous; lock the tricky cases down.
+
+        `causes` -> `cause` but `statuses` -> `status`, and both end in "uses",
+        so these are driven by an explicit table rather than a guess.
+        """
+        from rootly_mcp_server.spec_transform import _singularize
+
+        assert _singularize("causes") == "cause"
+        assert _singularize("pulses") == "pulse"
+        assert _singularize("statuses") == "status"
+        assert _singularize("sub_statuses") == "sub_status"
+        assert _singularize("email_addresses") == "email_address"
+        assert _singularize("retrospective_processes") == "retrospective_process"
+        assert _singularize("severities") == "severity"
+        assert _singularize("escalation_policies") == "escalation_policy"
+        assert _singularize("teams") == "team"
