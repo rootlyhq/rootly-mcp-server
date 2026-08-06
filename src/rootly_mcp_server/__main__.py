@@ -245,7 +245,11 @@ def parse_args():
         "--no-enable-write-tools",
         dest="enable_write_tools",
         action="store_false",
-        default=True,
+        # Default None (not True) so "flag absent" is distinguishable from
+        # "flag passed -> False". Otherwise `args.enable_write_tools or <env>`
+        # short-circuits to True and ROOTLY_MCP_ENABLE_WRITE_TOOLS=false is
+        # silently ignored on the CLI / `python -m` path.
+        default=None,
         help="Disable write tools to expose read-only operations",
     )
     parser.add_argument(
@@ -712,8 +716,12 @@ def main():
         # argparse already normalizes/validates --transport via type=normalize_transport
         normalized_transport = args.transport
         code_mode_enabled = args.enable_code_mode or code_mode_enabled_from_env(default=True)
-        enable_write_tools = args.enable_write_tools or write_tools_enabled_from_env(
-            default=hosted_mode
+        # Explicit --no-enable-write-tools wins; otherwise fall back to the env
+        # var (default True to preserve full access and match get_server()).
+        enable_write_tools = (
+            args.enable_write_tools
+            if args.enable_write_tools is not None
+            else write_tools_enabled_from_env(default=True)
         )
         code_mode_path = (
             normalize_code_mode_path(args.code_mode_path)
