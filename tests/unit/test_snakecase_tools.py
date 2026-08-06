@@ -163,6 +163,11 @@ class TestArgumentNormalizationMiddleware:
             ("find_related_incidents", "limit", "max_results"),
             ("suggest_solutions", "description", "incident_description"),
             ("get_incident", "id", "incident_id"),
+            # Evidenced by Sentry (rootly-mcp, 14d): real rejected params.
+            ("suggest_solutions", "max_results", "max_solutions"),
+            ("list_incidents", "start_time", "started_after"),
+            ("list_incidents", "end_time", "started_before"),
+            ("list_incidents", "max_results", "page_size"),
         ],
     )
     async def test_renames_common_llm_argument_variants(self, tool, old_key, new_key):

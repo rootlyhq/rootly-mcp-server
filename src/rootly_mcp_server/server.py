@@ -483,8 +483,11 @@ _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
         "declared_after": "started_after",
         "description": "query",
         "incident_states": "status",
+        "end_time": "started_before",
         "limit": "page_size",
+        "max_results": "page_size",
         "per_page": "page_size",
+        "start_time": "started_after",
         # Singular -> the real service-name filter. Safe now that the tool
         # exposes service_names (filter[service_names]); previously this was
         # aliased to free-text `query`, which silently degraded a service
@@ -502,6 +505,9 @@ _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
     },
     "suggest_solutions": {
         "description": "incident_description",
+        # Callers reach for max_results (the name used by the sibling
+        # find_related_incidents tool); this tool's cap is max_solutions.
+        "max_results": "max_solutions",
         "query": "incident_description",
     },
 }

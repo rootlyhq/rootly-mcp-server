@@ -283,7 +283,16 @@ def register_incident_tools(
         started_after: str,
         started_before: str,
         custom_field_selected_option_ids: str,
-        sort: Literal["created_at", "-created_at", "updated_at", "-updated_at"],
+        sort: Literal[
+            "created_at",
+            "-created_at",
+            "updated_at",
+            "-updated_at",
+            "started_at",
+            "-started_at",
+            "resolved_at",
+            "-resolved_at",
+        ],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build shared incident query params and filter metadata for list/collect tools."""
         resolved_team_lookup: dict[str, str] = {}
@@ -399,9 +408,18 @@ def register_incident_tools(
             ),
         ] = "",
         sort: Annotated[
-            Literal["created_at", "-created_at", "updated_at", "-updated_at"],
+            Literal[
+                "created_at",
+                "-created_at",
+                "updated_at",
+                "-updated_at",
+                "started_at",
+                "-started_at",
+                "resolved_at",
+                "-resolved_at",
+            ],
             Field(
-                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at"
+                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at, started_at, -started_at, resolved_at, -resolved_at"
             ),
         ] = "-created_at",
         page_size: Annotated[
@@ -535,9 +553,18 @@ def register_incident_tools(
             ),
         ] = "",
         sort: Annotated[
-            Literal["created_at", "-created_at", "updated_at", "-updated_at"],
+            Literal[
+                "created_at",
+                "-created_at",
+                "updated_at",
+                "-updated_at",
+                "started_at",
+                "-started_at",
+                "resolved_at",
+                "-resolved_at",
+            ],
             Field(
-                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at"
+                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at, started_at, -started_at, resolved_at, -resolved_at"
             ),
         ] = "-created_at",
         max_results: Annotated[
