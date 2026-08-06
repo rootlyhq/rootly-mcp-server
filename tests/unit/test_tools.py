@@ -912,6 +912,99 @@ class TestStructuredListIncidentsTool:
         assert "filter[service_names]" not in sent_params
         assert sent_params["filter[service_ids]"] == "svc-1"
 
+    async def test_search_incidents_clamps_and_reports_over_cap_page_size(self):
+        """Over-cap page_size is capped, not rejected, and the cap is reported.
+
+        Sentry showed ~226 events/14d of hard ValidationError failures for
+        over-cap page_size/max_results. Capping avoids the wasted round trip, but
+        must never look like a complete result set - hence the meta signal.
+        """
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {"total_count": 5077}}
+        request.return_value = response
+
+        result = await tools["search_incidents"](query="x", page_size=250, page_number=1)
+
+        assert request.await_args is not None
+        assert request.await_args.kwargs["params"]["page[size]"] == 100
+        assert result["meta"]["requested_page_size"] == 250
+        assert result["meta"]["page_size"] == 100
+        assert result["meta"]["clamped"] is True
+        # upstream total is preserved so the caller can see there is more
+        assert result["meta"]["total_count"] == 5077
+
+    async def test_search_incidents_clamps_and_reports_over_cap_max_results(self):
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [{"id": f"i{i}", "attributes": {}} for i in range(20)],
+            "meta": {"total_pages": 254, "current_page": 1},
+        }  # fewer than page_size -> paging stops after one page
+        request.return_value = response
+
+        result = await tools["search_incidents"](query="x", page_number=0, max_results=200)
+
+        assert result["meta"]["requested_max_results"] == 200
+        assert result["meta"]["max_results"] == 50
+        # paging continues until the clamped ceiling, then truncates to it
+        assert result["meta"]["total_fetched"] == 50
+        assert result["meta"]["clamped"] is True
+
+    async def test_search_incidents_returns_compact_summaries(self):
+        """search_incidents returns the same compact shape as list_incidents.
+
+        Previously it returned the raw JSON:API envelope (67 attributes/record
+        after stripping, ~1.2k tokens each) because the Rootly API ignores
+        fields[incidents]. Summarizing cuts ~83% and is what allows the cap to
+        rise from 10 to 50 while costing fewer tokens than before.
+        """
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [
+                {
+                    "id": "inc-1",
+                    "type": "incidents",
+                    "attributes": {
+                        "sequential_id": 42,
+                        "title": "Search degraded",
+                        "status": "resolved",
+                        "unrelated_bloat": "x" * 500,
+                    },
+                }
+            ],
+            "meta": {"total_count": 5077},
+        }
+        request.return_value = response
+
+        result = await tools["search_incidents"](query="x", page_number=1)
+
+        assert "incidents" in result
+        record = result["incidents"][0]
+        assert record["incident_id"] == "inc-1"
+        assert record["incident_number"] == "INC-42"
+        assert record["title"] == "Search degraded"
+        # the 500-byte bloat field is dropped
+        assert "unrelated_bloat" not in record
+        # upstream pagination context is preserved
+        assert result["meta"]["total_count"] == 5077
+
+    async def test_search_incidents_within_cap_reports_no_clamp(self):
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {}}
+        request.return_value = response
+
+        result = await tools["search_incidents"](query="x", page_number=0, max_results=5)
+
+        assert "clamped" not in result["meta"]
+        assert "requested_max_results" not in result["meta"]
+
     async def test_list_incidents_resolves_team_names_to_ids(self):
         tools, request = self._register_tools()
 
