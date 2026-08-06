@@ -456,11 +456,64 @@ class CamelCaseAliasMiddleware(fastmcp_middleware.Middleware):
 
 
 _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
+    "collect_incidents": {
+        "end": "started_before",
+        "limit": "max_results",
+        "max_incidents": "max_results",
+        "start": "started_after",
+        "start_time": "started_after",
+    },
+    "find_related_incidents": {
+        "alert_description": "incident_description",
+        "alert_name": "incident_description",
+        "alert_summary": "incident_description",
+        "description": "incident_description",
+        "incident_title": "incident_description",
+        "limit": "max_results",
+        "max_solutions": "max_results",
+        "query": "incident_description",
+    },
+    "get_incident": {"id": "incident_id"},
+    "list_incidents": {
+        # "declared_after" has no distinct upstream filter; "declared" is a
+        # reasonable synonym for when the incident started. We deliberately do
+        # NOT alias created_at* here: /v1/incidents exposes filter[created_at]
+        # and filter[started_at] as separate filters, so redirecting a
+        # created_at request onto started_at would silently return wrong rows.
+        "declared_after": "started_after",
+        "description": "query",
+        "incident_states": "status",
+        "end_time": "started_before",
+        "limit": "page_size",
+        "max_results": "page_size",
+        "per_page": "page_size",
+        "start_time": "started_after",
+        # Singular -> the real service-name filter. Safe now that the tool
+        # exposes service_names (filter[service_names]); previously this was
+        # aliased to free-text `query`, which silently degraded a service
+        # filter into a title/summary search.
+        "service_name": "service_names",
+    },
     "list_shifts": {"from": "from_date", "to": "to_date"},
-    "search_incidents": {"max_tokens": "max_results"},
+    "search_incidents": {
+        "description": "query",
+        "limit": "max_results",
+        "max_tokens": "max_results",
+        "pattern": "query",
+        "search": "query",
+        "search_term": "query",
+    },
+    "suggest_solutions": {
+        "description": "incident_description",
+        # Callers reach for max_results (the name used by the sibling
+        # find_related_incidents tool); this tool's cap is max_solutions.
+        "max_results": "max_solutions",
+        "query": "incident_description",
+    },
 }
 
 _LIST_TO_CSV_ARGS: dict[str, set[str]] = {
+    "list_incidents": {"status", "service_names"},
     "list_shifts": {"schedule_ids", "user_ids"},
     "get_oncall_shift_metrics": {"schedule_ids", "user_ids", "team_ids"},
     "get_oncall_schedule_summary": {"schedule_ids", "team_ids"},

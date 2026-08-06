@@ -877,6 +877,134 @@ class TestStructuredListIncidentsTool:
         ]
 
     @pytest.mark.asyncio
+    async def test_list_incidents_sends_service_names_filter(self):
+        """service_names must reach the API as filter[service_names].
+
+        Asserts the outgoing request params (not the OpenAPI spec) so a change
+        that only edits the spec — which the curated list_incidents shadows —
+        cannot pass this test.
+        """
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {}}
+        request.return_value = response
+
+        await tools["list_incidents"](service_names="search-svc,checkout")
+
+        assert request.await_args is not None
+        sent_params = request.await_args.kwargs["params"]
+        assert sent_params["filter[service_names]"] == "search-svc,checkout"
+        # service_ids stays independent and is omitted when unset
+        assert "filter[service_ids]" not in sent_params
+
+    async def test_list_incidents_omits_service_names_filter_when_unset(self):
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {}}
+        request.return_value = response
+
+        await tools["list_incidents"](service_ids="svc-1")
+
+        assert request.await_args is not None
+        sent_params = request.await_args.kwargs["params"]
+        assert "filter[service_names]" not in sent_params
+        assert sent_params["filter[service_ids]"] == "svc-1"
+
+    async def test_search_incidents_clamps_and_reports_over_cap_page_size(self):
+        """Over-cap page_size is capped, not rejected, and the cap is reported.
+
+        Sentry showed ~226 events/14d of hard ValidationError failures for
+        over-cap page_size/max_results. Capping avoids the wasted round trip, but
+        must never look like a complete result set - hence the meta signal.
+        """
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {"total_count": 5077}}
+        request.return_value = response
+
+        result = await tools["search_incidents"](query="x", page_size=250, page_number=1)
+
+        assert request.await_args is not None
+        assert request.await_args.kwargs["params"]["page[size]"] == 100
+        assert result["meta"]["requested_page_size"] == 250
+        assert result["meta"]["page_size"] == 100
+        assert result["meta"]["clamped"] is True
+        # upstream total is preserved so the caller can see there is more
+        assert result["meta"]["total_count"] == 5077
+
+    async def test_search_incidents_clamps_and_reports_over_cap_max_results(self):
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [{"id": f"i{i}", "attributes": {}} for i in range(20)],
+            "meta": {"total_pages": 254, "current_page": 1},
+        }  # fewer than page_size -> paging stops after one page
+        request.return_value = response
+
+        result = await tools["search_incidents"](query="x", page_number=0, max_results=200)
+
+        assert result["meta"]["requested_max_results"] == 200
+        assert result["meta"]["max_results"] == 50
+        # paging continues until the clamped ceiling, then truncates to it
+        assert result["meta"]["total_fetched"] == 50
+        assert result["meta"]["clamped"] is True
+
+    async def test_search_incidents_returns_compact_summaries(self):
+        """search_incidents returns the same compact shape as list_incidents.
+
+        Previously it returned the raw JSON:API envelope (67 attributes/record
+        after stripping, ~1.2k tokens each) because the Rootly API ignores
+        fields[incidents]. Summarizing cuts ~83% and is what allows the cap to
+        rise from 10 to 50 while costing fewer tokens than before.
+        """
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [
+                {
+                    "id": "inc-1",
+                    "type": "incidents",
+                    "attributes": {
+                        "sequential_id": 42,
+                        "title": "Search degraded",
+                        "status": "resolved",
+                        "unrelated_bloat": "x" * 500,
+                    },
+                }
+            ],
+            "meta": {"total_count": 5077},
+        }
+        request.return_value = response
+
+        result = await tools["search_incidents"](query="x", page_number=1)
+
+        assert "incidents" in result
+        record = result["incidents"][0]
+        assert record["incident_id"] == "inc-1"
+        assert record["incident_number"] == "INC-42"
+        assert record["title"] == "Search degraded"
+        # the 500-byte bloat field is dropped
+        assert "unrelated_bloat" not in record
+        # upstream pagination context is preserved
+        assert result["meta"]["total_count"] == 5077
+
+    async def test_search_incidents_within_cap_reports_no_clamp(self):
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {}}
+        request.return_value = response
+
+        result = await tools["search_incidents"](query="x", page_number=0, max_results=5)
+
+        assert "clamped" not in result["meta"]
+        assert "requested_max_results" not in result["meta"]
+
     async def test_list_incidents_resolves_team_names_to_ids(self):
         tools, request = self._register_tools()
 
@@ -1534,3 +1662,76 @@ class TestIncidentToolsHardening:
 
         assert result["meta"]["partial"] is True
         assert "error" in result["meta"]
+
+
+@pytest.mark.unit
+class TestIncidentQueryContract:
+    """Pin the parameters the incident tools forward to the OpenAPI contract.
+
+    The other tests mock the upstream, so a wrong filter or sort name would sail
+    through: the request is simply rejected or silently ignored in production.
+    These assert the names we send actually exist for GET /v1/incidents, so a
+    typo — or a spec regeneration that drops a parameter — fails in CI.
+    """
+
+    @staticmethod
+    def _incident_get_parameters() -> list[dict]:
+        import json
+        import os
+
+        from rootly_mcp_server import server as server_module
+
+        spec_path = os.path.join(os.path.dirname(server_module.__file__), "data", "swagger.json")
+        with open(spec_path, encoding="utf-8") as handle:
+            spec = json.load(handle)
+        return spec["paths"]["/v1/incidents"]["get"]["parameters"]
+
+    def test_forwarded_incident_filters_exist_upstream(self):
+        """Every filter[...] key the shared query builder sends must be real."""
+        import inspect
+        import re
+
+        from rootly_mcp_server.tools import incidents as incidents_module
+
+        source = inspect.getsource(incidents_module.register_incident_tools)
+        # The shared builder for list_incidents/collect_incidents.
+        start = source.index("async def _prepare_incident_query_context")
+        end = source.index("return params, filters", start)
+        forwarded = set(re.findall(r'params\["(filter\[[^"]+\])"\]', source[start:end]))
+        assert forwarded, "expected to find forwarded filter parameters"
+
+        supported = {p.get("name") for p in self._incident_get_parameters()}
+        unsupported = sorted(forwarded - supported)
+        assert unsupported == [], (
+            f"these filters are sent but not defined on GET /v1/incidents: {unsupported}"
+        )
+        # Guards the specific parameter this PR added.
+        assert "filter[service_names]" in forwarded
+        assert "filter[service_names]" in supported
+
+    def test_exposed_sort_values_are_a_subset_of_upstream(self):
+        """The tools must never accept a sort the endpoint would reject."""
+        import asyncio
+
+        from rootly_mcp_server.server import create_rootly_mcp_server
+
+        upstream: set[str] = set()
+        for parameter in self._incident_get_parameters():
+            if parameter.get("name") == "sort":
+                upstream = set(parameter["schema"].get("enum") or [])
+        assert upstream, "expected a sort enum in the contract"
+
+        async def exposed(tool_name: str) -> set[str]:
+            server = create_rootly_mcp_server(hosted=False)
+            tools = {t.name: t for t in await server.list_tools()}
+            schema = getattr(tools[tool_name], "parameters", None) or {}
+            return set(schema.get("properties", {}).get("sort", {}).get("enum") or [])
+
+        for tool_name in ("list_incidents", "collect_incidents"):
+            values = asyncio.run(exposed(tool_name))
+            assert values, f"{tool_name} should expose a sort enum"
+            assert values <= upstream, (
+                f"{tool_name} accepts sorts the endpoint rejects: {sorted(values - upstream)}"
+            )
+            # Guards the values this PR added.
+            assert {"started_at", "-started_at", "resolved_at", "-resolved_at"} <= values

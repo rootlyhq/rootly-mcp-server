@@ -28,6 +28,10 @@ INCIDENT_LIST_FIELDS = (
     "started_at,resolved_at,retrospective_progress_status"
 )
 INCIDENT_REFERENCE_FIELDS = "id,sequential_id"
+# Effective caps for search_incidents. Requests above these are capped rather
+# than rejected (callers routinely ask for more); the response reports the cap.
+SEARCH_MAX_PAGE_SIZE = 100
+SEARCH_MAX_RESULTS = 50
 INCIDENT_UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
@@ -277,12 +281,22 @@ def register_incident_tools(
         teams: str,
         team_ids: str,
         service_ids: str,
+        service_names: str,
         severity: str,
         status: str,
         started_after: str,
         started_before: str,
         custom_field_selected_option_ids: str,
-        sort: Literal["created_at", "-created_at", "updated_at", "-updated_at"],
+        sort: Literal[
+            "created_at",
+            "-created_at",
+            "updated_at",
+            "-updated_at",
+            "started_at",
+            "-started_at",
+            "resolved_at",
+            "-resolved_at",
+        ],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build shared incident query params and filter metadata for list/collect tools."""
         resolved_team_lookup: dict[str, str] = {}
@@ -310,6 +324,8 @@ def register_incident_tools(
             params["filter[team_ids]"] = resolved_team_ids
         if service_ids:
             params["filter[service_ids]"] = service_ids
+        if service_names:
+            params["filter[service_names]"] = service_names
         if severity:
             params["filter[severity]"] = severity
         if status:
@@ -328,6 +344,7 @@ def register_incident_tools(
             "resolved_team_ids": resolved_team_ids,
             "resolved_team_lookup": resolved_team_lookup,
             "service_ids": service_ids,
+            "service_names": service_names,
             "severity": severity,
             "status": status,
             "started_after": started_after,
@@ -364,6 +381,12 @@ def register_incident_tools(
                 description="Comma-separated Rootly service IDs to filter incidents (e.g., 'svc-1,svc-2')"
             ),
         ] = "",
+        service_names: Annotated[
+            str,
+            Field(
+                description="Comma-separated Rootly service names to filter incidents (e.g., 'search-svc,checkout'). Use when you know the service by name rather than its ID."
+            ),
+        ] = "",
         severity: Annotated[
             str,
             Field(description="Optional severity filter (e.g., critical, high, medium, low)"),
@@ -389,9 +412,18 @@ def register_incident_tools(
             ),
         ] = "",
         sort: Annotated[
-            Literal["created_at", "-created_at", "updated_at", "-updated_at"],
+            Literal[
+                "created_at",
+                "-created_at",
+                "updated_at",
+                "-updated_at",
+                "started_at",
+                "-started_at",
+                "resolved_at",
+                "-resolved_at",
+            ],
             Field(
-                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at"
+                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at, started_at, -started_at, resolved_at, -resolved_at"
             ),
         ] = "-created_at",
         page_size: Annotated[
@@ -421,6 +453,7 @@ def register_incident_tools(
                 teams=teams,
                 team_ids=team_ids,
                 service_ids=service_ids,
+                service_names=service_names,
                 severity=severity,
                 status=status,
                 started_after=started_after,
@@ -493,6 +526,12 @@ def register_incident_tools(
                 description="Comma-separated Rootly service IDs to filter incidents (e.g., 'svc-1,svc-2')"
             ),
         ] = "",
+        service_names: Annotated[
+            str,
+            Field(
+                description="Comma-separated Rootly service names to filter incidents (e.g., 'search-svc,checkout'). Use when you know the service by name rather than its ID."
+            ),
+        ] = "",
         severity: Annotated[
             str,
             Field(description="Optional severity filter (e.g., critical, high, medium, low)"),
@@ -518,9 +557,18 @@ def register_incident_tools(
             ),
         ] = "",
         sort: Annotated[
-            Literal["created_at", "-created_at", "updated_at", "-updated_at"],
+            Literal[
+                "created_at",
+                "-created_at",
+                "updated_at",
+                "-updated_at",
+                "started_at",
+                "-started_at",
+                "resolved_at",
+                "-resolved_at",
+            ],
             Field(
-                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at"
+                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at, started_at, -started_at, resolved_at, -resolved_at"
             ),
         ] = "-created_at",
         max_results: Annotated[
@@ -552,6 +600,7 @@ def register_incident_tools(
                 teams=teams,
                 team_ids=team_ids,
                 service_ids=service_ids,
+                service_names=service_names,
                 severity=severity,
                 status=status,
                 started_after=started_after,
@@ -635,7 +684,14 @@ def register_incident_tools(
             str, Field(description="Search query to filter incidents by title/summary")
         ] = "",
         page_size: Annotated[
-            int, Field(description="Number of results per page (max: 20)", ge=1, le=20)
+            int,
+            Field(
+                description=(
+                    "Number of results per page. Effective max is 100; larger values are "
+                    "capped and the response reports the cap."
+                ),
+                ge=1,
+            ),
         ] = 10,
         page_number: Annotated[
             int, Field(description="Page number to retrieve (use 0 for all pages)", ge=0)
@@ -645,11 +701,11 @@ def register_incident_tools(
             Field(
                 description=(
                     "Maximum total results when fetching all pages "
-                    "(ignored if page_number > 0). Max: 10. For larger result sets, use "
-                    "page_number > 0 and paginate explicitly, or use collect_incidents."
+                    "(ignored if page_number > 0). Effective max is 50; larger values are "
+                    "capped and the response reports the cap. For larger result sets "
+                    "use collect_incidents."
                 ),
                 ge=1,
-                le=10,
             ),
         ] = 5,
     ) -> JsonDict:
@@ -659,8 +715,22 @@ def register_incident_tools(
         Use page_number=0 to fetch all matching results across multiple pages up to max_results.
         Use page_number>0 to fetch a specific page.
 
-        Argument caps: page_size <= 20, max_results <= 10.
+        Returns compact incident summaries (same shape as list_incidents).
+
+        Argument caps: page_size <= 100, max_results <= 50. Larger values are capped
+        rather than rejected; the response's meta reports the requested value and the
+        applied cap so a capped result is never mistaken for a complete one.
         """
+        requested_page_size = page_size
+        requested_max_results = max_results
+        page_size = min(page_size, SEARCH_MAX_PAGE_SIZE)
+        max_results = min(max_results, SEARCH_MAX_RESULTS)
+        clamped: dict[str, int] = {}
+        if requested_page_size != page_size:
+            clamped["requested_page_size"] = requested_page_size
+        if requested_max_results != max_results:
+            clamped["requested_max_results"] = requested_max_results
+
         # Single page mode
         if page_number > 0:
             params = {
@@ -675,7 +745,20 @@ def register_incident_tools(
             try:
                 response = await make_authenticated_request("GET", "/v1/incidents", params=params)
                 response.raise_for_status()
-                return strip_heavy_nested_data(response.json())
+                raw = response.json()
+                upstream_meta = raw.get("meta") if isinstance(raw, dict) else None
+                return {
+                    "incidents": [
+                        _summarize_incident_record(record) for record in (raw.get("data") or [])
+                    ],
+                    "meta": {
+                        **(upstream_meta if isinstance(upstream_meta, dict) else {}),
+                        "page_size": page_size,
+                        "page_number": page_number,
+                        **clamped,
+                        **({"clamped": True} if clamped else {}),
+                    },
+                }
             except Exception as e:
                 error_type, error_message = mcp_error.categorize_error(e)
                 return _augment_pagination_error(
@@ -752,9 +835,10 @@ def register_incident_tools(
             if len(all_incidents) > max_results:
                 all_incidents = all_incidents[:max_results]
 
-            return strip_heavy_nested_data(
+            return cast(
+                JsonDict,
                 {
-                    "data": all_incidents,
+                    "incidents": [_summarize_incident_record(record) for record in all_incidents],
                     "meta": {
                         "total_fetched": len(all_incidents),
                         "max_results": max_results,
@@ -764,9 +848,11 @@ def register_incident_tools(
                         # True when paging stopped early due to a page error; the
                         # result set is incomplete.
                         "partial": page_error is not None,
+                        **clamped,
+                        **({"clamped": True} if clamped else {}),
                         **({"error": page_error} if page_error else {}),
                     },
-                }
+                },
             )
         except Exception as e:
             error_type, error_message = mcp_error.categorize_error(e)

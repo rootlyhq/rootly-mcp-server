@@ -145,6 +145,85 @@ class TestArgumentNormalizationMiddleware:
         assert args["max_results"] == "3000"
         assert "max_tokens" not in args
 
+    @pytest.mark.parametrize(
+        ("tool", "old_key", "new_key"),
+        [
+            ("search_incidents", "limit", "max_results"),
+            ("search_incidents", "search_term", "query"),
+            ("search_incidents", "pattern", "query"),
+            ("list_incidents", "declared_after", "started_after"),
+            ("list_incidents", "limit", "page_size"),
+            ("list_incidents", "per_page", "page_size"),
+            ("list_incidents", "description", "query"),
+            ("collect_incidents", "max_incidents", "max_results"),
+            ("collect_incidents", "start_time", "started_after"),
+            ("collect_incidents", "end", "started_before"),
+            ("find_related_incidents", "query", "incident_description"),
+            ("find_related_incidents", "alert_summary", "incident_description"),
+            ("find_related_incidents", "limit", "max_results"),
+            ("suggest_solutions", "description", "incident_description"),
+            ("get_incident", "id", "incident_id"),
+            # Evidenced by Sentry (rootly-mcp, 14d): real rejected params.
+            ("suggest_solutions", "max_results", "max_solutions"),
+            ("list_incidents", "start_time", "started_after"),
+            ("list_incidents", "end_time", "started_before"),
+            ("list_incidents", "max_results", "page_size"),
+        ],
+    )
+    async def test_renames_common_llm_argument_variants(self, tool, old_key, new_key):
+        _, args = await self._run(tool, {old_key: "value"})
+        assert args[new_key] == "value"
+        assert old_key not in args
+
+    async def test_converts_incident_states_list_to_status_csv(self):
+        _, args = await self._run(
+            "list_incidents",
+            {"incident_states": ["started", "mitigated", "resolved"]},
+        )
+        assert args["status"] == "started,mitigated,resolved"
+        assert "incident_states" not in args
+
+    async def test_canonical_argument_wins_over_alias(self):
+        # When both the alias and its canonical target are supplied, the
+        # canonical value is preserved and the alias is left untouched.
+        _, args = await self._run(
+            "list_incidents",
+            {"limit": "50", "page_size": "10"},
+        )
+        assert args["page_size"] == "10"
+        assert args["limit"] == "50"
+
+    async def test_converts_service_names_list_to_csv(self):
+        # filter[service_names] accepts comma-separated values upstream, so a
+        # list from an LLM client is joined rather than rejected.
+        _, args = await self._run(
+            "list_incidents",
+            {"service_names": ["search-svc", "elasticsearch-prod"]},
+        )
+        assert args["service_names"] == "search-svc,elasticsearch-prod"
+
+    async def test_service_name_list_is_renamed_then_csv_joined(self):
+        # Rename runs before the CSV pass, so the singular alias also works
+        # when the client sends a list.
+        _, args = await self._run("list_incidents", {"service_name": ["a", "b"]})
+        assert args["service_names"] == "a,b"
+        assert "service_name" not in args
+
+    async def test_service_name_maps_to_the_real_service_names_filter(self):
+        # Maps to the actual service-name filter, never to free-text `query`
+        # (which would silently degrade a service filter into a title search).
+        _, args = await self._run("list_incidents", {"service_name": "search-svc"})
+        assert args["service_names"] == "search-svc"
+        assert "query" not in args
+        assert "service_name" not in args
+
+    async def test_created_at_is_not_aliased_to_started_after(self):
+        # created_at and started_at are distinct upstream filters; a created_at
+        # request must not be silently redirected onto started_at.
+        _, args = await self._run("list_incidents", {"created_at_gte": "2026-01-01"})
+        assert "started_after" not in args
+        assert args["created_at_gte"] == "2026-01-01"
+
     async def test_converts_list_schedule_ids_to_csv(self):
         _, args = await self._run(
             "list_shifts",
