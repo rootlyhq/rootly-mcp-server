@@ -1662,3 +1662,76 @@ class TestIncidentToolsHardening:
 
         assert result["meta"]["partial"] is True
         assert "error" in result["meta"]
+
+
+@pytest.mark.unit
+class TestIncidentQueryContract:
+    """Pin the parameters the incident tools forward to the OpenAPI contract.
+
+    The other tests mock the upstream, so a wrong filter or sort name would sail
+    through: the request is simply rejected or silently ignored in production.
+    These assert the names we send actually exist for GET /v1/incidents, so a
+    typo — or a spec regeneration that drops a parameter — fails in CI.
+    """
+
+    @staticmethod
+    def _incident_get_parameters() -> list[dict]:
+        import json
+        import os
+
+        from rootly_mcp_server import server as server_module
+
+        spec_path = os.path.join(os.path.dirname(server_module.__file__), "data", "swagger.json")
+        with open(spec_path, encoding="utf-8") as handle:
+            spec = json.load(handle)
+        return spec["paths"]["/v1/incidents"]["get"]["parameters"]
+
+    def test_forwarded_incident_filters_exist_upstream(self):
+        """Every filter[...] key the shared query builder sends must be real."""
+        import inspect
+        import re
+
+        from rootly_mcp_server.tools import incidents as incidents_module
+
+        source = inspect.getsource(incidents_module.register_incident_tools)
+        # The shared builder for list_incidents/collect_incidents.
+        start = source.index("async def _prepare_incident_query_context")
+        end = source.index("return params, filters", start)
+        forwarded = set(re.findall(r'params\["(filter\[[^"]+\])"\]', source[start:end]))
+        assert forwarded, "expected to find forwarded filter parameters"
+
+        supported = {p.get("name") for p in self._incident_get_parameters()}
+        unsupported = sorted(forwarded - supported)
+        assert unsupported == [], (
+            f"these filters are sent but not defined on GET /v1/incidents: {unsupported}"
+        )
+        # Guards the specific parameter this PR added.
+        assert "filter[service_names]" in forwarded
+        assert "filter[service_names]" in supported
+
+    def test_exposed_sort_values_are_a_subset_of_upstream(self):
+        """The tools must never accept a sort the endpoint would reject."""
+        import asyncio
+
+        from rootly_mcp_server.server import create_rootly_mcp_server
+
+        upstream: set[str] = set()
+        for parameter in self._incident_get_parameters():
+            if parameter.get("name") == "sort":
+                upstream = set(parameter["schema"].get("enum") or [])
+        assert upstream, "expected a sort enum in the contract"
+
+        async def exposed(tool_name: str) -> set[str]:
+            server = create_rootly_mcp_server(hosted=False)
+            tools = {t.name: t for t in await server.list_tools()}
+            schema = getattr(tools[tool_name], "parameters", None) or {}
+            return set(schema.get("properties", {}).get("sort", {}).get("enum") or [])
+
+        for tool_name in ("list_incidents", "collect_incidents"):
+            values = asyncio.run(exposed(tool_name))
+            assert values, f"{tool_name} should expose a sort enum"
+            assert values <= upstream, (
+                f"{tool_name} accepts sorts the endpoint rejects: {sorted(values - upstream)}"
+            )
+            # Guards the values this PR added.
+            assert {"started_at", "-started_at", "resolved_at", "-resolved_at"} <= values
