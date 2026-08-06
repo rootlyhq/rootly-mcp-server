@@ -480,14 +480,16 @@ _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
         # NOT alias created_at* here: /v1/incidents exposes filter[created_at]
         # and filter[started_at] as separate filters, so redirecting a
         # created_at request onto started_at would silently return wrong rows.
-        # We also do NOT alias service_name -> query: that turns a service
-        # filter into a free-text title/summary search, which is lossy and
-        # reinterprets a resource identifier the tool cannot resolve.
         "declared_after": "started_after",
         "description": "query",
         "incident_states": "status",
         "limit": "page_size",
         "per_page": "page_size",
+        # Singular -> the real service-name filter. Safe now that the tool
+        # exposes service_names (filter[service_names]); previously this was
+        # aliased to free-text `query`, which silently degraded a service
+        # filter into a title/summary search.
+        "service_name": "service_names",
     },
     "list_shifts": {"from": "from_date", "to": "to_date"},
     "search_incidents": {
@@ -505,7 +507,7 @@ _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
 }
 
 _LIST_TO_CSV_ARGS: dict[str, set[str]] = {
-    "list_incidents": {"status"},
+    "list_incidents": {"status", "service_names"},
     "list_shifts": {"schedule_ids", "user_ids"},
     "get_oncall_shift_metrics": {"schedule_ids", "user_ids", "team_ids"},
     "get_oncall_schedule_summary": {"schedule_ids", "team_ids"},

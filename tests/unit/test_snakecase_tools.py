@@ -188,11 +188,29 @@ class TestArgumentNormalizationMiddleware:
         assert args["page_size"] == "10"
         assert args["limit"] == "50"
 
-    async def test_service_name_is_not_aliased_to_query(self):
-        # service_name must not be reinterpreted as a free-text search.
+    async def test_converts_service_names_list_to_csv(self):
+        # filter[service_names] accepts comma-separated values upstream, so a
+        # list from an LLM client is joined rather than rejected.
+        _, args = await self._run(
+            "list_incidents",
+            {"service_names": ["search-svc", "elasticsearch-prod"]},
+        )
+        assert args["service_names"] == "search-svc,elasticsearch-prod"
+
+    async def test_service_name_list_is_renamed_then_csv_joined(self):
+        # Rename runs before the CSV pass, so the singular alias also works
+        # when the client sends a list.
+        _, args = await self._run("list_incidents", {"service_name": ["a", "b"]})
+        assert args["service_names"] == "a,b"
+        assert "service_name" not in args
+
+    async def test_service_name_maps_to_the_real_service_names_filter(self):
+        # Maps to the actual service-name filter, never to free-text `query`
+        # (which would silently degrade a service filter into a title search).
         _, args = await self._run("list_incidents", {"service_name": "search-svc"})
+        assert args["service_names"] == "search-svc"
         assert "query" not in args
-        assert args["service_name"] == "search-svc"
+        assert "service_name" not in args
 
     async def test_created_at_is_not_aliased_to_started_after(self):
         # created_at and started_at are distinct upstream filters; a created_at

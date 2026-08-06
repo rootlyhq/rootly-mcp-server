@@ -277,6 +277,7 @@ def register_incident_tools(
         teams: str,
         team_ids: str,
         service_ids: str,
+        service_names: str,
         severity: str,
         status: str,
         started_after: str,
@@ -310,6 +311,8 @@ def register_incident_tools(
             params["filter[team_ids]"] = resolved_team_ids
         if service_ids:
             params["filter[service_ids]"] = service_ids
+        if service_names:
+            params["filter[service_names]"] = service_names
         if severity:
             params["filter[severity]"] = severity
         if status:
@@ -328,6 +331,7 @@ def register_incident_tools(
             "resolved_team_ids": resolved_team_ids,
             "resolved_team_lookup": resolved_team_lookup,
             "service_ids": service_ids,
+            "service_names": service_names,
             "severity": severity,
             "status": status,
             "started_after": started_after,
@@ -362,6 +366,12 @@ def register_incident_tools(
             str,
             Field(
                 description="Comma-separated Rootly service IDs to filter incidents (e.g., 'svc-1,svc-2')"
+            ),
+        ] = "",
+        service_names: Annotated[
+            str,
+            Field(
+                description="Comma-separated Rootly service names to filter incidents (e.g., 'search-svc,checkout'). Use when you know the service by name rather than its ID."
             ),
         ] = "",
         severity: Annotated[
@@ -421,6 +431,7 @@ def register_incident_tools(
                 teams=teams,
                 team_ids=team_ids,
                 service_ids=service_ids,
+                service_names=service_names,
                 severity=severity,
                 status=status,
                 started_after=started_after,
@@ -493,6 +504,12 @@ def register_incident_tools(
                 description="Comma-separated Rootly service IDs to filter incidents (e.g., 'svc-1,svc-2')"
             ),
         ] = "",
+        service_names: Annotated[
+            str,
+            Field(
+                description="Comma-separated Rootly service names to filter incidents (e.g., 'search-svc,checkout'). Use when you know the service by name rather than its ID."
+            ),
+        ] = "",
         severity: Annotated[
             str,
             Field(description="Optional severity filter (e.g., critical, high, medium, low)"),
@@ -552,6 +569,7 @@ def register_incident_tools(
                 teams=teams,
                 team_ids=team_ids,
                 service_ids=service_ids,
+                service_names=service_names,
                 severity=severity,
                 status=status,
                 started_after=started_after,

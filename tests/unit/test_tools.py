@@ -877,6 +877,41 @@ class TestStructuredListIncidentsTool:
         ]
 
     @pytest.mark.asyncio
+    async def test_list_incidents_sends_service_names_filter(self):
+        """service_names must reach the API as filter[service_names].
+
+        Asserts the outgoing request params (not the OpenAPI spec) so a change
+        that only edits the spec — which the curated list_incidents shadows —
+        cannot pass this test.
+        """
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {}}
+        request.return_value = response
+
+        await tools["list_incidents"](service_names="search-svc,checkout")
+
+        assert request.await_args is not None
+        sent_params = request.await_args.kwargs["params"]
+        assert sent_params["filter[service_names]"] == "search-svc,checkout"
+        # service_ids stays independent and is omitted when unset
+        assert "filter[service_ids]" not in sent_params
+
+    async def test_list_incidents_omits_service_names_filter_when_unset(self):
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": [], "meta": {}}
+        request.return_value = response
+
+        await tools["list_incidents"](service_ids="svc-1")
+
+        assert request.await_args is not None
+        sent_params = request.await_args.kwargs["params"]
+        assert "filter[service_names]" not in sent_params
+        assert sent_params["filter[service_ids]"] == "svc-1"
+
     async def test_list_incidents_resolves_team_names_to_ids(self):
         tools, request = self._register_tools()
 
