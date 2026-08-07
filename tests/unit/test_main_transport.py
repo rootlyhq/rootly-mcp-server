@@ -397,7 +397,12 @@ def test_maybe_enable_mcpcat_tracking_configures_sentry_exporter():
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
     options = agentcat_module.track.call_args.args[2]
-    assert options.redact_sensitive_information("Bearer production-secret") == "[REDACTED]"
+    # The hook scrubs the credential while leaving the surrounding text
+    # readable — a blanket placeholder would destroy error grouping and the
+    # client/server identifiers the telemetry backend needs.
+    redact = options.redact_sensitive_information
+    assert redact("Bearer production-secret") == "Bearer [redacted]"
+    assert redact("HTTP error 404: Not Found") == "HTTP error 404: Not Found"
     identity = options.identify({}, SimpleNamespace())
     assert identity is None
     assert options.exporters == {

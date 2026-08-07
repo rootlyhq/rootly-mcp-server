@@ -110,6 +110,7 @@ dev = [
     "sseclient-py>=1.8.0", # Server-Sent Events client for remote tests
     "bandit>=1.7.0", # Security linter
     "pip-audit>=2.7.0", # Dependency vulnerability checker
+    "detect-secrets>=1.5.0", # Independent oracle for the telemetry scrubber tests
     "mypy>=1.0.0", # Static type checker
     "types-requests>=2.32.0", # Type stubs for requests
 ]
