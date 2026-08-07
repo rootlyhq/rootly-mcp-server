@@ -138,9 +138,13 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
                 agentcat_types.UserIdentity,
                 include_user_name=not bool(sentry_dsn),
             ),
+            # Registered whenever telemetry is on, not only alongside Sentry.
+            # The SDK scrubs nothing itself -- `_process_event` redacts only
+            # `if event.redaction_fn` -- so without this the project_id-only
+            # configuration sends credentials unscrubbed.
+            "redact_sensitive_information": redact_agentcat_telemetry_text,
         }
         if sentry_dsn:
-            options_kwargs["redact_sensitive_information"] = redact_agentcat_telemetry_text
             options_kwargs["exporters"] = {
                 "sentry": {
                     "type": "sentry",

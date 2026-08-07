@@ -19,6 +19,7 @@ from rootly_mcp_server.__main__ import (
     run_profiled_streamable_http_server,
     streamable_http_stateless_enabled,
 )
+from rootly_mcp_server.telemetry_scrubber import redact_agentcat_telemetry_text
 
 
 @pytest.mark.parametrize(
@@ -334,6 +335,41 @@ def test_maybe_enable_mcpcat_tracking_logs_when_package_missing():
         "AgentCat or Sentry telemetry is configured but agentcat is not installed; "
         "skipping telemetry"
     )
+
+
+@pytest.mark.parametrize(
+    ("project_id", "sentry_dsn", "expect_exporters"),
+    [
+        ("proj_test_123", "", False),
+        ("proj_test_123", "https://abc123@o1.ingest.sentry.io/1", True),
+        (None, "https://abc123@o1.ingest.sentry.io/1", True),
+        # An invalid DSN disables the Sentry exporter but leaves telemetry on
+        # via project_id -- a typo must not silently stop credential scrubbing.
+        ("proj_test_123", "not-a-dsn", False),
+    ],
+)
+def test_scrubber_is_registered_whenever_telemetry_is_enabled(
+    project_id, sentry_dsn, expect_exporters, monkeypatch
+):
+    # AgentCat redacts nothing on its own: event_queue only redacts when a hook
+    # is set. So the hook has to be attached for every configuration that sends
+    # telemetry, not just the ones that also export to Sentry.
+    monkeypatch.setenv("SENTRY_DSN", sentry_dsn)
+    captured = {}
+    agentcat_module = SimpleNamespace(track=Mock())
+    agentcat_types_module = SimpleNamespace(
+        AgentCatOptions=Mock(side_effect=lambda **kwargs: captured.update(kwargs)),
+        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
+    )
+
+    def fake_import(name):
+        return agentcat_module if name == "agentcat" else agentcat_types_module
+
+    with patch("rootly_mcp_server.__main__.importlib.import_module", fake_import):
+        maybe_enable_mcpcat_tracking(object(), project_id, Mock())
+
+    assert captured.get("redact_sensitive_information") is redact_agentcat_telemetry_text
+    assert ("exporters" in captured) is expect_exporters
 
 
 def test_maybe_enable_mcpcat_tracking_tracks_when_available():
