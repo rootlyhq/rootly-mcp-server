@@ -31,6 +31,7 @@ from .server_defaults import (
     enabled_tools_from_env,
     resolve_write_tools_enabled,
 )
+from .telemetry_scrubber import redact_agentcat_telemetry_text
 from .transport import get_hosted_authenticated_user
 
 TransportName = Literal["stdio", "sse", "streamable-http", "both"]
@@ -49,7 +50,6 @@ TRANSPORT_ALIASES: dict[str, TransportName] = {
 HOSTED_TOOL_PROFILE_QUERY_PARAM = "tool_profile"
 HOSTED_TOOL_PROFILE_HEADER = "x-rootly-tool-profile"
 SENTRY_DSN_PATTERN = re.compile(r"^https://[a-f0-9]+@[\w.-]+(?::\d+)?(?:/.*)?/\d+$")
-REDACTED_TELEMETRY_TEXT = "[REDACTED]"
 
 
 def normalize_transport(value: str) -> TransportName:
@@ -138,9 +138,13 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
                 agentcat_types.UserIdentity,
                 include_user_name=not bool(sentry_dsn),
             ),
+            # Registered whenever telemetry is on, not only alongside Sentry.
+            # The SDK scrubs nothing itself -- `_process_event` redacts only
+            # `if event.redaction_fn` -- so without this the project_id-only
+            # configuration sends credentials unscrubbed.
+            "redact_sensitive_information": redact_agentcat_telemetry_text,
         }
         if sentry_dsn:
-            options_kwargs["redact_sensitive_information"] = redact_agentcat_telemetry_text
             options_kwargs["exporters"] = {
                 "sentry": {
                     "type": "sentry",
@@ -160,11 +164,6 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
             "AgentCat tracking could not be enabled; skipping (%s)",
             type(error).__name__,
         )
-
-
-def redact_agentcat_telemetry_text(_value: str) -> str:
-    """Remove free-form text before AgentCat sends events to telemetry backends."""
-    return REDACTED_TELEMETRY_TEXT
 
 
 def build_mcpcat_identify_callback(
