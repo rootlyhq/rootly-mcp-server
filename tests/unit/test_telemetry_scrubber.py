@@ -6,11 +6,14 @@ failure this module was written to fix, so the "must survive" cases below carry
 as much weight as the "must be removed" ones.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from rootly_mcp_server.telemetry_scrubber import (
     is_credential_key,
     redact_agentcat_telemetry_text,
+    scrub_event_arguments,
 )
 
 
@@ -397,3 +400,55 @@ class TestTelemetryRedactionRules:
             '{{"refresh_token": "{s}"}}',
         ):
             assert secret not in redact_agentcat_telemetry_text(template.format(s=secret))
+
+
+class TestScrubEventArguments:
+    """The event-level hook, which is the only place field names are visible.
+
+    `redact_sensitive_information` receives bare values, so a credential-named
+    argument cannot be recognised there. This hook gets the whole event.
+    """
+
+    @staticmethod
+    def _event(parameters):
+        return SimpleNamespace(parameters=parameters)
+
+    def test_credential_named_arguments_are_removed(self):
+        event = self._event(
+            {"arguments": {"incident_id": "44", "password": "hunter2", "api_key": "k"}}
+        )
+        result = scrub_event_arguments(event)
+        assert result.parameters["arguments"]["password"] == "[redacted]"
+        assert result.parameters["arguments"]["api_key"] == "[redacted]"
+        # Ordinary arguments are what make the event worth keeping.
+        assert result.parameters["arguments"]["incident_id"] == "44"
+
+    def test_nested_structures_are_walked(self):
+        event = self._event(
+            {
+                "arguments": {
+                    "nested": {"aws_secret_access_key": "AKIAsecret", "page_size": 10},
+                    "items": [{"token": "t1"}, {"name": "keep"}],
+                }
+            }
+        )
+        args = scrub_event_arguments(event).parameters["arguments"]
+        assert args["nested"]["aws_secret_access_key"] == "[redacted]"
+        assert args["nested"]["page_size"] == 10
+        assert args["items"][0]["token"] == "[redacted]"
+        assert args["items"][1]["name"] == "keep"
+
+    @pytest.mark.parametrize("parameters", [None, {}])
+    def test_missing_parameters_are_left_alone(self, parameters):
+        event = self._event(parameters)
+        assert scrub_event_arguments(event).parameters == parameters
+
+    def test_event_without_parameters_attribute_is_returned_unchanged(self):
+        event = SimpleNamespace(resource_name="list_incidents")
+        assert scrub_event_arguments(event) is event
+
+    def test_non_string_values_survive(self):
+        # Numbers, booleans and None must not be coerced to strings.
+        event = self._event({"arguments": {"page_size": 10, "all": True, "x": None}})
+        args = scrub_event_arguments(event).parameters["arguments"]
+        assert args == {"page_size": 10, "all": True, "x": None}
