@@ -219,6 +219,35 @@ TELEMETRY_REDACTIONS: tuple[tuple[re.Pattern[str], Any], ...] = (
 )
 
 
+def scrub_event_arguments(event: Any) -> Any:
+    """Scrub credential-named arguments from an event, keys included.
+
+    Registered as AgentCat's `redact_event` hook, which -- unlike
+    `redact_sensitive_information` -- receives the whole event rather than one
+    string at a time. That is the only place the field name is visible: the SDK
+    walks the argument dict and hands the string hook bare values, so `hunter2`
+    arrives with nothing to say it came from a field called `password`.
+
+    Only `parameters` is touched. `response` and `error` are free text with no
+    keys to read, so they stay with the string scrubber.
+    """
+
+    def walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {
+                key: REDACTED if is_credential_key(str(key)) else walk(value)
+                for key, value in node.items()
+            }
+        if isinstance(node, list):
+            return [walk(item) for item in node]
+        return node
+
+    parameters = getattr(event, "parameters", None)
+    if parameters:
+        event.parameters = walk(parameters)
+    return event
+
+
 class TelemetryScrubber:
     """Removes credentials from telemetry strings, preserving everything else."""
 
