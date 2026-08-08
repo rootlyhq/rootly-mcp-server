@@ -7,6 +7,7 @@ This module provides the main entry point for the Rootly MCP Server.
 
 import argparse
 import asyncio
+import dataclasses
 import importlib
 import logging
 import os
@@ -31,7 +32,7 @@ from .server_defaults import (
     enabled_tools_from_env,
     resolve_write_tools_enabled,
 )
-from .telemetry_scrubber import redact_agentcat_telemetry_text
+from .telemetry_scrubber import redact_agentcat_telemetry_text, scrub_event_arguments
 from .transport import get_hosted_authenticated_user
 
 TransportName = Literal["stdio", "sse", "streamable-http", "both"]
@@ -104,6 +105,21 @@ def resolve_requested_hosted_tool_profile(
     return server_defaults.normalize_hosted_tool_profile(raw, default=default)
 
 
+def agentcat_options_supports(options_cls: type[Any], option: str) -> bool:
+    """Whether the installed AgentCat accepts *option*.
+
+    Options are a dataclass, so the accepted set is introspectable. Feature
+    detection keeps a newer hook from disabling telemetry on an older SDK,
+    which is what an unexpected keyword would cause.
+    """
+    try:
+        return option in {field.name for field in dataclasses.fields(options_cls)}
+    except TypeError:
+        # Not a dataclass in this version -- assume unsupported rather than
+        # risk the TypeError path.
+        return False
+
+
 def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging.Logger) -> None:
     """Enable AgentCat tracking when configured and available.
 
@@ -144,6 +160,13 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
             # configuration sends credentials unscrubbed.
             "redact_sensitive_information": redact_agentcat_telemetry_text,
         }
+        # The event-level hook is the only place a credential's field name is
+        # visible; the string hook above receives bare values. It landed after
+        # 2.0.1, so it is offered only when the installed SDK accepts it --
+        # passing an unknown option raises TypeError, and the except below
+        # would turn that into telemetry being switched off entirely.
+        if agentcat_options_supports(agentcat_types.AgentCatOptions, "redact_event"):
+            options_kwargs["redact_event"] = scrub_event_arguments
         if sentry_dsn:
             options_kwargs["exporters"] = {
                 "sentry": {
