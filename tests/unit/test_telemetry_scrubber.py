@@ -493,3 +493,53 @@ class TestClientIdentificationSurvives:
         headers = scrub_event_arguments(event).parameters["arguments"]["headers"]
         assert headers["user-agent"] == "Odin/1.2.0"
         assert headers["authorization"] == "[redacted]"
+
+
+class TestEventHookHostileInput:
+    """Arguments are attacker-shaped JSON, and AgentCat drops an event whose
+    hook raises -- so a walk that blows the stack loses telemetry silently."""
+
+    def test_deeply_nested_arguments_do_not_raise(self):
+        node = root = {}
+        for _ in range(5000):
+            node["n"] = {}
+            node = node["n"]
+        node["password"] = "hunter2"
+        # No RecursionError; the event survives to be published.
+        scrub_event_arguments(SimpleNamespace(parameters={"arguments": root}))
+
+    def test_circular_arguments_terminate(self):
+        cycle: dict = {}
+        cycle["self"] = cycle
+        scrub_event_arguments(SimpleNamespace(parameters={"arguments": cycle}))
+
+    def test_a_credential_below_the_depth_limit_is_not_published(self):
+        # The subtree is replaced rather than descended into, so burying a
+        # credential deeply cannot smuggle it out.
+        node = root = {}
+        for _ in range(40):
+            node["n"] = {}
+            node = node["n"]
+        node["password"] = "DEEPSECRET"
+        result = scrub_event_arguments(SimpleNamespace(parameters={"arguments": root}))
+        assert "DEEPSECRET" not in str(result.parameters)
+
+    def test_ordinary_nesting_is_still_walked(self):
+        event = SimpleNamespace(
+            parameters={"arguments": {"a": {"b": {"c": {"password": "p", "id": "44"}}}}}
+        )
+        inner = scrub_event_arguments(event).parameters["arguments"]["a"]["b"]["c"]
+        assert inner == {"password": "[redacted]", "id": "44"}
+
+    @pytest.mark.parametrize("parameters", ["a string", 42, ["list"], None, {}])
+    def test_non_dict_parameters_are_returned_unchanged(self, parameters):
+        event = SimpleNamespace(parameters=parameters)
+        assert scrub_event_arguments(event).parameters == parameters
+
+    def test_non_string_keys_do_not_raise(self):
+        event = SimpleNamespace(parameters={"arguments": {1: "a", None: "b", ("t",): "c"}})
+        assert scrub_event_arguments(event).parameters["arguments"] == {
+            1: "a",
+            None: "b",
+            ("t",): "c",
+        }
