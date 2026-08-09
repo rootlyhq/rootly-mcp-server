@@ -253,6 +253,10 @@ def scrub_event_arguments(event: Any) -> Any:
             }
         if isinstance(node, list):
             return [walk(item, depth + 1) for item in node]
+        if isinstance(node, tuple):
+            # JSON cannot produce one, but a credential inside a tuple would
+            # otherwise be published: the SDK's own walker skips them too.
+            return tuple(walk(item, depth + 1) for item in node)
         return node
 
     parameters = getattr(event, "parameters", None)

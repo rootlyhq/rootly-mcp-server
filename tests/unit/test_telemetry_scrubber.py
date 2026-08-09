@@ -531,6 +531,15 @@ class TestEventHookHostileInput:
         inner = scrub_event_arguments(event).parameters["arguments"]["a"]["b"]["c"]
         assert inner == {"password": "[redacted]", "id": "44"}
 
+    def test_dicts_inside_tuples_are_walked(self):
+        # JSON cannot produce a tuple, but skipping them would publish a
+        # credential outright, and the SDK's own walker skips them too.
+        event = SimpleNamespace(parameters={"arguments": {"k": ({"password": "p"},), "id": "44"}})
+        args = scrub_event_arguments(event).parameters["arguments"]
+        assert args["k"] == ({"password": "[redacted]"},)
+        assert isinstance(args["k"], tuple)
+        assert args["id"] == "44"
+
     @pytest.mark.parametrize("parameters", ["a string", 42, ["list"], None, {}])
     def test_non_dict_parameters_are_returned_unchanged(self, parameters):
         event = SimpleNamespace(parameters=parameters)
