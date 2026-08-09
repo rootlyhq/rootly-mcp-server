@@ -25,7 +25,7 @@ RUN uv pip install --system --no-cache-dir -e .
 # fit for our stateless hosted transport. Our integration code is unchanged.
 # In case AgentCat constrains Pydantic, we restore the server's pinned version
 # after installation.
-RUN uv pip install --system --no-cache-dir "agentcat[community]==2.0.1" \
+RUN uv pip install --system --no-cache-dir "agentcat[community]==2.0.2" \
     && uv pip install --system --no-cache-dir pydantic==2.13.4
 
 # Create non-root user

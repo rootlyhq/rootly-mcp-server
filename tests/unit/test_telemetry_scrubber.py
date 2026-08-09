@@ -452,3 +452,44 @@ class TestScrubEventArguments:
         event = self._event({"arguments": {"page_size": 10, "all": True, "x": None}})
         args = scrub_event_arguments(event).parameters["arguments"]
         assert args == {"page_size": 10, "all": True, "x": None}
+
+
+class TestClientIdentificationSurvives:
+    """User-agent strings must not be scrubbed.
+
+    AgentCat falls back to the user-agent header to identify which client made
+    a call, so redacting it would cost exactly the attribution this telemetry
+    exists to provide. Flagged by AgentCat during the 2.0.2 rollout.
+    """
+
+    @pytest.mark.parametrize(
+        "key",
+        ["user-agent", "user_agent", "User-Agent", "useragent", "x-client-name"],
+    )
+    def test_header_names_are_not_credentials(self, key):
+        assert is_credential_key(key) is False
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "User-Agent: Odin/1.2.0",
+            "user-agent: claude-code/2.1.4 (darwin; arm64)",
+            "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+            "user_agent=cursor-mcp/0.9",
+            "{'headers': {'user-agent': 'Odin/1.2.0', 'accept': 'application/json'}}",
+            "User-Agent: python-httpx/0.27.0",
+            "user-agent: node-fetch/1.0 (+https://github.com/bitinn/node-fetch)",
+        ],
+    )
+    def test_user_agents_pass_through_untouched(self, value):
+        assert redact_agentcat_telemetry_text(value) == value
+
+    def test_event_hook_keeps_user_agent_but_removes_credentials(self):
+        event = SimpleNamespace(
+            parameters={
+                "arguments": {"headers": {"user-agent": "Odin/1.2.0", "authorization": "Bearer x"}}
+            }
+        )
+        headers = scrub_event_arguments(event).parameters["arguments"]["headers"]
+        assert headers["user-agent"] == "Odin/1.2.0"
+        assert headers["authorization"] == "[redacted]"
