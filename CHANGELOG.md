@@ -5,6 +5,25 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.17] - Released 2026-08-10
+
+### Fixed
+
+- **Telemetry no longer replaces every string with a placeholder**: the AgentCat redaction hook returned a constant for any input. That was inert while the SDK's own redaction was a no-op, but AgentCat 2.0.1 fixed the SDK and every string in every event began collapsing to `[REDACTED]` — error messages, client and server names, tool context. Errors all grouped into a single issue and agent-goal extraction stopped working. Credentials are now removed by content and everything else is left readable.
+- **Credential scrubbing is applied whenever telemetry is enabled**: it was previously registered only alongside a Sentry exporter, so a deployment using `MCPCAT_PROJECT_ID` alone sent telemetry unscrubbed. A mistyped `SENTRY_DSN` had the same effect while logging only that Sentry was disabled.
+- **`data/swagger.json` ships inside the published wheel and sdist**: without it the server fetched the spec at start-up and wrote `swagger.json` into the host's working directory on every launch.
+- **`ROOTLY_MCP_ENABLE_WRITE_TOOLS=false` is honored on the CLI and `python -m` paths**, including hosted mode. Thanks to @kstlouis.
+
+### Added
+
+- **Credential-named tool arguments are scrubbed**: using AgentCat's event-level `redact_event` hook, which — unlike the string hook — can see the field name, so a value passed as `password` is recognisable. The hook is registered only when the installed SDK supports it, so an older SDK keeps working rather than losing telemetry.
+- **Sentry exporter for AgentCat telemetry**, configured with `SENTRY_DSN`.
+- **Code Mode output schema and annotations** for OpenAI plugin submission.
+
+### Changed
+
+- **AgentCat SDK upgraded to 2.0.2**, which also protects server and client identity fields from customer redaction hooks.
+
 ## [2.3.16] - Released 2026-07-23
 
 ### Added
