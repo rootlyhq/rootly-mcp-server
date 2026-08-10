@@ -411,13 +411,19 @@ def test_redact_event_is_offered_only_when_the_sdk_accepts_it(supported, monkeyp
     def fake_import(name):
         return agentcat_module if name == "agentcat" else agentcat_types_module
 
+    logger = Mock()
     with patch("rootly_mcp_server.__main__.importlib.import_module", fake_import):
-        maybe_enable_mcpcat_tracking(object(), "proj_test_123", Mock())
+        maybe_enable_mcpcat_tracking(object(), "proj_test_123", logger)
 
     # Telemetry stays enabled either way -- that is the point of the detection.
     assert agentcat_module.track.called
     assert captured["redact_sensitive_information"] is redact_agentcat_telemetry_text
     assert ("redact_event" in captured) is supported
+
+    # An SDK too old for the hook must say so. Silently skipping the scrubber is
+    # how the SENTRY_DSN gap survived unnoticed.
+    warned = any("redact_event" in str(call.args[0]) for call in logger.warning.call_args_list)
+    assert warned is (not supported)
 
 
 def test_agentcat_options_supports_detects_the_field():

@@ -167,6 +167,13 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
         # would turn that into telemetry being switched off entirely.
         if agentcat_options_supports(agentcat_types.AgentCatOptions, "redact_event"):
             options_kwargs["redact_event"] = scrub_event_arguments
+        else:
+            # Say so rather than degrade quietly. The scrubber being silently
+            # inactive is how the SENTRY_DSN gap went unnoticed for months.
+            logger.warning(
+                "AgentCat does not support redact_event; credential-named tool "
+                "arguments will not be scrubbed. Upgrade to 2.0.2 or later."
+            )
         if sentry_dsn:
             options_kwargs["exporters"] = {
                 "sentry": {
