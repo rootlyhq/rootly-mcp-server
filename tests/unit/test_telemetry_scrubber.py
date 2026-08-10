@@ -524,6 +524,20 @@ class TestEventHookHostileInput:
         result = scrub_event_arguments(SimpleNamespace(parameters={"arguments": root}))
         assert "DEEPSECRET" not in str(result.parameters)
 
+    def test_the_callers_data_is_not_mutated(self):
+        # The walk builds new containers rather than editing in place. AgentCat
+        # hands the hook an event dumped from the original, and dict fields can
+        # still be shared references -- mutating one would corrupt the other.
+        # (Their own PR #51 fixed exactly this aliasing class on the SDK side.)
+        original = {"arguments": {"incident_id": "44", "password": "hunter2"}}
+        before = {"arguments": dict(original["arguments"])}
+
+        result = scrub_event_arguments(SimpleNamespace(parameters=original))
+
+        assert original == before, "hook mutated the caller's dict"
+        assert result.parameters is not original
+        assert result.parameters["arguments"]["password"] == "[redacted]"
+
     def test_ordinary_nesting_is_still_walked(self):
         event = SimpleNamespace(
             parameters={"arguments": {"a": {"b": {"c": {"password": "p", "id": "44"}}}}}
