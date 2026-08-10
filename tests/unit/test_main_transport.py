@@ -1,6 +1,7 @@
 """Tests for CLI transport normalization and config propagation in __main__."""
 
 import argparse
+import dataclasses
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -10,6 +11,7 @@ from starlette.requests import Request
 
 from rootly_mcp_server.__main__ import (
     _get_sorted_tool_names,
+    agentcat_options_supports,
     build_mcpcat_identify_callback,
     get_server,
     main,
@@ -372,6 +374,68 @@ def test_scrubber_is_registered_whenever_telemetry_is_enabled(
     assert ("exporters" in captured) is expect_exporters
 
 
+@pytest.mark.parametrize("supported", [True, False])
+def test_redact_event_is_offered_only_when_the_sdk_accepts_it(supported, monkeypatch):
+    # The event hook landed after 2.0.1. Passing an unknown option raises
+    # TypeError, which maybe_enable_mcpcat_tracking catches by disabling
+    # telemetry outright -- so an older SDK must simply not be offered it.
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+
+    fields: dict[str, Any] = {
+        "identify": None,
+        "redact_sensitive_information": None,
+        "exporters": None,
+    }
+    if supported:
+        fields["redact_event"] = None
+    options_cls = dataclasses.make_dataclass(
+        "AgentCatOptions", [(name, Any, None) for name in fields]
+    )
+
+    captured: dict[str, Any] = {}
+
+    def make_options(**kwargs):
+        captured.update(kwargs)
+        return options_cls(**kwargs)
+
+    # A subclass keeps dataclasses.fields() working while letting the call
+    # record its kwargs, which a Mock wrapper would hide.
+    factory = type("Factory", (options_cls,), {"__new__": lambda cls, **kw: make_options(**kw)})
+
+    agentcat_module = SimpleNamespace(track=Mock())
+    agentcat_types_module = SimpleNamespace(
+        AgentCatOptions=factory,
+        UserIdentity=Mock(side_effect=lambda **kw: SimpleNamespace(**kw)),
+    )
+
+    def fake_import(name):
+        return agentcat_module if name == "agentcat" else agentcat_types_module
+
+    logger = Mock()
+    with patch("rootly_mcp_server.__main__.importlib.import_module", fake_import):
+        maybe_enable_mcpcat_tracking(object(), "proj_test_123", logger)
+
+    # Telemetry stays enabled either way -- that is the point of the detection.
+    assert agentcat_module.track.called
+    assert captured["redact_sensitive_information"] is redact_agentcat_telemetry_text
+    assert ("redact_event" in captured) is supported
+
+    # An SDK too old for the hook must say so. Silently skipping the scrubber is
+    # how the SENTRY_DSN gap survived unnoticed.
+    warned = any("redact_event" in str(call.args[0]) for call in logger.warning.call_args_list)
+    assert warned is (not supported)
+
+
+def test_agentcat_options_supports_detects_the_field():
+    options_cls = dataclasses.make_dataclass("Opts", [("redact_event", Any, None)])
+    assert agentcat_options_supports(options_cls, "redact_event") is True
+    assert agentcat_options_supports(options_cls, "nope") is False
+
+
+def test_agentcat_options_supports_is_false_for_a_non_dataclass():
+    assert agentcat_options_supports(object, "redact_event") is False
+
+
 def test_maybe_enable_mcpcat_tracking_tracks_when_available():
     server = object()
     logger = Mock()
@@ -530,7 +594,10 @@ def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
     assert agentcat_module.track.call_args.args[:2] == (server, "proj_test_123")
-    logger.warning.assert_called_once_with(
+    # assert_any_call, not assert_called_once_with: this stub's options class has
+    # no redact_event field, so the unsupported-SDK warning fires too. This test
+    # is about the track() failure path.
+    logger.warning.assert_any_call(
         "AgentCat tracking could not be enabled; skipping (%s)",
         "RuntimeError",
     )

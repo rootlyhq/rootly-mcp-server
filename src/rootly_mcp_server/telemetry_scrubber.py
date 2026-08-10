@@ -219,6 +219,52 @@ TELEMETRY_REDACTIONS: tuple[tuple[re.Pattern[str], Any], ...] = (
 )
 
 
+# Depth past which an argument subtree is replaced instead of walked. AgentCat
+# truncates events to depth 5 anyway, and this runs before that, so the limit is
+# generous -- it exists to bound the walk, not to shape the payload.
+_MAX_ARGUMENT_DEPTH = 32
+
+
+def scrub_event_arguments(event: Any) -> Any:
+    """Scrub credential-named arguments from an event, keys included.
+
+    Registered as AgentCat's `redact_event` hook, which -- unlike
+    `redact_sensitive_information` -- receives the whole event rather than one
+    string at a time. That is the only place the field name is visible: the SDK
+    walks the argument dict and hands the string hook bare values, so `hunter2`
+    arrives with nothing to say it came from a field called `password`.
+
+    Only `parameters` is touched. `response` and `error` are free text with no
+    keys to read, so they stay with the string scrubber.
+    """
+
+    def walk(node: Any, depth: int) -> Any:
+        # Past the limit the subtree is replaced rather than descended into.
+        # Arguments are attacker-shaped JSON, and an unbounded walk raises
+        # RecursionError on deep nesting or on a cycle -- which AgentCat turns
+        # into a dropped event. Replacing keeps the failure on the safe side:
+        # a value is never published just because it was buried deeply.
+        if depth > _MAX_ARGUMENT_DEPTH:
+            return REDACTED
+        if isinstance(node, dict):
+            return {
+                key: REDACTED if is_credential_key(str(key)) else walk(value, depth + 1)
+                for key, value in node.items()
+            }
+        if isinstance(node, list):
+            return [walk(item, depth + 1) for item in node]
+        if isinstance(node, tuple):
+            # JSON cannot produce one, but a credential inside a tuple would
+            # otherwise be published: the SDK's own walker skips them too.
+            return tuple(walk(item, depth + 1) for item in node)
+        return node
+
+    parameters = getattr(event, "parameters", None)
+    if parameters:
+        event.parameters = walk(parameters, 0)
+    return event
+
+
 class TelemetryScrubber:
     """Removes credentials from telemetry strings, preserving everything else."""
 

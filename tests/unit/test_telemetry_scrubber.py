@@ -6,11 +6,14 @@ failure this module was written to fix, so the "must survive" cases below carry
 as much weight as the "must be removed" ones.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from rootly_mcp_server.telemetry_scrubber import (
     is_credential_key,
     redact_agentcat_telemetry_text,
+    scrub_event_arguments,
 )
 
 
@@ -397,3 +400,169 @@ class TestTelemetryRedactionRules:
             '{{"refresh_token": "{s}"}}',
         ):
             assert secret not in redact_agentcat_telemetry_text(template.format(s=secret))
+
+
+class TestScrubEventArguments:
+    """The event-level hook, which is the only place field names are visible.
+
+    `redact_sensitive_information` receives bare values, so a credential-named
+    argument cannot be recognised there. This hook gets the whole event.
+    """
+
+    @staticmethod
+    def _event(parameters):
+        return SimpleNamespace(parameters=parameters)
+
+    def test_credential_named_arguments_are_removed(self):
+        event = self._event(
+            {"arguments": {"incident_id": "44", "password": "hunter2", "api_key": "k"}}
+        )
+        result = scrub_event_arguments(event)
+        assert result.parameters["arguments"]["password"] == "[redacted]"
+        assert result.parameters["arguments"]["api_key"] == "[redacted]"
+        # Ordinary arguments are what make the event worth keeping.
+        assert result.parameters["arguments"]["incident_id"] == "44"
+
+    def test_nested_structures_are_walked(self):
+        event = self._event(
+            {
+                "arguments": {
+                    "nested": {"aws_secret_access_key": "AKIAsecret", "page_size": 10},
+                    "items": [{"token": "t1"}, {"name": "keep"}],
+                }
+            }
+        )
+        args = scrub_event_arguments(event).parameters["arguments"]
+        assert args["nested"]["aws_secret_access_key"] == "[redacted]"
+        assert args["nested"]["page_size"] == 10
+        assert args["items"][0]["token"] == "[redacted]"
+        assert args["items"][1]["name"] == "keep"
+
+    @pytest.mark.parametrize("parameters", [None, {}])
+    def test_missing_parameters_are_left_alone(self, parameters):
+        event = self._event(parameters)
+        assert scrub_event_arguments(event).parameters == parameters
+
+    def test_event_without_parameters_attribute_is_returned_unchanged(self):
+        event = SimpleNamespace(resource_name="list_incidents")
+        assert scrub_event_arguments(event) is event
+
+    def test_non_string_values_survive(self):
+        # Numbers, booleans and None must not be coerced to strings.
+        event = self._event({"arguments": {"page_size": 10, "all": True, "x": None}})
+        args = scrub_event_arguments(event).parameters["arguments"]
+        assert args == {"page_size": 10, "all": True, "x": None}
+
+
+class TestClientIdentificationSurvives:
+    """User-agent strings must not be scrubbed.
+
+    AgentCat falls back to the user-agent header to identify which client made
+    a call, so redacting it would cost exactly the attribution this telemetry
+    exists to provide. Flagged by AgentCat during the 2.0.2 rollout.
+    """
+
+    @pytest.mark.parametrize(
+        "key",
+        ["user-agent", "user_agent", "User-Agent", "useragent", "x-client-name"],
+    )
+    def test_header_names_are_not_credentials(self, key):
+        assert is_credential_key(key) is False
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "User-Agent: Odin/1.2.0",
+            "user-agent: claude-code/2.1.4 (darwin; arm64)",
+            "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+            "user_agent=cursor-mcp/0.9",
+            "{'headers': {'user-agent': 'Odin/1.2.0', 'accept': 'application/json'}}",
+            "User-Agent: python-httpx/0.27.0",
+            "user-agent: node-fetch/1.0 (+https://github.com/bitinn/node-fetch)",
+        ],
+    )
+    def test_user_agents_pass_through_untouched(self, value):
+        assert redact_agentcat_telemetry_text(value) == value
+
+    def test_event_hook_keeps_user_agent_but_removes_credentials(self):
+        event = SimpleNamespace(
+            parameters={
+                "arguments": {"headers": {"user-agent": "Odin/1.2.0", "authorization": "Bearer x"}}
+            }
+        )
+        headers = scrub_event_arguments(event).parameters["arguments"]["headers"]
+        assert headers["user-agent"] == "Odin/1.2.0"
+        assert headers["authorization"] == "[redacted]"
+
+
+class TestEventHookHostileInput:
+    """Arguments are attacker-shaped JSON, and AgentCat drops an event whose
+    hook raises -- so a walk that blows the stack loses telemetry silently."""
+
+    def test_deeply_nested_arguments_do_not_raise(self):
+        node = root = {}
+        for _ in range(5000):
+            node["n"] = {}
+            node = node["n"]
+        node["password"] = "hunter2"
+        # No RecursionError; the event survives to be published.
+        scrub_event_arguments(SimpleNamespace(parameters={"arguments": root}))
+
+    def test_circular_arguments_terminate(self):
+        cycle: dict = {}
+        cycle["self"] = cycle
+        scrub_event_arguments(SimpleNamespace(parameters={"arguments": cycle}))
+
+    def test_a_credential_below_the_depth_limit_is_not_published(self):
+        # The subtree is replaced rather than descended into, so burying a
+        # credential deeply cannot smuggle it out.
+        node = root = {}
+        for _ in range(40):
+            node["n"] = {}
+            node = node["n"]
+        node["password"] = "DEEPSECRET"
+        result = scrub_event_arguments(SimpleNamespace(parameters={"arguments": root}))
+        assert "DEEPSECRET" not in str(result.parameters)
+
+    def test_the_callers_data_is_not_mutated(self):
+        # The walk builds new containers rather than editing in place. AgentCat
+        # hands the hook an event dumped from the original, and dict fields can
+        # still be shared references -- mutating one would corrupt the other.
+        # (Their own PR #51 fixed exactly this aliasing class on the SDK side.)
+        original = {"arguments": {"incident_id": "44", "password": "hunter2"}}
+        before = {"arguments": dict(original["arguments"])}
+
+        result = scrub_event_arguments(SimpleNamespace(parameters=original))
+
+        assert original == before, "hook mutated the caller's dict"
+        assert result.parameters is not original
+        assert result.parameters["arguments"]["password"] == "[redacted]"
+
+    def test_ordinary_nesting_is_still_walked(self):
+        event = SimpleNamespace(
+            parameters={"arguments": {"a": {"b": {"c": {"password": "p", "id": "44"}}}}}
+        )
+        inner = scrub_event_arguments(event).parameters["arguments"]["a"]["b"]["c"]
+        assert inner == {"password": "[redacted]", "id": "44"}
+
+    def test_dicts_inside_tuples_are_walked(self):
+        # JSON cannot produce a tuple, but skipping them would publish a
+        # credential outright, and the SDK's own walker skips them too.
+        event = SimpleNamespace(parameters={"arguments": {"k": ({"password": "p"},), "id": "44"}})
+        args = scrub_event_arguments(event).parameters["arguments"]
+        assert args["k"] == ({"password": "[redacted]"},)
+        assert isinstance(args["k"], tuple)
+        assert args["id"] == "44"
+
+    @pytest.mark.parametrize("parameters", ["a string", 42, ["list"], None, {}])
+    def test_non_dict_parameters_are_returned_unchanged(self, parameters):
+        event = SimpleNamespace(parameters=parameters)
+        assert scrub_event_arguments(event).parameters == parameters
+
+    def test_non_string_keys_do_not_raise(self):
+        event = SimpleNamespace(parameters={"arguments": {1: "a", None: "b", ("t",): "c"}})
+        assert scrub_event_arguments(event).parameters["arguments"] == {
+            1: "a",
+            None: "b",
+            ("t",): "c",
+        }
