@@ -594,7 +594,10 @@ def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
         maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
 
     assert agentcat_module.track.call_args.args[:2] == (server, "proj_test_123")
-    logger.warning.assert_called_once_with(
+    # assert_any_call, not assert_called_once_with: this stub's options class has
+    # no redact_event field, so the unsupported-SDK warning fires too. This test
+    # is about the track() failure path.
+    logger.warning.assert_any_call(
         "AgentCat tracking could not be enabled; skipping (%s)",
         "RuntimeError",
     )
