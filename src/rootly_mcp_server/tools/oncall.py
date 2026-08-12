@@ -3,25 +3,104 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Protocol, cast
 
 import httpx
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from ..exceptions import RootlyAPIError, RootlyValidationError
 from ..och_client import OnCallHealthClient
 from ..validators import validate_page_params
 
 JsonDict = dict[str, Any]
 MakeAuthenticatedRequest = Callable[..., Awaitable[Any]]
+logger = logging.getLogger(__name__)
+
 SHIFT_INCIDENT_QUERY_FIELDS = (
     "title,status,started_at,resolved_at,created_at,summary,"
     "customer_impact_summary,mitigation,severity,url"
 )
 DEFAULT_MAX_SHIFT_INCIDENT_RESULTS = 100
+
+# Ceiling on a shift query's total span. Long ranges are split into windows the
+# upstream will accept, but each window is its own request, so an unbounded
+# range would fan out indefinitely. A year of on-call is six windows.
+MAX_SHIFT_SPAN_DAYS = 366
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    """Parse an ISO date or datetime to an aware UTC datetime, else ``None``.
+
+    Mirrors the transport client's parsing so a range this splits is one the
+    upstream validation would have accepted.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    candidate = value.strip()
+    try:
+        parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(candidate, "%Y-%m-%d")
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _shift_window_limit_days(path: str) -> int | None:
+    """Upstream ``from``/``to`` cap for a shift-listing path, else ``None``.
+
+    Read from the transport client's constants so the split here can never
+    drift from the validation that rejects an over-long range.
+    """
+    from ..transport import LIST_SHIFTS_LIMIT_DAYS, SCHEDULE_SHIFTS_LIMIT_DAYS
+
+    normalized = path.rstrip("/")
+    if not normalized.endswith("/shifts"):
+        return None
+    if normalized == "/v1/shifts":
+        return LIST_SHIFTS_LIMIT_DAYS
+    return SCHEDULE_SHIFTS_LIMIT_DAYS
+
+
+def _split_date_windows(
+    from_raw: Any, to_raw: Any, limit_days: int
+) -> list[tuple[datetime, datetime]]:
+    """Split ``from``/``to`` into consecutive windows of at most ``limit_days``.
+
+    Returns ``[]`` when the range already fits, when either bound is
+    unparseable (the upstream 422 stays authoritative for malformed input),
+    or when the range is inverted.
+    """
+    start = _parse_iso_datetime(from_raw)
+    end = _parse_iso_datetime(to_raw)
+    if start is None or end is None or end <= start:
+        return []
+    span_days = (end - start).total_seconds() / 86400
+    if span_days <= limit_days:
+        return []
+    if span_days > MAX_SHIFT_SPAN_DAYS:
+        raise RootlyValidationError(
+            f"Date range from={from_raw} to={to_raw} spans {span_days:.0f} days. "
+            f"This tool splits long ranges automatically but caps the total at "
+            f"{MAX_SHIFT_SPAN_DAYS} days, because each {limit_days}-day window is a "
+            f"separate upstream request. Narrow the range and query again."
+        )
+    windows: list[tuple[datetime, datetime]] = []
+    cursor = start
+    step = timedelta(days=limit_days)
+    while cursor < end:
+        window_end = min(cursor + step, end)
+        windows.append((cursor, window_end))
+        cursor = window_end
+    return windows
 
 
 def _truncate_text(value: Any, max_length: int = 280) -> str | None:
@@ -575,26 +654,39 @@ def register_oncall_tools(
 
             if total_pages > 1:
 
-                async def _fetch_schedule_page(page_number: int) -> list[dict]:
+                async def _fetch_schedule_page(page_number: int) -> list[dict] | None:
                     async with request_semaphore:
                         page_response = await make_authenticated_request(
                             "GET",
                             "/v1/schedules",
                             params={"page[size]": 100, "page[number]": page_number},
                         )
+                    # None, not [], so a failed page is distinguishable from a
+                    # page that genuinely held no schedules.
                     if not page_response or page_response.status_code != 200:
-                        return []
+                        return None
                     return list(page_response.json().get("data", []))
 
                 rest_pages = await asyncio.gather(
                     *(_fetch_schedule_page(p) for p in range(2, total_pages + 1)),
                     return_exceptions=True,
                 )
+                failed_schedule_pages = 0
                 for page_schedules in rest_pages:
-                    if isinstance(page_schedules, BaseException):
-                        # One transient page error shouldn't abort the whole handler.
+                    if isinstance(page_schedules, BaseException) or page_schedules is None:
+                        failed_schedule_pages += 1
                         continue
                     all_schedules.extend(page_schedules)
+                if failed_schedule_pages:
+                    # These schedules are the answer, not enrichment: dropping a
+                    # page silently omits whole schedules from the handoff, and
+                    # the caller reads the result as the full picture.
+                    return mcp_error.tool_error(
+                        f"{failed_schedule_pages} of {total_pages - 1} schedule pages "
+                        "failed to load. The handoff summary would silently omit those "
+                        "schedules, so the query is failed instead.",
+                        "execution_error",
+                    )
 
             # Build team mapping
             team_ids_set = set()
@@ -1250,6 +1342,87 @@ def register_oncall_tools(
         extra_params: dict[str, Any] | None = None,
         on_included: Callable[[list[dict[str, Any]]], None] | None = None,
         max_pages: int = 10,
+        required: bool = False,
+        report: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch a paginated JSON:API resource, splitting over-long shift ranges.
+
+        ``required`` makes a failed first page raise instead of returning an
+        empty list. Enrichment lookups leave it off -- a missing user map only
+        costs a display name -- but any fetch whose result *is* the answer must
+        set it, or an upstream failure is indistinguishable from "no results".
+
+        ``report`` is an optional dict this fills in with ``windows`` (how many
+        upstream ranges the query was split into) and ``truncated`` (whether
+        ``max_pages`` cut a window short), so callers can surface both instead
+        of quietly returning a partial answer.
+
+        The shift endpoints reject a ``from``/``to`` span beyond their cap, so a
+        longer range is split into consecutive windows, fetched through the same
+        semaphore, and merged with duplicates dropped -- a shift overlapping a
+        boundary is returned by both windows.
+        """
+        limit_days = _shift_window_limit_days(path)
+        windows: list[tuple[datetime, datetime]] = []
+        if limit_days is not None and extra_params:
+            windows = _split_date_windows(
+                extra_params.get("from"), extra_params.get("to"), limit_days
+            )
+
+        if not windows:
+            return await _fetch_page_range(
+                path,
+                semaphore,
+                extra_params=extra_params,
+                on_included=on_included,
+                max_pages=max_pages,
+                required=required,
+                report=report,
+            )
+
+        if report is not None:
+            report["windows"] = len(windows)
+
+        async def _fetch_window(start: datetime, end: datetime) -> list[dict[str, Any]]:
+            window_params = dict(extra_params or {})
+            window_params["from"] = start.isoformat().replace("+00:00", "Z")
+            window_params["to"] = end.isoformat().replace("+00:00", "Z")
+            return await _fetch_page_range(
+                path,
+                semaphore,
+                extra_params=window_params,
+                on_included=on_included,
+                max_pages=max_pages,
+                required=required,
+                report=report,
+            )
+
+        results = await asyncio.gather(*(_fetch_window(s, e) for s, e in windows))
+
+        # Drop duplicates rather than returning a shift twice: the upstream
+        # returns any shift overlapping the window, so one spanning a boundary
+        # comes back from both sides. Items without an id are kept as-is.
+        merged: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for window_items in results:
+            for item in window_items:
+                item_id = item.get("id") if isinstance(item, dict) else None
+                if isinstance(item_id, str):
+                    if item_id in seen:
+                        continue
+                    seen.add(item_id)
+                merged.append(item)
+        return merged
+
+    async def _fetch_page_range(
+        path: str,
+        semaphore: asyncio.Semaphore,
+        *,
+        extra_params: dict[str, Any] | None = None,
+        on_included: Callable[[list[dict[str, Any]]], None] | None = None,
+        max_pages: int = 10,
+        required: bool = False,
+        report: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Fetch up to ``max_pages`` of a paginated JSON:API resource.
 
@@ -1273,8 +1446,49 @@ def register_oncall_tools(
             merged["page[number]"] = page_number
             return merged
 
-        first = await make_authenticated_request("GET", path, params=_params_for(1))
+        async def _request_page(page_number: int) -> Any:
+            """Request one page, retrying once on a transient failure.
+
+            A long range is split into windows and each window paginates, so a
+            single query can be dozens of requests and any one of them failing
+            fails the whole thing. One retry absorbs a blip without letting a
+            partial answer through.
+
+            Only transient failures are retried. A 4xx is the upstream saying
+            no -- it will say no again, and retrying only doubles the load.
+            """
+            response = None
+            for attempt in (1, 2):
+                async with semaphore:
+                    response = await make_authenticated_request(
+                        "GET", path, params=_params_for(page_number)
+                    )
+                if response is not None and response.status_code == 200:
+                    return response
+                status = getattr(response, "status_code", None)
+                if status is not None and 400 <= status < 500:
+                    return response
+                if attempt == 1:
+                    logger.warning(
+                        "Retrying page %d of %s after a transient failure (status=%s)",
+                        page_number,
+                        path,
+                        status,
+                    )
+            return response
+
+        first = await _request_page(1)
         if not first or first.status_code != 200:
+            # Returning [] here reads to the caller as "no results", which is
+            # how an upstream failure got reported to users as zero shifts.
+            if required:
+                status = getattr(first, "status_code", None)
+                raise RootlyAPIError(
+                    f"Upstream request to {path} failed"
+                    + (f" with status {status}" if status else " (no response)")
+                    + ". Returning no results would be indistinguishable from an "
+                    "empty result, so the query is failed instead."
+                )
             return []
         first_data = first.json()
         items: list[dict[str, Any]] = list(first_data.get("data", []))
@@ -1293,22 +1507,37 @@ def register_oncall_tools(
         # just come back empty, harmlessly.
         meta = first_data.get("meta") or {}
         total_pages_raw = meta.get("total_pages")
-        if total_pages_raw is None:
-            total_pages = max_pages
-        else:
+        # Parsed once and shared, so paginating and reporting cannot disagree
+        # about what the upstream said. Checking the raw value's type here
+        # instead would skip reporting for a numeric string that pagination
+        # accepts, and the result would be truncated with nothing to say so.
+        reported_pages: int | None = None
+        if total_pages_raw is not None:
             try:
-                total_pages = int(total_pages_raw)
+                reported_pages = int(total_pages_raw)
             except (TypeError, ValueError):
-                total_pages = max_pages
+                reported_pages = None
+        total_pages = reported_pages if reported_pages is not None else max_pages
+        # Record the cut before clamping: past max_pages the caller is holding a
+        # partial resource and has no other way to know it.
+        if report is not None and reported_pages is not None:
+            # Every window counts toward these totals, not only the ones that
+            # were cut short: the note presents them as query-wide, so omitting
+            # a fully fetched window understates both halves. Accumulated
+            # rather than assigned because windows run concurrently. Safe
+            # without a lock -- no await between the read and the write.
+            report["available_pages"] = report.get("available_pages", 0) + reported_pages
+            report["fetched_pages"] = report.get("fetched_pages", 0) + min(
+                reported_pages, max_pages
+            )
+            if reported_pages > max_pages:
+                report["truncated"] = True
         total_pages = min(max(total_pages, 1), max_pages)
         if total_pages <= 1:
             return items
 
         async def _fetch_page(page_number: int) -> dict[str, Any] | None:
-            async with semaphore:
-                response = await make_authenticated_request(
-                    "GET", path, params=_params_for(page_number)
-                )
+            response = await _request_page(page_number)
             if not response or response.status_code != 200:
                 return None
             return cast(dict[str, Any], response.json())
@@ -1317,13 +1546,32 @@ def register_oncall_tools(
             *(_fetch_page(p) for p in range(2, total_pages + 1)),
             return_exceptions=True,
         )
+        failed_pages = 0
         for page_payload in rest:
             if isinstance(page_payload, BaseException) or page_payload is None:
-                # One transient page error shouldn't drop the whole resource.
+                # One transient page error shouldn't drop a best-effort
+                # enrichment lookup, but for a fetch whose result is the answer
+                # it means the caller would receive a short list and read it as
+                # complete -- the same failure as the first page returning
+                # empty, just further in.
+                failed_pages += 1
                 continue
             items.extend(page_payload.get("data", []))
             if on_included:
                 on_included(list(page_payload.get("included", [])))
+        if failed_pages and required:
+            raise RootlyAPIError(
+                f"{failed_pages} of {total_pages - 1} additional pages from {path} failed. "
+                "The partial result would read as complete, so the query is failed instead."
+            )
+        # No page count from the upstream means the ceiling was used as a
+        # guess. Every page coming back full is the only evidence available
+        # that more exist, and without saying so the caller reads ten pages as
+        # the whole answer.
+        if report is not None and reported_pages is None and len(items) >= max_pages * 100:
+            report["truncated"] = True
+            report["fetched_pages"] = report.get("fetched_pages", 0) + max_pages
+            report["total_unknown"] = True
         return items
 
     async def _fetch_users_and_schedules_maps() -> tuple[
@@ -1448,6 +1696,16 @@ def register_oncall_tools(
 
         Use this instead of the auto-generated listShifts when you need user filtering
         or dependable pagination on large tenants.
+
+        Answers questions about *individual* shifts: who is on call at a given
+        time, when a handoff happens, which shifts were overrides, or one
+        person's schedule (via user_ids). For questions about totals across a
+        team -- hours per responder, coverage, load -- use
+        get_oncall_schedule_summary, whose response size depends on team size
+        rather than on how long a range you asked for.
+
+        Ranges longer than the upstream cap are split into windows and merged
+        automatically, so a multi-month range is a normal request.
         """
         try:
             from datetime import datetime
@@ -1499,11 +1757,14 @@ def register_oncall_tools(
                         if isinstance(uid, str):
                             users_map[uid] = resource
 
+            fetch_report: dict[str, Any] = {}
             all_shifts = await _fetch_all_pages(
                 "/v1/shifts",
                 asyncio.Semaphore(10),
                 extra_params=params,
                 on_included=_merge_users,
+                required=True,
+                report=fetch_report,
             )
 
             # Process and filter shifts
@@ -1589,6 +1850,31 @@ def register_oncall_tools(
                     "returned_shifts": len(paginated_shifts),
                     "has_more": has_more,
                     "next_page": page_number + 1 if has_more else None,
+                    # Present only when they apply, so a normal response is
+                    # unchanged and either flag is a real signal.
+                    **(
+                        {"upstream_windows": fetch_report["windows"]}
+                        if fetch_report.get("windows")
+                        else {}
+                    ),
+                    **(
+                        {
+                            "truncated": True,
+                            "truncation_note": (
+                                "More shifts exist upstream than this query fetched "
+                                f"({fetch_report.get('fetched_pages')} of "
+                                + (
+                                    "an unreported number of"
+                                    if fetch_report.get("total_unknown")
+                                    else str(fetch_report.get("available_pages"))
+                                )
+                                + " pages). Narrow the date range, or filter by "
+                                "schedule_ids or user_ids."
+                            ),
+                        }
+                        if fetch_report.get("truncated")
+                        else {}
+                    ),
                 },
                 "shifts": paginated_shifts,
             }
@@ -1638,10 +1924,17 @@ def register_oncall_tools(
         Returns one entry per user per schedule (not raw shifts), with
         aggregated hours. Optimized for AI agent context windows.
 
-        Use this instead of listShifts when you need:
+        Use this instead of list_shifts when you need:
         - Aggregated hours per responder
         - Schedule coverage overview
         - Responder load analysis with warnings
+
+        One row per user per schedule, so the response stays the same size
+        whether the range is a week or a year. For individual shift times, or
+        for one person's schedule, use list_shifts instead.
+
+        Ranges longer than the upstream cap are split into windows and merged
+        automatically.
         """
         try:
             from collections import defaultdict
@@ -1704,6 +1997,7 @@ def register_oncall_tools(
                 asyncio.Semaphore(10),
                 extra_params=shift_params,
                 on_included=_merge_users,
+                required=True,
             )
 
             # Aggregate by schedule and user
@@ -1945,6 +2239,7 @@ def register_oncall_tools(
                 asyncio.Semaphore(10),
                 extra_params=shift_params,
                 on_included=_merge_users,
+                required=True,
             )
 
             # Group shifts by user
@@ -2169,6 +2464,7 @@ def register_oncall_tools(
                 asyncio.Semaphore(10),
                 extra_params=shift_params,
                 on_included=_merge_users,
+                required=True,
             )
 
             # Calculate load per user
@@ -2411,6 +2707,7 @@ def register_oncall_tools(
                     asyncio.Semaphore(10),
                     extra_params=shift_params,
                     on_included=_merge_users_and_schedules,
+                    required=True,
                 )
             )
 

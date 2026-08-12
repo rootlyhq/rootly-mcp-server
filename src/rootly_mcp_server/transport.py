@@ -760,6 +760,13 @@ def strip_heavy_alert_data(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+# Date-range caps the Rootly shift endpoints enforce upstream (422 "Datetime
+# range exceeds N month(s)"). Public so the shift tools can split long ranges
+# against the same numbers this client validates against.
+LIST_SHIFTS_LIMIT_DAYS = 62
+SCHEDULE_SHIFTS_LIMIT_DAYS = 31
+
+
 class AuthenticatedHTTPXClient:
     """An HTTPX client wrapper that handles Rootly API authentication and parameter transformation."""
 
@@ -833,8 +840,8 @@ class AuthenticatedHTTPXClient:
     #
     # `/v1/shifts`         → listShifts: 2 months cap
     # `/v1/schedules/{id}/shifts` → getScheduleShifts: 1 month cap
-    _LIST_SHIFTS_LIMIT_DAYS = 62
-    _SCHEDULE_SHIFTS_LIMIT_DAYS = 31
+    _LIST_SHIFTS_LIMIT_DAYS = LIST_SHIFTS_LIMIT_DAYS
+    _SCHEDULE_SHIFTS_LIMIT_DAYS = SCHEDULE_SHIFTS_LIMIT_DAYS
 
     @staticmethod
     def _parse_iso_date(value: Any) -> datetime | None:
