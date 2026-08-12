@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -27,8 +28,10 @@ from test_oncall_handoff import FakeMCP, FakeMCPError  # noqa: E402
 from rootly_mcp_server.exceptions import RootlyValidationError  # noqa: E402
 from rootly_mcp_server.tools.oncall import (  # noqa: E402
     MAX_SHIFT_SPAN_DAYS,
+    SHIFTS_FUTURE_HORIZON_DAYS,
     _parse_iso_datetime,
     _shift_window_limit_days,
+    _shifts_future_horizon_note,
     _split_date_windows,
     register_oncall_tools,
 )
@@ -133,6 +136,41 @@ class TestWindowLimits:
     )
     def test_non_shift_paths_are_not_split(self, path):
         assert _shift_window_limit_days(path) is None
+
+    def test_caps_are_the_largest_spans_upstream_accepts(self):
+        """Pin the measured values.
+
+        Upstream words these as "2 months" and "1 month", which invites 62 and
+        31. Both are rejected: against the live API, 60 and 30 pass while 61 and
+        31 return 422 from every start date tried, including February and
+        month-end. Windows built at 62/31 were each over the limit, so every
+        window of a split range failed and the split fixed nothing.
+        """
+        assert LIST_SHIFTS_LIMIT_DAYS == 60
+        assert SCHEDULE_SHIFTS_LIMIT_DAYS == 30
+
+
+class TestFutureHorizonNote:
+    """`/v1/shifts` serves generated shifts only, and says so with an empty list."""
+
+    def test_range_inside_the_horizon_is_not_annotated(self):
+        soon = datetime.now(UTC) + timedelta(days=SHIFTS_FUTURE_HORIZON_DAYS - 5)
+        assert _shifts_future_horizon_note(soon.isoformat()) is None
+
+    def test_range_beyond_the_horizon_is_annotated(self):
+        later = datetime.now(UTC) + timedelta(days=SHIFTS_FUTURE_HORIZON_DAYS + 30)
+        note = _shifts_future_horizon_note(later.isoformat())
+        assert note is not None
+        # The note has to name the tool that does cover those dates, or the
+        # caller is told the data is missing with nowhere to go.
+        assert "get_schedule_shifts" in note
+
+    def test_past_range_is_not_annotated(self):
+        assert _shifts_future_horizon_note("2020-01-01") is None
+
+    @pytest.mark.parametrize("value", ["", "garbage", None, 42])
+    def test_unparseable_end_is_not_annotated(self, value):
+        assert _shifts_future_horizon_note(value) is None
 
 
 class TestSplitDateWindows:

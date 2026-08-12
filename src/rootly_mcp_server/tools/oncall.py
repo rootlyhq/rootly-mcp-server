@@ -103,6 +103,38 @@ def _split_date_windows(
     return windows
 
 
+# How far ahead `/v1/shifts` actually has data. It serves shifts that already
+# exist as rows, which upstream generates about a month out; measured against
+# the live API, a `from` of today+31 still returns shifts and today+32 returns
+# an empty list. `/v1/schedules/{id}/shifts` derives shifts from rotations on
+# request and has no such horizon, which is why a schedule visible months ahead
+# in the UI looks empty through this endpoint.
+SHIFTS_FUTURE_HORIZON_DAYS = 31
+
+
+def _shifts_future_horizon_note(to_raw: Any) -> str | None:
+    """Note for a ``/v1/shifts`` range reaching past the generated-shift horizon.
+
+    Upstream answers those requests with an empty list rather than an error, so
+    without this the caller cannot tell "no one is on call" from "not generated
+    yet" — the count would read as fact. Returns ``None`` when the range ends
+    inside the horizon, leaving ordinary responses untouched.
+    """
+    end = _parse_iso_datetime(to_raw)
+    if end is None:
+        return None
+    horizon = datetime.now(UTC) + timedelta(days=SHIFTS_FUTURE_HORIZON_DAYS)
+    if end <= horizon:
+        return None
+    return (
+        f"This range extends past {horizon.date().isoformat()}. Beyond that date "
+        f"/v1/shifts has no generated shifts yet and returns none instead of an "
+        f"error, so counts here can understate a future period. Use "
+        f"get_schedule_shifts for later dates; it derives shifts from rotations "
+        f"and covers them."
+    )
+
+
 def _truncate_text(value: Any, max_length: int = 280) -> str | None:
     """Keep large narrative fields compact enough for MCP clients."""
     if not value:
@@ -1902,6 +1934,7 @@ def register_oncall_tools(
             end_index = start_index + page_size
             paginated_shifts = enriched_shifts[start_index:end_index]
             has_more = end_index < total_matching_shifts
+            horizon_note = _shifts_future_horizon_note(to_date)
 
             return {
                 "period": {"from": from_date, "to": to_date},
@@ -1943,6 +1976,7 @@ def register_oncall_tools(
                         if fetch_report.get("truncated")
                         else {}
                     ),
+                    **({"future_horizon_note": horizon_note} if horizon_note else {}),
                 },
                 "shifts": paginated_shifts,
             }

@@ -763,8 +763,15 @@ def strip_heavy_alert_data(data: dict[str, Any]) -> dict[str, Any]:
 # Date-range caps the Rootly shift endpoints enforce upstream (422 "Datetime
 # range exceeds N month(s)"). Public so the shift tools can split long ranges
 # against the same numbers this client validates against.
-LIST_SHIFTS_LIMIT_DAYS = 62
-SCHEDULE_SHIFTS_LIMIT_DAYS = 31
+#
+# Despite the "month" wording, upstream compares a fixed day count, and these
+# are the largest spans it accepts: measured against the live API from five
+# start dates (including Feb and month-end), 30/60 pass and 31/61 return 422
+# regardless of how long the calendar months involved actually are. A window
+# built at 31 or 62 days is rejected outright, so these bounds are inclusive
+# and a split must not exceed them.
+LIST_SHIFTS_LIMIT_DAYS = 60
+SCHEDULE_SHIFTS_LIMIT_DAYS = 30
 
 
 class AuthenticatedHTTPXClient:
@@ -838,8 +845,8 @@ class AuthenticatedHTTPXClient:
     # exceeds these limits; pre-flighting the check here turns a confusing
     # upstream error into an actionable client-side validation error.
     #
-    # `/v1/shifts`         → listShifts: 2 months cap
-    # `/v1/schedules/{id}/shifts` → getScheduleShifts: 1 month cap
+    # `/v1/shifts`                → listShifts: 60 days ("2 months")
+    # `/v1/schedules/{id}/shifts`  → getScheduleShifts: 30 days ("1 month")
     _LIST_SHIFTS_LIMIT_DAYS = LIST_SHIFTS_LIMIT_DAYS
     _SCHEDULE_SHIFTS_LIMIT_DAYS = SCHEDULE_SHIFTS_LIMIT_DAYS
 
