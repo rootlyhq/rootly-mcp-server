@@ -111,6 +111,15 @@ def _split_date_windows(
 # in the UI looks empty through this endpoint.
 SHIFTS_FUTURE_HORIZON_DAYS = 31
 
+# Pages fetched per window when computing metrics. The listing tools page their
+# own output, so hitting the shared 10-page ceiling costs the tail of a list the
+# caller can page through; a metric is one number, and one computed from part of
+# the range is wrong in a way that reads as a quiet month. A single 60-day window
+# in a 17-schedule workspace already returns about a thousand shifts, so the
+# shared default would cut an ordinary monthly report. Truncation is still
+# reported when even this is not enough.
+METRICS_MAX_PAGES_PER_WINDOW = 20
+
 
 def _shifts_future_horizon_note(to_raw: Any) -> str | None:
     """Note for a ``/v1/shifts`` range reaching past the generated-shift horizon.
@@ -323,41 +332,28 @@ def register_oncall_tools(
             # Include relationships for richer data
             params["include"] = "user,shift_override,on_call_role,schedule_rotation"
 
-            # Query shifts
-            try:
-                shifts_response = await make_authenticated_request(
-                    "GET", "/v1/shifts", params=params
-                )
+            # Query shifts through the shared helper, which splits a range longer
+            # than the endpoint accepts into windows and paginates each one. The
+            # previous single request asked for the whole span at once, so a
+            # report over more than the cap was refused outright rather than
+            # assembled. `required` keeps an upstream failure an error: a metric
+            # quietly computed from the pages that did arrive is indistinguishable
+            # from a genuinely quiet period.
+            fetch_report: dict[str, Any] = {}
+            included: list[dict[str, Any]] = []
 
-                if shifts_response is None:
-                    return mcp_error.tool_error(
-                        "Failed to get shifts: API request returned None", "execution_error"
-                    )
+            def _collect_included(page_included: list[dict[str, Any]]) -> None:
+                included.extend(page_included)
 
-                shifts_response.raise_for_status()
-                shifts_data = shifts_response.json()
-
-                if shifts_data is None:
-                    return mcp_error.tool_error(
-                        "Failed to get shifts: API returned null/empty response",
-                        "execution_error",
-                        details={"status": shifts_response.status_code},
-                    )
-
-                shifts = shifts_data.get("data", [])
-                included = shifts_data.get("included", [])
-            except AttributeError as e:
-                return mcp_error.tool_error(
-                    f"Failed to get shifts: Response object error - {str(e)}",
-                    "execution_error",
-                    details={"params": params},
-                )
-            except Exception as e:
-                return mcp_error.tool_error(
-                    f"Failed to get shifts: {str(e)}",
-                    "execution_error",
-                    details={"params": params, "error_type": type(e).__name__},
-                )
+            shifts = await _fetch_all_pages(
+                "/v1/shifts",
+                asyncio.Semaphore(10),
+                extra_params=params,
+                on_included=_collect_included,
+                max_pages=METRICS_MAX_PAGES_PER_WINDOW,
+                required=True,
+                report=fetch_report,
+            )
 
             # Build lookup maps for included resources
             users_map = {}
@@ -565,6 +561,29 @@ def register_oncall_tools(
             # Sort by shift count descending
             results.sort(key=lambda x: x["shift_count"], reverse=True)
 
+            # Anything that makes these numbers cover less than the range asked
+            # for. Present only when it applies, so a plain report is unchanged
+            # and any of these keys is a real signal that the totals are partial.
+            fetch_meta: dict[str, Any] = {}
+            if fetch_report.get("windows"):
+                fetch_meta["upstream_windows"] = fetch_report["windows"]
+            if fetch_report.get("truncated"):
+                fetch_meta["truncated"] = True
+                fetch_meta["truncation_note"] = (
+                    "These totals cover only part of the range: more shifts exist "
+                    f"upstream than this query fetched ({fetch_report.get('fetched_pages')} of "
+                    + (
+                        "an unreported number of"
+                        if fetch_report.get("total_unknown")
+                        else str(fetch_report.get("available_pages"))
+                    )
+                    + " pages). Narrow the range, or filter by schedule_ids, "
+                    "team_ids or user_ids."
+                )
+            horizon_note = _shifts_future_horizon_note(end_date)
+            if horizon_note:
+                fetch_meta["future_horizon_note"] = horizon_note
+
             return {
                 "period": {"start_date": start_date, "end_date": end_date},
                 "total_shifts": len(shifts),
@@ -576,6 +595,7 @@ def register_oncall_tools(
                     "total_override_shifts": sum(m["override_shifts"] for m in results),
                     "unique_people": len(results) if group_by == "user" else None,
                 },
+                **({"meta": fetch_meta} if fetch_meta else {}),
             }
 
         except Exception as e:

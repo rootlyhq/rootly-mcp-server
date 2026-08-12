@@ -28,6 +28,7 @@ from test_oncall_handoff import FakeMCP, FakeMCPError  # noqa: E402
 from rootly_mcp_server.exceptions import RootlyValidationError  # noqa: E402
 from rootly_mcp_server.tools.oncall import (  # noqa: E402
     MAX_SHIFT_SPAN_DAYS,
+    METRICS_MAX_PAGES_PER_WINDOW,
     SHIFTS_FUTURE_HORIZON_DAYS,
     _parse_iso_datetime,
     _shift_window_limit_days,
@@ -846,3 +847,100 @@ class TestTransientFailureRetry:
 
         assert attempts["n"] == 2
         assert result["error"] is True
+
+
+class TestMetricsChunking:
+    """`get_oncall_shift_metrics` asked for the whole span in one request, so a
+    report longer than the cap was refused instead of assembled."""
+
+    @pytest.mark.asyncio
+    async def test_a_long_range_is_split_into_windows(self):
+        responder, recorded = _responder(
+            lambda _p: _ok({"data": [_shift("S1")], "meta": {"total_pages": 1}})
+        )
+        tools = _build_tools(responder)
+        result = await tools["get_oncall_shift_metrics"](
+            start_date="2026-01-01T00:00:00Z",
+            end_date="2026-08-01T00:00:00Z",
+            group_by="none",
+        )
+
+        assert not result.get("error")
+        spans = [(p.get("from"), p.get("to")) for p in recorded]
+        assert len(spans) > 1, "a 212-day report must be split, not sent as one range"
+        assert result["meta"]["upstream_windows"] == len(spans)
+
+    @pytest.mark.asyncio
+    async def test_windows_stay_within_the_cap(self):
+        responder, recorded = _responder(lambda _p: _ok({"data": [], "meta": {"total_pages": 1}}))
+        tools = _build_tools(responder)
+        await tools["get_oncall_shift_metrics"](
+            start_date="2026-01-01T00:00:00Z", end_date="2026-12-01T00:00:00Z"
+        )
+
+        for params in recorded:
+            start = _parse_iso_datetime(params.get("from"))
+            end = _parse_iso_datetime(params.get("to"))
+            assert (end - start).total_seconds() / 86400 <= LIST_SHIFTS_LIMIT_DAYS
+
+    @pytest.mark.asyncio
+    async def test_a_shift_on_a_window_boundary_is_counted_once(self):
+        # Both adjoining windows return a shift that overlaps the boundary, so
+        # without dedup the same on-call time is billed to someone twice.
+        responder, _ = _responder(
+            lambda _p: _ok({"data": [_shift("DUPE")], "meta": {"total_pages": 1}})
+        )
+        tools = _build_tools(responder)
+        result = await tools["get_oncall_shift_metrics"](
+            start_date="2026-01-01T00:00:00Z",
+            end_date="2026-08-01T00:00:00Z",
+            group_by="none",
+        )
+
+        assert result["total_shifts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_an_upstream_failure_does_not_become_a_quiet_month(self):
+        # The numbers are the answer here, so a failed page has to surface as an
+        # error rather than shrink the totals.
+        async def responder(method, path, params=None, **kwargs):
+            if path == "/v1/shifts":
+                return _status(500)
+            return _ok({"data": [], "meta": {"total_pages": 1}})
+
+        tools = _build_tools(responder)
+        result = await tools["get_oncall_shift_metrics"](
+            start_date="2026-07-01T00:00:00Z", end_date="2026-07-20T00:00:00Z"
+        )
+
+        assert result["error"] is True
+
+    @pytest.mark.asyncio
+    async def test_hitting_the_page_ceiling_is_reported(self):
+        responder, _ = _responder(
+            lambda _p: _ok({"data": _full_page(), "meta": {"total_pages": 500}})
+        )
+        tools = _build_tools(responder)
+        result = await tools["get_oncall_shift_metrics"](
+            start_date="2026-07-01T00:00:00Z", end_date="2026-07-20T00:00:00Z"
+        )
+
+        assert result["meta"]["truncated"] is True
+        # Totals that cover part of the range must say so, or they read as fact.
+        assert "only part of the range" in result["meta"]["truncation_note"]
+        assert f"{METRICS_MAX_PAGES_PER_WINDOW} of 500 pages" in result["meta"]["truncation_note"]
+
+    @pytest.mark.asyncio
+    async def test_a_report_inside_the_cap_is_sent_as_one_request(self):
+        responder, recorded = _responder(
+            lambda _p: _ok({"data": [_shift("S1")], "meta": {"total_pages": 1}})
+        )
+        tools = _build_tools(responder)
+        result = await tools["get_oncall_shift_metrics"](
+            start_date="2026-07-01T00:00:00Z", end_date="2026-07-20T00:00:00Z"
+        )
+
+        assert len(recorded) == 1
+        # No split happened, so nothing about windows or truncation applies and
+        # an ordinary report carries no meta at all.
+        assert "meta" not in result
