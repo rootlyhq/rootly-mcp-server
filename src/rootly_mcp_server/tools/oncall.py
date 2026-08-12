@@ -1645,6 +1645,74 @@ def register_oncall_tools(
     @mcp.tool(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
     )
+    async def get_schedule_shifts(
+        id: Annotated[str, Field(description="Schedule ID (UUID) to fetch shifts for")],
+        from_date: Annotated[
+            str,
+            Field(description="Start date/time (ISO 8601, e.g. '2026-08-01T00:00:00Z')"),
+        ] = "",
+        to_date: Annotated[
+            str,
+            Field(description="End date/time (ISO 8601, e.g. '2026-09-30T23:59:59Z')"),
+        ] = "",
+    ) -> dict:
+        """
+        List shifts for one schedule over a date range.
+
+        Replaces the generated getScheduleShifts, which passed the range
+        straight through and failed with `Datetime range exceeds 1 month` on
+        anything longer than the upstream accepts. Ranges longer than that are
+        split into windows and merged here, so a two-month question is a normal
+        request.
+
+        Use list_shifts instead when the question spans schedules or filters by
+        user.
+        """
+        # Built before the try so the error path can always report what was
+        # sent, even if the failure happens on the first statement inside.
+        params: dict[str, Any] = {}
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+
+        try:
+            fetch_report: dict[str, Any] = {}
+            shifts = await _fetch_all_pages(
+                f"/v1/schedules/{id}/shifts",
+                asyncio.Semaphore(10),
+                extra_params=params,
+                required=True,
+                report=fetch_report,
+            )
+
+            result: dict[str, Any] = {
+                "schedule_id": id,
+                "period": {"from": from_date or None, "to": to_date or None},
+                "total_shifts": len(shifts),
+                "shifts": shifts,
+            }
+            if fetch_report.get("windows"):
+                result["upstream_windows"] = fetch_report["windows"]
+            if fetch_report.get("truncated"):
+                result["truncated"] = True
+                result["truncation_note"] = (
+                    "More shifts exist upstream than this query fetched "
+                    f"({fetch_report.get('fetched_pages')} of "
+                    f"{fetch_report.get('available_pages')} pages). Narrow the date range."
+                )
+            return result
+        except Exception as e:
+            error_type, error_message = mcp_error.categorize_error(e)
+            return mcp_error.tool_error(
+                f"Failed to get schedule shifts: {error_message}",
+                error_type,
+                details={"schedule_id": id, "params": params},
+            )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
     async def list_shifts(
         from_date: Annotated[
             str,

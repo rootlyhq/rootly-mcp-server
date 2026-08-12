@@ -630,6 +630,91 @@ class TestPaginationMetadataTypes:
         assert "truncated" not in result["meta"]
 
 
+class TestCuratedScheduleShifts:
+    """The generated getScheduleShifts passed long ranges straight through and
+    failed with `Datetime range exceeds 1 month`; this is the top shift error
+    in production. The curated tool splits instead."""
+
+    @pytest.mark.asyncio
+    async def test_a_sixty_day_range_is_split_against_the_one_month_cap(self):
+        responder, seen = _responder(
+            lambda _p: _ok({"data": [_shift()], "meta": {"total_pages": 1}})
+        )
+        tools = _build_tools(responder)
+        # The exact range seen failing upstream.
+        result = await tools["get_schedule_shifts"](
+            id="f1dd57bb-2ba2-49cd-be00-64961b796b9e",
+            from_date="2026-07-30",
+            to_date="2026-09-28",
+        )
+
+        assert not result.get("error"), result
+        assert len(seen) == 2
+        assert result["upstream_windows"] == 2
+        # Consecutive, covering the requested range end to end.
+        assert seen[0]["from"].startswith("2026-07-30")
+        assert seen[0]["to"] == seen[1]["from"]
+        assert seen[1]["to"].startswith("2026-09-28")
+
+    @pytest.mark.asyncio
+    async def test_each_window_stays_within_the_schedule_cap(self):
+        responder, seen = _responder(
+            lambda _p: _ok({"data": [_shift()], "meta": {"total_pages": 1}})
+        )
+        tools = _build_tools(responder)
+        await tools["get_schedule_shifts"](id="s1", from_date="2026-01-01", to_date="2026-06-30")
+
+        assert seen, "expected the range to be split into windows"
+        for window in seen:
+            start = _parse_iso_datetime(window["from"])
+            end = _parse_iso_datetime(window["to"])
+            # Unparseable bounds would mean the split emitted something the
+            # upstream could not read.
+            assert start is not None and end is not None
+            assert (end - start).total_seconds() / 86400 <= SCHEDULE_SHIFTS_LIMIT_DAYS
+
+    @pytest.mark.asyncio
+    async def test_a_short_range_is_a_single_request(self):
+        responder, seen = _responder(
+            lambda _p: _ok({"data": [_shift()], "meta": {"total_pages": 1}})
+        )
+        tools = _build_tools(responder)
+        result = await tools["get_schedule_shifts"](
+            id="s1", from_date="2026-08-01", to_date="2026-08-20"
+        )
+
+        assert len(seen) == 1
+        assert "upstream_windows" not in result
+
+    @pytest.mark.asyncio
+    async def test_an_upstream_failure_is_an_error_not_zero_shifts(self):
+        async def responder(method, path, params=None, **kwargs):
+            if path.endswith("/shifts"):
+                return _status(500)
+            return _ok({"data": [], "meta": {"total_pages": 1}})
+
+        tools = _build_tools(responder)
+        result = await tools["get_schedule_shifts"](
+            id="s1", from_date="2026-08-01", to_date="2026-08-20"
+        )
+
+        assert result["error"] is True
+        assert "total_shifts" not in result
+
+    @pytest.mark.asyncio
+    async def test_no_date_range_still_works(self):
+        # Both bounds are optional on the generated tool; omitting them must
+        # not attempt a split.
+        async def responder(method, path, params=None, **kwargs):
+            return _ok({"data": [{"id": "S1", "attributes": {}}], "meta": {"total_pages": 1}})
+
+        tools = _build_tools(responder)
+        result = await tools["get_schedule_shifts"](id="s1")
+
+        assert not result.get("error"), result
+        assert result["total_shifts"] == 1
+
+
 class TestTransientFailureRetry:
     """A split year is up to sixty requests, and any one failing fails the
     query. One retry absorbs a blip without letting partial data through."""
