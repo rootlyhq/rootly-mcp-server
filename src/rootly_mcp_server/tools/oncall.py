@@ -111,6 +111,39 @@ def _split_date_windows(
 # in the UI looks empty through this endpoint.
 SHIFTS_FUTURE_HORIZON_DAYS = 31
 
+
+def _date_argument_error(dates: dict[str, Any], *, required: bool) -> str | None:
+    """Message naming the date arguments that cannot be used, else ``None``.
+
+    Upstream is not a dependable backstop for these. ``from=not-a-date`` comes
+    back 200 with an unfiltered page, and an empty bound is ignored the same
+    way, so a nonsense range is answered as though it were the one asked for --
+    only values like ``2026-13-45`` earn a 400. Rejecting them here keeps a
+    malformed request an error instead of a plausible-looking answer.
+
+    ``required`` also rejects a missing or empty bound, for callers whose whole
+    question is the range; tools where the bounds are optional filters pass
+    ``False`` so omitting them still means "no filter".
+    """
+    unusable: list[str] = []
+    for name, value in dates.items():
+        if value is None or (isinstance(value, str) and not value.strip()):
+            if required:
+                unusable.append(f"{name} is empty")
+            continue
+        if _parse_iso_datetime(value) is None:
+            unusable.append(f"{name}={value!r} is not an ISO 8601 date or datetime")
+    if not unusable:
+        return None
+    return (
+        "Cannot run this query: "
+        + "; ".join(unusable)
+        + ". Upstream ignores an unusable bound rather than rejecting it, so "
+        "continuing would return shifts for a different period than the one "
+        "asked for. Use a date like '2026-08-12' or '2026-08-12T00:00:00Z'."
+    )
+
+
 # Pages fetched per window when computing metrics. The listing tools page their
 # own output, so hitting the shared 10-page ceiling costs the tail of a list the
 # caller can page through; a metric is one number, and one computed from part of
@@ -273,6 +306,16 @@ def register_oncall_tools(
         try:
             from collections import defaultdict
             from datetime import datetime, timedelta
+
+            date_error = _date_argument_error(
+                {"start_date": start_date, "end_date": end_date}, required=True
+            )
+            if date_error:
+                return mcp_error.tool_error(
+                    f"Failed to get on-call shift metrics: {date_error}",
+                    "validation_error",
+                    details={"start_date": start_date, "end_date": end_date},
+                )
 
             # Build query parameters
             params: dict[str, Any] = {
@@ -1728,6 +1771,19 @@ def register_oncall_tools(
         if to_date:
             params["to"] = to_date
 
+        # Omitting a bound is a valid "no filter" here, but a bound that is
+        # present and unusable is not: upstream would ignore it and answer for a
+        # different period.
+        date_error = _date_argument_error(
+            {"from_date": from_date, "to_date": to_date}, required=False
+        )
+        if date_error:
+            return mcp_error.tool_error(
+                f"Failed to get schedule shifts: {date_error}",
+                "validation_error",
+                details={"schedule_id": id, "params": params},
+            )
+
         try:
             fetch_report: dict[str, Any] = {}
             shifts = await _fetch_all_pages(
@@ -1836,6 +1892,15 @@ def register_oncall_tools(
                     "page_number must be >= 1 for list_shifts",
                     "validation_error",
                     details={"page_number": page_number},
+                )
+            date_error = _date_argument_error(
+                {"from_date": from_date, "to_date": to_date}, required=True
+            )
+            if date_error:
+                return mcp_error.tool_error(
+                    f"Failed to list shifts: {date_error}",
+                    "validation_error",
+                    details={"from_date": from_date, "to_date": to_date},
                 )
             # Build query parameters (page[size] / page[number] handled by helper)
             params: dict[str, Any] = {

@@ -30,6 +30,7 @@ from rootly_mcp_server.tools.oncall import (  # noqa: E402
     MAX_SHIFT_SPAN_DAYS,
     METRICS_MAX_PAGES_PER_WINDOW,
     SHIFTS_FUTURE_HORIZON_DAYS,
+    _date_argument_error,
     _parse_iso_datetime,
     _shift_window_limit_days,
     _shifts_future_horizon_note,
@@ -944,3 +945,79 @@ class TestMetricsChunking:
         # No split happened, so nothing about windows or truncation applies and
         # an ordinary report carries no meta at all.
         assert "meta" not in result
+
+
+class TestUnusableDatesAreRejected:
+    """Upstream ignores an unusable bound instead of refusing it.
+
+    `from=not-a-date` returns 200 with an unfiltered page and an empty bound
+    behaves the same, so a nonsense range came back as a confident answer for a
+    period nobody asked about. Only values like `2026-13-45` earn a 400.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        ["", "   ", None, "not-a-date", "08/12/2026", "yesterday", "2026-08-12T99:99:99Z"],
+    )
+    def test_unusable_bounds_are_named(self, value):
+        message = _date_argument_error({"from_date": value}, required=True)
+        assert message is not None
+        assert "from_date" in message
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "2026-08-12",
+            "2026-08-12T00:00:00Z",
+            "2026-08-12T00:00:00-07:00",
+            "2026-08-12T00:00:00.123456Z",
+        ],
+    )
+    def test_usable_bounds_pass(self, value):
+        assert _date_argument_error({"from_date": value}, required=True) is None
+
+    def test_an_omitted_optional_bound_is_not_an_error(self):
+        # `get_schedule_shifts` treats a missing bound as "no filter".
+        assert _date_argument_error({"from_date": "", "to_date": ""}, required=False) is None
+
+    def test_a_present_but_unusable_optional_bound_is_still_an_error(self):
+        assert _date_argument_error({"to_date": "garbage"}, required=False) is not None
+
+    @pytest.mark.asyncio
+    async def test_list_shifts_rejects_before_calling_upstream(self):
+        responder, recorded = _responder()
+        tools = _build_tools(responder)
+        result = await tools["list_shifts"](from_date="not-a-date", to_date="2026-08-01")
+
+        assert result["error"] is True
+        assert result["error_type"] == "validation_error"
+        # The point is to spend no upstream request on a query whose answer
+        # could not be trusted anyway.
+        assert recorded == []
+
+    @pytest.mark.asyncio
+    async def test_schedule_shifts_rejects_an_unusable_bound(self):
+        responder, recorded = _responder()
+        tools = _build_tools(responder)
+        result = await tools["get_schedule_shifts"](id="sched-1", from_date="whenever")
+
+        assert result["error"] is True
+        assert recorded == []
+
+    @pytest.mark.asyncio
+    async def test_schedule_shifts_without_bounds_still_queries(self):
+        responder, recorded = _responder()
+        tools = _build_tools(responder)
+        result = await tools["get_schedule_shifts"](id="sched-1")
+
+        assert not result.get("error")
+        assert len(recorded) == 1
+
+    @pytest.mark.asyncio
+    async def test_metrics_rejects_an_unusable_bound(self):
+        responder, recorded = _responder()
+        tools = _build_tools(responder)
+        result = await tools["get_oncall_shift_metrics"](start_date="", end_date="2026-08-01")
+
+        assert result["error"] is True
+        assert recorded == []
