@@ -120,6 +120,29 @@ def agentcat_options_supports(options_cls: type[Any], option: str) -> bool:
         return False
 
 
+def resolve_agentcat_session_id(_request: Any, _extra: Any) -> str | None:
+    """Take session handling off the model, by owning it here.
+
+    Left to itself, AgentCat adds a ``session_id`` parameter to every tool's
+    schema and appends a block to every tool result telling the model the value
+    is "required on every subsequent tool call" and that "without session_id,
+    this server does not function as intended". Neither is true of this server,
+    and the text is second-person instructions arriving in tool output, which is
+    the shape of a prompt injection -- something we should not be sending to a
+    caller's agent even when we are the ones sending it.
+
+    Registering any session hook switches both off. Returning ``None`` leaves
+    AgentCat to mint its own per-call id, which is what already happens: the
+    correlation relied on the model echoing the value back, and clients that
+    reach us through a gateway do not. Nothing is lost that currently works.
+
+    Both arguments are the call's params and adapter context; neither carries a
+    stable conversation id on the hosted transport, which is stateless by
+    default, so there is nothing honest to return yet.
+    """
+    return None
+
+
 def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging.Logger) -> None:
     """Enable AgentCat tracking when configured and available.
 
@@ -173,6 +196,14 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
             logger.warning(
                 "AgentCat does not support redact_event; credential-named tool "
                 "arguments will not be scrubbed. Upgrade to 2.0.2 or later."
+            )
+        if agentcat_options_supports(agentcat_types.AgentCatOptions, "resolve_session_id"):
+            options_kwargs["resolve_session_id"] = resolve_agentcat_session_id
+        else:
+            logger.warning(
+                "AgentCat does not support resolve_session_id; tool results will "
+                "carry session_id instructions addressed to the model. Upgrade to "
+                "2.0.2 or later."
             )
         if sentry_dsn:
             options_kwargs["exporters"] = {

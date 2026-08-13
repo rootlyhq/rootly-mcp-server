@@ -17,6 +17,7 @@ from rootly_mcp_server.__main__ import (
     main,
     maybe_enable_mcpcat_tracking,
     normalize_transport,
+    resolve_agentcat_session_id,
     resolve_requested_hosted_tool_profile,
     run_profiled_streamable_http_server,
     streamable_http_stateless_enabled,
@@ -424,6 +425,66 @@ def test_redact_event_is_offered_only_when_the_sdk_accepts_it(supported, monkeyp
     # how the SENTRY_DSN gap survived unnoticed.
     warned = any("redact_event" in str(call.args[0]) for call in logger.warning.call_args_list)
     assert warned is (not supported)
+
+
+@pytest.mark.parametrize("supported", [True, False])
+def test_session_hook_is_offered_only_when_the_sdk_accepts_it(supported, monkeypatch):
+    # Registering any session hook stops AgentCat adding a `session_id`
+    # parameter to every tool and appending "required on every subsequent tool
+    # call" instructions to every result. An SDK too old for the option must not
+    # be handed it, or the TypeError disables telemetry altogether.
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+
+    fields: dict[str, Any] = {
+        "identify": None,
+        "redact_sensitive_information": None,
+        "redact_event": None,
+        "exporters": None,
+    }
+    if supported:
+        fields["resolve_session_id"] = None
+    options_cls = dataclasses.make_dataclass(
+        "AgentCatOptions", [(name, Any, None) for name in fields]
+    )
+
+    captured: dict[str, Any] = {}
+
+    def make_options(**kwargs):
+        captured.update(kwargs)
+        return options_cls(**kwargs)
+
+    factory = type("Factory", (options_cls,), {"__new__": lambda cls, **kw: make_options(**kw)})
+
+    agentcat_module = SimpleNamespace(track=Mock())
+    agentcat_types_module = SimpleNamespace(
+        AgentCatOptions=factory,
+        UserIdentity=Mock(side_effect=lambda **kw: SimpleNamespace(**kw)),
+    )
+
+    def fake_import(name):
+        return agentcat_module if name == "agentcat" else agentcat_types_module
+
+    logger = Mock()
+    with patch("rootly_mcp_server.__main__.importlib.import_module", fake_import):
+        maybe_enable_mcpcat_tracking(object(), "proj_test_123", logger)
+
+    # Telemetry stays on either way; only the hook is conditional.
+    assert agentcat_module.track.called
+    assert ("resolve_session_id" in captured) is supported
+    if supported:
+        assert captured["resolve_session_id"] is resolve_agentcat_session_id
+
+    warned = any(
+        "resolve_session_id" in str(call.args[0]) for call in logger.warning.call_args_list
+    )
+    assert warned is (not supported)
+
+
+def test_session_hook_returns_none():
+    # None is deliberate: it suppresses the injected parameter and the
+    # instruction text while leaving AgentCat to mint its own id, which is what
+    # already happens whenever the model does not echo the value back.
+    assert resolve_agentcat_session_id(object(), object()) is None
 
 
 def test_agentcat_options_supports_detects_the_field():
