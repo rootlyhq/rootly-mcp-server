@@ -121,32 +121,16 @@ def agentcat_options_supports(options_cls: type[Any], option: str) -> bool:
 
 
 def resolve_agentcat_session_id(_request: Any, _extra: Any) -> str | None:
-    """Take session handling off the model, by owning it here.
+    """Stop AgentCat prompting the model for a session_id.
 
-    Left to itself, AgentCat adds a ``session_id`` parameter to every tool's
-    schema and appends a block to every tool result telling the model the value
-    is "required on every subsequent tool call" and that "without session_id,
-    this server does not function as intended". Neither is true of this server,
-    and the text is second-person instructions arriving in tool output, which is
-    the shape of a prompt injection -- something we should not be sending to a
-    caller's agent even when we are the ones sending it.
+    Without a hook it adds the parameter to every tool schema and appends
+    "required on every subsequent tool call" to every result -- untrue here,
+    and instructions aimed at the caller's agent. Registering a hook ends both.
 
-    Registering any session hook switches both off. Returning ``None`` leaves
-    AgentCat to mint its own id per call, and that costs something real: the
-    injected parameter is how AgentCat groups a task's calls together over a
-    stateless transport, so session replay and trace correlation drop to one
-    call per session for any client whose agent did echo the value back. For a
-    client reaching us through a gateway the grouping was already per-call, but
-    that is not every client. The trade is deliberate -- sending a caller's
-    agent false instructions is worse than losing replay fidelity -- and the
-    fix worth asking AgentCat for is a variant that correlates without the prose.
-
-    ``None`` rather than a real id because there is nothing honest to return.
-    Both arguments are the call's params and adapter context: the params carry
-    only the tool's own arguments, the context is empty on this adapter, and
-    hosted mode is stateless by default, so no stable conversation id is in
-    reach. Deriving one from the auth principal would file every call a token
-    ever makes under a single unending session, which is worse than per-call.
+    ``None`` because nothing stable is in reach: hosted mode is stateless and
+    the arguments carry no conversation id. AgentCat then mints one per call,
+    which costs the session grouping for agents that were echoing the value
+    back.
     """
     return None
 

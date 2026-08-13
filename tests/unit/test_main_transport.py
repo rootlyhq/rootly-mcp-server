@@ -429,10 +429,8 @@ def test_redact_event_is_offered_only_when_the_sdk_accepts_it(supported, monkeyp
 
 @pytest.mark.parametrize("supported", [True, False])
 def test_session_hook_is_offered_only_when_the_sdk_accepts_it(supported, monkeypatch):
-    # Registering any session hook stops AgentCat adding a `session_id`
-    # parameter to every tool and appending "required on every subsequent tool
-    # call" instructions to every result. An SDK too old for the option must not
-    # be handed it, or the TypeError disables telemetry altogether.
+    # An SDK too old for the option must not be handed it, or the TypeError
+    # disables telemetry altogether.
     monkeypatch.delenv("SENTRY_DSN", raising=False)
 
     fields: dict[str, Any] = {
@@ -481,9 +479,7 @@ def test_session_hook_is_offered_only_when_the_sdk_accepts_it(supported, monkeyp
 
 
 def test_session_hook_returns_none():
-    # None is deliberate: it suppresses the injected parameter and the
-    # instruction text while leaving AgentCat to mint its own id, which is what
-    # already happens whenever the model does not echo the value back.
+    # Registering the hook is what suppresses the injection; the value is not.
     assert resolve_agentcat_session_id(object(), object()) is None
 
 
