@@ -1554,10 +1554,27 @@ def register_oncall_tools(
             """
             response = None
             for attempt in (1, 2):
-                async with semaphore:
-                    response = await make_authenticated_request(
-                        "GET", path, params=_params_for(page_number)
+                try:
+                    async with semaphore:
+                        response = await make_authenticated_request(
+                            "GET", path, params=_params_for(page_number)
+                        )
+                except httpx.TransportError as exc:
+                    # A timeout or dropped connection arrives as a raised error,
+                    # not as a response, so it used to leave this loop before the
+                    # second attempt -- retrying only what came back meant not
+                    # retrying the failure that actually happens. Shift pages take
+                    # seconds each and a long range is dozens of them, so one lost
+                    # connection would fail the whole query.
+                    if attempt == 2:
+                        raise
+                    logger.warning(
+                        "Retrying page %d of %s after a transport error (%s)",
+                        page_number,
+                        path,
+                        type(exc).__name__,
                     )
+                    continue
                 if response is not None and response.status_code == 200:
                     return response
                 status = getattr(response, "status_code", None)

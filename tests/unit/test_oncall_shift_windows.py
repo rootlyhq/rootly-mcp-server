@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -1021,3 +1022,92 @@ class TestUnusableDatesAreRejected:
 
         assert result["error"] is True
         assert recorded == []
+
+
+class TestTransportErrorsAreRetried:
+    """A timeout arrives as a raised error, not as a response.
+
+    The retry originally inspected only what came back, so the failure that
+    actually happens on these endpoints -- pages take seconds each and a long
+    range is dozens of them -- left the loop before the second attempt.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_dropped_connection_is_retried_once(self):
+        attempts = {"n": 0}
+
+        async def responder(method, path, params=None, **kwargs):
+            if path == "/v1/shifts":
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    raise httpx.ConnectError("connection reset")
+                return _ok({"data": [_shift("S1")], "meta": {"total_pages": 1}})
+            return _ok({"data": [], "meta": {"total_pages": 1}})
+
+        tools = _build_tools(responder)
+        result = await tools["list_shifts"](
+            from_date="2026-08-01T00:00:00Z", to_date="2026-08-20T00:00:00Z"
+        )
+
+        assert attempts["n"] == 2
+        assert not result.get("error")
+        assert result["total_shifts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_timeout_is_retried_once(self):
+        attempts = {"n": 0}
+
+        async def responder(method, path, params=None, **kwargs):
+            if path == "/v1/shifts":
+                attempts["n"] += 1
+                if attempts["n"] == 1:
+                    raise httpx.ReadTimeout("timed out")
+                return _ok({"data": [_shift("S1")], "meta": {"total_pages": 1}})
+            return _ok({"data": [], "meta": {"total_pages": 1}})
+
+        tools = _build_tools(responder)
+        result = await tools["list_shifts"](
+            from_date="2026-08-01T00:00:00Z", to_date="2026-08-20T00:00:00Z"
+        )
+
+        assert attempts["n"] == 2
+        assert not result.get("error")
+
+    @pytest.mark.asyncio
+    async def test_a_persistent_transport_error_still_fails_the_query(self):
+        # Two attempts is the budget. A partial answer must not slip through.
+        attempts = {"n": 0}
+
+        async def responder(method, path, params=None, **kwargs):
+            if path == "/v1/shifts":
+                attempts["n"] += 1
+                raise httpx.ConnectError("down")
+            return _ok({"data": [], "meta": {"total_pages": 1}})
+
+        tools = _build_tools(responder)
+        result = await tools["list_shifts"](
+            from_date="2026-08-01T00:00:00Z", to_date="2026-08-20T00:00:00Z"
+        )
+
+        assert attempts["n"] == 2
+        assert result["error"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_deterministic_error_is_not_retried(self):
+        # Retrying a bad request just doubles the load; only transport faults
+        # are worth a second attempt.
+        attempts = {"n": 0}
+
+        async def responder(method, path, params=None, **kwargs):
+            if path == "/v1/shifts":
+                attempts["n"] += 1
+                raise RootlyValidationError("bad range")
+            return _ok({"data": [], "meta": {"total_pages": 1}})
+
+        tools = _build_tools(responder)
+        result = await tools["list_shifts"](
+            from_date="2026-08-01T00:00:00Z", to_date="2026-08-20T00:00:00Z"
+        )
+
+        assert attempts["n"] == 1
+        assert result["error"] is True
