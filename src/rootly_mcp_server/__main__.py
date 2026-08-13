@@ -132,13 +132,21 @@ def resolve_agentcat_session_id(_request: Any, _extra: Any) -> str | None:
     caller's agent even when we are the ones sending it.
 
     Registering any session hook switches both off. Returning ``None`` leaves
-    AgentCat to mint its own per-call id, which is what already happens: the
-    correlation relied on the model echoing the value back, and clients that
-    reach us through a gateway do not. Nothing is lost that currently works.
+    AgentCat to mint its own id per call, and that costs something real: the
+    injected parameter is how AgentCat groups a task's calls together over a
+    stateless transport, so session replay and trace correlation drop to one
+    call per session for any client whose agent did echo the value back. For a
+    client reaching us through a gateway the grouping was already per-call, but
+    that is not every client. The trade is deliberate -- sending a caller's
+    agent false instructions is worse than losing replay fidelity -- and the
+    fix worth asking AgentCat for is a variant that correlates without the prose.
 
-    Both arguments are the call's params and adapter context; neither carries a
-    stable conversation id on the hosted transport, which is stateless by
-    default, so there is nothing honest to return yet.
+    ``None`` rather than a real id because there is nothing honest to return.
+    Both arguments are the call's params and adapter context: the params carry
+    only the tool's own arguments, the context is empty on this adapter, and
+    hosted mode is stateless by default, so no stable conversation id is in
+    reach. Deriving one from the auth principal would file every call a token
+    ever makes under a single unending session, which is worse than per-call.
     """
     return None
 
