@@ -1621,6 +1621,11 @@ def register_oncall_tools(
         # Don't fan out if the first page is short - matches the legacy
         # "< 100 items means we're done" termination signal.
         if len(items) < 100:
+            # Counted even though nothing was truncated here: a window that
+            # finished in one page is still a page this query read, and the
+            # note presents the figure as query-wide.
+            if report is not None:
+                report["fetched_pages"] = report.get("fetched_pages", 0) + 1
             return items
 
         # Trust meta.total_pages when provided. When the field is missing
@@ -1650,13 +1655,12 @@ def register_oncall_tools(
             # rather than assigned because windows run concurrently. Safe
             # without a lock -- no await between the read and the write.
             report["available_pages"] = report.get("available_pages", 0) + reported_pages
-            report["fetched_pages"] = report.get("fetched_pages", 0) + min(
-                reported_pages, max_pages
-            )
             if reported_pages > max_pages:
                 report["truncated"] = True
         total_pages = min(max(total_pages, 1), max_pages)
         if total_pages <= 1:
+            if report is not None:
+                report["fetched_pages"] = report.get("fetched_pages", 0) + 1
             return items
 
         async def _fetch_page(page_number: int) -> dict[str, Any] | None:
@@ -1687,13 +1691,19 @@ def register_oncall_tools(
                 f"{failed_pages} of {total_pages - 1} additional pages from {path} failed. "
                 "The partial result would read as complete, so the query is failed instead."
             )
+        if report is not None:
+            # Counted here rather than from the reported total, so a window
+            # whose total the upstream withheld still contributes what it
+            # actually read. Counting it up there meant such a window added
+            # nothing unless it filled the ceiling, and another window's
+            # truncation then published a figure missing those pages.
+            report["fetched_pages"] = report.get("fetched_pages", 0) + (total_pages - failed_pages)
         # No page count from the upstream means the ceiling was used as a
         # guess. Every page coming back full is the only evidence available
         # that more exist, and without saying so the caller reads ten pages as
         # the whole answer.
         if report is not None and reported_pages is None and len(items) >= max_pages * 100:
             report["truncated"] = True
-            report["fetched_pages"] = report.get("fetched_pages", 0) + max_pages
             report["total_unknown"] = True
         return items
 

@@ -1233,3 +1233,49 @@ class TestTruncationNoteWordsUnknownTotals:
         assert (
             _pages_fetched_phrase({"fetched_pages": 10, "available_pages": 50}) == "10 of 50 pages"
         )
+
+
+class TestEveryWindowCountsTowardTheTotals:
+    """The truncation note presents query-wide figures.
+
+    Pages were counted from the reported total, so a window whose total the
+    upstream withheld -- or one that finished in a single short page --
+    contributed nothing. Another window's truncation then published a count
+    that omitted pages this query had actually read.
+    """
+
+    @staticmethod
+    def _mixed_responder():
+        """One window ends in a short page; the rest report 50 pages and truncate."""
+
+        async def responder(method, path, params=None, **kwargs):
+            if path.endswith("/shifts"):
+                if str((params or {}).get("from", "")).startswith("2026-01"):
+                    return _ok({"data": [_shift("S1")], "meta": {}})
+                return _ok({"data": _full_page(), "meta": {"total_pages": 50}})
+            return _ok({"data": [], "meta": {"total_pages": 1}})
+
+        return responder
+
+    @pytest.mark.asyncio
+    async def test_a_short_window_still_counts(self):
+        tools = _build_tools(self._mixed_responder())
+        result = await tools["list_shifts"](from_date="2026-01-01", to_date="2026-06-30")
+
+        note = result["meta"]["truncation_note"]
+        # 1 page from the short window, then the ceiling from each of the
+        # other two. Counting only the truncated windows would say 20.
+        assert "21 of 100 pages" in note
+
+    @pytest.mark.asyncio
+    async def test_an_untruncated_query_still_reports_no_truncation(self):
+        # The counter runs on every window, so it must not imply truncation
+        # where none happened.
+        responder, _ = _responder(
+            lambda _p: _ok({"data": [_shift("S1")], "meta": {"total_pages": 1}})
+        )
+        tools = _build_tools(responder)
+        result = await tools["list_shifts"](from_date="2026-08-01", to_date="2026-08-20")
+
+        assert "truncated" not in result["meta"]
+        assert "truncation_note" not in result["meta"]
