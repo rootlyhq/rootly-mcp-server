@@ -32,6 +32,7 @@ from rootly_mcp_server.tools.oncall import (  # noqa: E402
     METRICS_MAX_PAGES_PER_WINDOW,
     SHIFTS_FUTURE_HORIZON_DAYS,
     _date_argument_error,
+    _pages_fetched_phrase,
     _parse_iso_datetime,
     _shift_window_limit_days,
     _shifts_future_horizon_note,
@@ -1178,3 +1179,57 @@ class TestDateArgumentAliases:
         tool = {t.name: t for t in await mcp.list_tools()}["get_schedule_shifts"]
         schema = getattr(tool, "inputSchema", None) or getattr(tool, "parameters", None) or {}
         assert set(schema.get("properties", {})) == {"id", "start_date", "end_date"}
+
+
+class TestTruncationNoteWordsUnknownTotals:
+    """Every truncation note has to say the same thing about an unknown total.
+
+    The upstream does not always report `meta.total_pages`. Three notes were
+    written separately and drifted: two named the unknown, the third rendered
+    "10 of None pages", which reads as a defect in the answer rather than a
+    total nobody was given.
+    """
+
+    @staticmethod
+    def _responder_with_full_pages_and_no_total():
+        async def responder(method, path, params=None, **kwargs):
+            if path.endswith("/shifts"):
+                return _ok({"data": _full_page(), "meta": {}})
+            return _ok({"data": [], "meta": {"total_pages": 1}})
+
+        return responder
+
+    @pytest.mark.asyncio
+    async def test_list_shifts_names_the_unknown(self):
+        tools = _build_tools(self._responder_with_full_pages_and_no_total())
+        result = await tools["list_shifts"](
+            from_date="2026-08-01T00:00:00Z", to_date="2026-08-20T00:00:00Z"
+        )
+        note = result["meta"]["truncation_note"]
+        assert "an unreported number of pages" in note
+        assert "None" not in note
+
+    @pytest.mark.asyncio
+    async def test_schedule_shifts_names_the_unknown(self):
+        tools = _build_tools(self._responder_with_full_pages_and_no_total())
+        result = await tools["get_schedule_shifts"](
+            id="s1", start_date="2026-08-01T00:00:00Z", end_date="2026-08-20T00:00:00Z"
+        )
+        note = result["truncation_note"]
+        assert "an unreported number of pages" in note
+        assert "None" not in note
+
+    @pytest.mark.asyncio
+    async def test_metrics_names_the_unknown(self):
+        tools = _build_tools(self._responder_with_full_pages_and_no_total())
+        result = await tools["get_oncall_shift_metrics"](
+            start_date="2026-08-01T00:00:00Z", end_date="2026-08-20T00:00:00Z"
+        )
+        note = result["meta"]["truncation_note"]
+        assert "an unreported number of pages" in note
+        assert "None" not in note
+
+    def test_a_known_total_is_still_a_number(self):
+        assert (
+            _pages_fetched_phrase({"fetched_pages": 10, "available_pages": 50}) == "10 of 50 pages"
+        )

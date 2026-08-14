@@ -177,6 +177,23 @@ def _shifts_future_horizon_note(to_raw: Any) -> str | None:
     )
 
 
+def _pages_fetched_phrase(report: dict[str, Any]) -> str:
+    """How much of the range was fetched, as "N of M pages".
+
+    The upstream does not always report ``meta.total_pages``, and when it does
+    not the page ceiling is still what stopped the fetch. Saying "of None"
+    there reads like a bug in the answer rather than an unknown total, so the
+    unknown is named. Shared by every truncation note: the three were written
+    separately and immediately drifted, with one rendering "10 of None pages".
+    """
+    total = (
+        "an unreported number of"
+        if report.get("total_unknown")
+        else str(report.get("available_pages"))
+    )
+    return f"{report.get('fetched_pages')} of {total} pages"
+
+
 def _truncate_text(value: Any, max_length: int = 280) -> str | None:
     """Keep large narrative fields compact enough for MCP clients."""
     if not value:
@@ -614,14 +631,8 @@ def register_oncall_tools(
                 fetch_meta["truncated"] = True
                 fetch_meta["truncation_note"] = (
                     "These totals cover only part of the range: more shifts exist "
-                    f"upstream than this query fetched ({fetch_report.get('fetched_pages')} of "
-                    + (
-                        "an unreported number of"
-                        if fetch_report.get("total_unknown")
-                        else str(fetch_report.get("available_pages"))
-                    )
-                    + " pages). Narrow the range, or filter by schedule_ids, "
-                    "team_ids or user_ids."
+                    f"upstream than this query fetched ({_pages_fetched_phrase(fetch_report)}). "
+                    "Narrow the range, or filter by schedule_ids, team_ids or user_ids."
                 )
             horizon_note = _shifts_future_horizon_note(end_date)
             if horizon_note:
@@ -1833,8 +1844,7 @@ def register_oncall_tools(
                 result["truncated"] = True
                 result["truncation_note"] = (
                     "More shifts exist upstream than this query fetched "
-                    f"({fetch_report.get('fetched_pages')} of "
-                    f"{fetch_report.get('available_pages')} pages). Narrow the date range."
+                    f"({_pages_fetched_phrase(fetch_report)}). Narrow the date range."
                 )
             return result
         except Exception as e:
@@ -2081,14 +2091,8 @@ def register_oncall_tools(
                             "truncated": True,
                             "truncation_note": (
                                 "More shifts exist upstream than this query fetched "
-                                f"({fetch_report.get('fetched_pages')} of "
-                                + (
-                                    "an unreported number of"
-                                    if fetch_report.get("total_unknown")
-                                    else str(fetch_report.get("available_pages"))
-                                )
-                                + " pages). Narrow the date range, or filter by "
-                                "schedule_ids or user_ids."
+                                f"({_pages_fetched_phrase(fetch_report)}). Narrow the "
+                                "date range, or filter by schedule_ids or user_ids."
                             ),
                         }
                         if fetch_report.get("truncated")
