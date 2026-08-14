@@ -883,6 +883,8 @@ class TestMetricsChunking:
         for params in recorded:
             start = _parse_iso_datetime(params.get("from"))
             end = _parse_iso_datetime(params.get("to"))
+            # Unparseable bounds would make the span check below vacuous.
+            assert start is not None and end is not None
             assert (end - start).total_seconds() / 86400 <= LIST_SHIFTS_LIMIT_DAYS
 
     @pytest.mark.asyncio
