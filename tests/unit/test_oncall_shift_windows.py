@@ -654,7 +654,7 @@ class TestPaginationMetadataTypes:
         )
 
         assert result["meta"]["truncated"] is True
-        assert "an unreported number of" in result["meta"]["truncation_note"]
+        assert "of at least " in result["meta"]["truncation_note"]
 
     @pytest.mark.asyncio
     async def test_an_unreported_page_count_with_a_short_page_is_not_flagged(self):
@@ -1206,7 +1206,7 @@ class TestTruncationNoteWordsUnknownTotals:
             from_date="2026-08-01T00:00:00Z", to_date="2026-08-20T00:00:00Z"
         )
         note = result["meta"]["truncation_note"]
-        assert "an unreported number of pages" in note
+        assert "of at least " in note
         assert "None" not in note
 
     @pytest.mark.asyncio
@@ -1216,7 +1216,7 @@ class TestTruncationNoteWordsUnknownTotals:
             id="s1", start_date="2026-08-01T00:00:00Z", end_date="2026-08-20T00:00:00Z"
         )
         note = result["truncation_note"]
-        assert "an unreported number of pages" in note
+        assert "of at least " in note
         assert "None" not in note
 
     @pytest.mark.asyncio
@@ -1226,7 +1226,7 @@ class TestTruncationNoteWordsUnknownTotals:
             start_date="2026-08-01T00:00:00Z", end_date="2026-08-20T00:00:00Z"
         )
         note = result["meta"]["truncation_note"]
-        assert "an unreported number of pages" in note
+        assert "of at least " in note
         assert "None" not in note
 
     def test_a_known_total_is_still_a_number(self):
@@ -1264,8 +1264,11 @@ class TestEveryWindowCountsTowardTheTotals:
 
         note = result["meta"]["truncation_note"]
         # 1 page from the short window, then the ceiling from each of the
-        # other two. Counting only the truncated windows would say 20.
-        assert "21 of 100 pages" in note
+        # other two. Counting only the truncated windows would say 20, and
+        # counting the short window in one half only would say "of 100".
+        # No "at least": a short page is the end of that window, so its one
+        # page is a known total, and the windows that truncated reported theirs.
+        assert "21 of 101 pages" in note
 
     @pytest.mark.asyncio
     async def test_an_untruncated_query_still_reports_no_truncation(self):

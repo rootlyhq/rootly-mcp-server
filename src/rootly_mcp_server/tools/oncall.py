@@ -180,18 +180,20 @@ def _shifts_future_horizon_note(to_raw: Any) -> str | None:
 def _pages_fetched_phrase(report: dict[str, Any]) -> str:
     """How much of the range was fetched, as "N of M pages".
 
-    The upstream does not always report ``meta.total_pages``, and when it does
-    not the page ceiling is still what stopped the fetch. Saying "of None"
-    there reads like a bug in the answer rather than an unknown total, so the
-    unknown is named. Shared by every truncation note: the three were written
-    separately and immediately drifted, with one rendering "10 of None pages".
+    The upstream does not always report ``meta.total_pages``. Where it stayed
+    silent the total counts what was read, which is a floor rather than the
+    real figure, so the wording says so instead of presenting a guess as fact.
+    Both halves count the same windows either way: a window missing from one
+    and present in the other reads as a larger shortfall than there is.
+
+    Shared by every truncation note. The three were written separately and
+    drifted within a day, one of them rendering "10 of None pages".
     """
-    total = (
-        "an unreported number of"
-        if report.get("total_unknown")
-        else str(report.get("available_pages"))
-    )
-    return f"{report.get('fetched_pages')} of {total} pages"
+    fetched = report.get("fetched_pages")
+    total = report.get("available_pages")
+    if report.get("total_unknown"):
+        return f"{fetched} of at least {total} pages"
+    return f"{fetched} of {total} pages"
 
 
 def _truncate_text(value: Any, max_length: int = 280) -> str | None:
@@ -1623,9 +1625,12 @@ def register_oncall_tools(
         if len(items) < 100:
             # Counted even though nothing was truncated here: a window that
             # finished in one page is still a page this query read, and the
-            # note presents the figure as query-wide.
+            # note presents the figure as query-wide. A short page is also the
+            # end of this window, so one page is all there was -- both halves
+            # of the figure move together.
             if report is not None:
                 report["fetched_pages"] = report.get("fetched_pages", 0) + 1
+                report["available_pages"] = report.get("available_pages", 0) + 1
             return items
 
         # Trust meta.total_pages when provided. When the field is missing
@@ -1697,14 +1702,22 @@ def register_oncall_tools(
             # actually read. Counting it up there meant such a window added
             # nothing unless it filled the ceiling, and another window's
             # truncation then published a figure missing those pages.
-            report["fetched_pages"] = report.get("fetched_pages", 0) + (total_pages - failed_pages)
+            read_here = total_pages - failed_pages
+            report["fetched_pages"] = report.get("fetched_pages", 0) + read_here
+            if reported_pages is None:
+                # Nothing was said about how many exist, so what was read is
+                # the only floor available. Adding it keeps the two halves
+                # counting the same windows -- otherwise this window's pages
+                # appear in the fetched figure and nowhere in the total, and
+                # the note reads as a larger shortfall than there is.
+                report["available_pages"] = report.get("available_pages", 0) + read_here
+                report["total_unknown"] = True
         # No page count from the upstream means the ceiling was used as a
         # guess. Every page coming back full is the only evidence available
         # that more exist, and without saying so the caller reads ten pages as
         # the whole answer.
         if report is not None and reported_pages is None and len(items) >= max_pages * 100:
             report["truncated"] = True
-            report["total_unknown"] = True
         return items
 
     async def _fetch_users_and_schedules_maps() -> tuple[
