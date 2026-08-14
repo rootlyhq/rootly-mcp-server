@@ -11,7 +11,7 @@ from typing import Annotated, Any, Protocol, cast
 
 import httpx
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import AliasChoices, Field
 
 from ..exceptions import RootlyAPIError, RootlyValidationError
 from ..och_client import OnCallHealthClient
@@ -1759,13 +1759,23 @@ def register_oncall_tools(
     )
     async def get_schedule_shifts(
         id: Annotated[str, Field(description="Schedule ID (UUID) to fetch shifts for")],
-        from_date: Annotated[
+        start_date: Annotated[
             str,
-            Field(description="Start date/time (ISO 8601, e.g. '2026-08-01T00:00:00Z')"),
+            Field(
+                description="Start date/time (ISO 8601, e.g. '2026-08-01T00:00:00Z')",
+                # The generated tool this replaces took `from`/`to`, and the
+                # other shift tool takes `from_date`/`to_date`. Accepting all of
+                # them keeps a caller working while the schema advertises the
+                # name the rest of the on-call tools use.
+                validation_alias=AliasChoices("start_date", "from_date", "from"),
+            ),
         ] = "",
-        to_date: Annotated[
+        end_date: Annotated[
             str,
-            Field(description="End date/time (ISO 8601, e.g. '2026-09-30T23:59:59Z')"),
+            Field(
+                description="End date/time (ISO 8601, e.g. '2026-09-30T23:59:59Z')",
+                validation_alias=AliasChoices("end_date", "to_date", "to"),
+            ),
         ] = "",
     ) -> dict:
         """
@@ -1783,16 +1793,16 @@ def register_oncall_tools(
         # Built before the try so the error path can always report what was
         # sent, even if the failure happens on the first statement inside.
         params: dict[str, Any] = {}
-        if from_date:
-            params["from"] = from_date
-        if to_date:
-            params["to"] = to_date
+        if start_date:
+            params["from"] = start_date
+        if end_date:
+            params["to"] = end_date
 
         # Omitting a bound is a valid "no filter" here, but a bound that is
         # present and unusable is not: upstream would ignore it and answer for a
         # different period.
         date_error = _date_argument_error(
-            {"from_date": from_date, "to_date": to_date}, required=False
+            {"start_date": start_date, "end_date": end_date}, required=False
         )
         if date_error:
             return mcp_error.tool_error(
@@ -1813,7 +1823,7 @@ def register_oncall_tools(
 
             result: dict[str, Any] = {
                 "schedule_id": id,
-                "period": {"from": from_date or None, "to": to_date or None},
+                "period": {"from": start_date or None, "to": end_date or None},
                 "total_shifts": len(shifts),
                 "shifts": shifts,
             }
@@ -1842,13 +1852,19 @@ def register_oncall_tools(
         from_date: Annotated[
             str,
             Field(
-                description="Start date/time for shift query (ISO 8601 format, e.g., '2026-02-09T00:00:00Z')"
+                description="Start date/time for shift query (ISO 8601 format, e.g., '2026-02-09T00:00:00Z')",
+                # Most on-call tools name this start_date/end_date. Accepting
+                # both means a caller that reaches for the other convention --
+                # having just called one of those tools -- is not turned away
+                # over the spelling.
+                validation_alias=AliasChoices("from_date", "start_date"),
             ),
         ],
         to_date: Annotated[
             str,
             Field(
-                description="End date/time for shift query (ISO 8601 format, e.g., '2026-02-15T23:59:59Z')"
+                description="End date/time for shift query (ISO 8601 format, e.g., '2026-02-15T23:59:59Z')",
+                validation_alias=AliasChoices("to_date", "end_date"),
             ),
         ],
         user_ids: Annotated[

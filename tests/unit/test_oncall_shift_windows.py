@@ -685,8 +685,8 @@ class TestCuratedScheduleShifts:
         # The exact range seen failing upstream.
         result = await tools["get_schedule_shifts"](
             id="f1dd57bb-2ba2-49cd-be00-64961b796b9e",
-            from_date="2026-07-30",
-            to_date="2026-09-28",
+            start_date="2026-07-30",
+            end_date="2026-09-28",
         )
 
         assert not result.get("error"), result
@@ -703,7 +703,7 @@ class TestCuratedScheduleShifts:
             lambda _p: _ok({"data": [_shift()], "meta": {"total_pages": 1}})
         )
         tools = _build_tools(responder)
-        await tools["get_schedule_shifts"](id="s1", from_date="2026-01-01", to_date="2026-06-30")
+        await tools["get_schedule_shifts"](id="s1", start_date="2026-01-01", end_date="2026-06-30")
 
         assert seen, "expected the range to be split into windows"
         for window in seen:
@@ -721,7 +721,7 @@ class TestCuratedScheduleShifts:
         )
         tools = _build_tools(responder)
         result = await tools["get_schedule_shifts"](
-            id="s1", from_date="2026-08-01", to_date="2026-08-20"
+            id="s1", start_date="2026-08-01", end_date="2026-08-20"
         )
 
         assert len(seen) == 1
@@ -736,7 +736,7 @@ class TestCuratedScheduleShifts:
 
         tools = _build_tools(responder)
         result = await tools["get_schedule_shifts"](
-            id="s1", from_date="2026-08-01", to_date="2026-08-20"
+            id="s1", start_date="2026-08-01", end_date="2026-08-20"
         )
 
         assert result["error"] is True
@@ -1002,7 +1002,7 @@ class TestUnusableDatesAreRejected:
     async def test_schedule_shifts_rejects_an_unusable_bound(self):
         responder, recorded = _responder()
         tools = _build_tools(responder)
-        result = await tools["get_schedule_shifts"](id="sched-1", from_date="whenever")
+        result = await tools["get_schedule_shifts"](id="sched-1", start_date="whenever")
 
         assert result["error"] is True
         assert recorded == []
@@ -1113,3 +1113,68 @@ class TestTransportErrorsAreRetried:
 
         assert attempts["n"] == 1
         assert result["error"] is True
+
+
+class TestDateArgumentAliases:
+    """The generated tool took `from`/`to`; most on-call tools take
+    `start_date`/`end_date`. A caller should not be turned away over spelling.
+
+    These go through a real FastMCP server because the aliases live in argument
+    validation -- calling the Python function directly bypasses them entirely.
+    """
+
+    @staticmethod
+    def _server(responder):
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("alias-probe")
+        register_oncall_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            mcp_error=FakeMCPError(),
+        )
+        return mcp
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "names",
+        [("start_date", "end_date"), ("from_date", "to_date"), ("from", "to")],
+    )
+    async def test_schedule_shifts_accepts_every_spelling(self, names):
+        start, end = names
+        responder, recorded = _responder(
+            lambda _p: _ok({"data": [_shift("S1")], "meta": {"total_pages": 1}})
+        )
+        mcp = self._server(responder)
+        await mcp.call_tool(
+            "get_schedule_shifts",
+            {"id": "sched-1", start: "2026-08-01T00:00:00Z", end: "2026-08-20T00:00:00Z"},
+        )
+
+        # Whichever spelling arrived, the same range reaches upstream.
+        assert recorded[0]["from"] == "2026-08-01T00:00:00Z"
+        assert recorded[0]["to"] == "2026-08-20T00:00:00Z"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("names", [("from_date", "to_date"), ("start_date", "end_date")])
+    async def test_list_shifts_accepts_either_convention(self, names):
+        start, end = names
+        responder, recorded = _responder(
+            lambda _p: _ok({"data": [_shift("S1")], "meta": {"total_pages": 1}})
+        )
+        mcp = self._server(responder)
+        await mcp.call_tool(
+            "list_shifts", {start: "2026-08-01T00:00:00Z", end: "2026-08-20T00:00:00Z"}
+        )
+
+        assert recorded[0]["from"] == "2026-08-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_the_schema_advertises_the_majority_convention(self):
+        # Five of the on-call tools name these start_date/end_date. Only the
+        # advertised name teaches a caller which to reach for.
+        responder, _ = _responder()
+        mcp = self._server(responder)
+        tool = {t.name: t for t in await mcp.list_tools()}["get_schedule_shifts"]
+        schema = getattr(tool, "inputSchema", None) or getattr(tool, "parameters", None) or {}
+        assert set(schema.get("properties", {})) == {"id", "start_date", "end_date"}
