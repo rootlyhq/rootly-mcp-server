@@ -670,10 +670,13 @@ class TestTransportModule:
                 {"from": "2026-05-01", "to": "2026-07-31"},
             )
         msg = str(exc_info.value)
-        assert "31-day cap" in msg
+        # Derived from the constant: the cap is a measured upstream number, and
+        # hardcoding it here once made this test the only thing objecting when
+        # it was corrected.
+        assert f"{transport.SCHEDULE_SHIFTS_LIMIT_DAYS}-day cap" in msg
         assert "Split the query" in msg
 
-    def test_check_shift_date_range_blocks_over_62_day_listShifts(self):
+    def test_check_shift_date_range_blocks_over_cap_listShifts(self):
         with pytest.raises(RootlyValidationError):
             transport.AuthenticatedHTTPXClient._check_shift_date_range(
                 "GET",
@@ -682,7 +685,7 @@ class TestTransportModule:
             )
 
     def test_check_shift_date_range_allows_within_limit(self):
-        # 28 days on the schedule endpoint (limit 31) — must pass.
+        # 28 days on the schedule endpoint (limit 30) — must pass.
         transport.AuthenticatedHTTPXClient._check_shift_date_range(
             "GET",
             "https://api.rootly.com/v1/schedules/abc/shifts",
