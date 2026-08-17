@@ -25,7 +25,7 @@ RETROSPECTIVE_PROGRESS_STATUSES = ("not_started", "active", "completed", "skippe
 # against the live API, page[size]=1000 returns 7MB, about 1.1 million tokens.
 # So the page size is the only lever, and this is the only place it exists.
 RETROSPECTIVE_PAGE_SIZE_DEFAULT = 5
-RETROSPECTIVE_PAGE_SIZE_MAX = 25
+RETROSPECTIVE_PAGE_SIZE_MAX = 10
 # Mean document length across a live page of 100, used to tell a caller what a
 # larger page would cost before they ask for it.
 RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500

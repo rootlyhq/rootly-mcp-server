@@ -1731,10 +1731,10 @@ class TestRetrospectiveListCap:
 
         result = await tools["list_incident_post_mortems"](page_size=1000)
 
-        assert result["page_size"] == 25
-        assert seen[0]["page[size]"] == 25
-        # Silently returning 25 would read as "there were only 25".
-        assert "capped at 25" in result["page_size_note"]
+        assert result["page_size"] == 10
+        assert seen[0]["page[size]"] == 10
+        # Silently returning 10 would read as "there were only 10".
+        assert "capped at 10" in result["page_size_note"]
 
     @pytest.mark.asyncio
     async def test_the_total_is_reported_so_a_page_is_not_read_as_everything(self):
