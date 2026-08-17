@@ -595,16 +595,16 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/live_call_routers",
     "/live_call_routers/{id}",
     # Retrospectives - create + update. `/post_incident_reviews` and
-    # `/postmortem_templates` stood here and match no API path; the real
-    # template resource is `/post_mortem_templates`. The document itself
-    # (`/post_mortems/{id}`) stays read-only.
-    "/post_mortem_templates",
-    "/post_mortem_templates/{id}",
+    # `/postmortem_templates` stood here and match no API path.
+    #
+    # Nothing newly readable is added here. `/post_mortem_templates` and the
+    # nested group and step collections stay out: a write entry only takes
+    # effect once the path is readable, so listing them alongside this change
+    # would turn a read into four new write tools nobody asked for. Templates
+    # and steps are authored in Rootly; exposing that is its own decision.
     "/retrospective_processes",
     "/retrospective_processes/{id}",
-    "/retrospective_processes/{retrospective_process_id}/groups",
     "/retrospective_process_groups/{id}",
-    "/retrospective_processes/{retrospective_process_id}/retrospective_steps",
     "/retrospective_steps/{id}",
     # Status page templates
     "/status-pages/{status_page_id}/templates",
