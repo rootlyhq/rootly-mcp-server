@@ -391,18 +391,25 @@ DEFAULT_ALLOWED_PATHS = [
     "/playbooks/{id}",
     "/playbook_tasks",
     "/playbook_tasks/{id}",
-    # Post-incident reviews and retrospectives
-    "/post_incident_reviews",
-    "/post_incident_reviews/{id}",
+    # Retrospectives. The written document lives behind `/post_mortems`; the
+    # `retrospective_*` paths are the process template it is filled in against.
+    # Both names refer to the same feature, which is how the document went
+    # unexposed: it was listed as `postmortem_templates`,
+    # `incidents/{id}/postmortems` and `incident_postmortems/{id}`, none of
+    # which the API has -- an entry matching no path is dropped in silence.
+    "/post_mortems",
+    "/post_mortems/{id}",
+    "/post_mortem_templates",
+    "/post_mortem_templates/{id}",
     "/retrospective_processes",
     "/retrospective_processes/{id}",
-    "/retrospective_process_groups",
+    # Groups and steps are listed under their process; there is no top-level
+    # collection for either, which is what `/retrospective_process_groups` and
+    # `/retrospective_steps` were reaching for.
+    "/retrospective_processes/{retrospective_process_id}/groups",
     "/retrospective_process_groups/{id}",
-    "/retrospective_steps",
+    "/retrospective_processes/{retrospective_process_id}/retrospective_steps",
     "/retrospective_steps/{id}",
-    # Postmortem templates
-    "/postmortem_templates",
-    "/postmortem_templates/{id}",
     # Heartbeat monitoring
     "/heartbeats",
     "/heartbeats/{id}",
@@ -424,9 +431,10 @@ DEFAULT_ALLOWED_PATHS = [
     "/incident_events/{id}",
     "/incidents/{incident_id}/custom_field_selections",
     "/incident_custom_field_selections/{id}",
-    "/incidents/{incident_id}/postmortems",
-    "/incident_postmortems/{id}",
-    "/incidents/{incident_id}/retrospective_steps",
+    # A retrospective is reached through `/post_mortems` above, not from the
+    # incident: the API has no incident-scoped route for either the document or
+    # its steps. The incident carries an `incident_post_mortem` relationship,
+    # which is where the id comes from.
     "/incident_retrospective_steps/{id}",
     "/incidents/{incident_id}/status_pages",
     "/incident_status_pages/{id}",
@@ -586,17 +594,18 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/pulses/{id}",
     "/live_call_routers",
     "/live_call_routers/{id}",
-    # Post-incident and retrospectives - create + update
-    "/post_incident_reviews",
-    "/post_incident_reviews/{id}",
+    # Retrospectives - create + update. `/post_incident_reviews` and
+    # `/postmortem_templates` stood here and match no API path; the real
+    # template resource is `/post_mortem_templates`. The document itself
+    # (`/post_mortems/{id}`) stays read-only.
+    "/post_mortem_templates",
+    "/post_mortem_templates/{id}",
     "/retrospective_processes",
     "/retrospective_processes/{id}",
     "/retrospective_processes/{retrospective_process_id}/groups",
     "/retrospective_process_groups/{id}",
     "/retrospective_processes/{retrospective_process_id}/retrospective_steps",
     "/retrospective_steps/{id}",
-    "/postmortem_templates",
-    "/postmortem_templates/{id}",
     # Status page templates
     "/status-pages/{status_page_id}/templates",
     "/templates/{id}",
@@ -631,7 +640,10 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     # Extended incident management
     "/incident_events/{id}",
     "/incident_custom_field_selections/{id}",
-    "/incident_postmortems/{id}",
+    # `/post_mortems/{id}` is deliberately absent: the read is exposed, the
+    # write is not. Rewriting a retrospective is not something a tool should be
+    # able to do by accident, and nobody has asked for it. The entry that stood
+    # here was `/incident_postmortems/{id}`, a path the API does not have.
     "/incident_retrospective_steps/{id}",
     "/incident_status_pages/{id}",
     # Form and field management - create + update
