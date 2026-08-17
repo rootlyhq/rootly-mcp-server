@@ -807,6 +807,88 @@ def register_incident_tools(
             return _reference_tool_error("Failed to retrieve incident", e)
 
     @mcp.tool(
+        name="get_incident_retrospective",
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
+    async def get_incident_retrospective(
+        incident_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "Incident whose retrospective to fetch. "
+                    "Accepts: UUID, bare sequential number (4460), "
+                    "#4460, or INC-4460."
+                )
+            ),
+        ],
+    ) -> JsonDict:
+        """Fetch the written retrospective for one incident.
+
+        Answers "what did we learn from INC-4460" in a single call. Returns the
+        document's title, content and status alongside the incident it belongs
+        to, and reports the incident's retrospective progress so a blank
+        document is distinguishable from one nobody has started.
+
+        The route exists only in this direction: `/post_mortems` cannot be
+        filtered by incident, and the document carries no reference back to one,
+        so the id has to come from the incident's own relationship. Doing that
+        here keeps a caller from having to know it. Use
+        `list_incident_post_mortems` to search across retrospectives instead.
+        """
+        try:
+            resolved_incident_id = await _resolve_incident_reference_to_uuid(
+                incident_id, make_authenticated_request
+            )
+            incident_response = await make_authenticated_request(
+                "GET", f"/v1/incidents/{resolved_incident_id}"
+            )
+            incident_response.raise_for_status()
+            incident = incident_response.json().get("data") or {}
+            attributes = incident.get("attributes") or {}
+            relationships = incident.get("relationships") or {}
+
+            summary: JsonDict = {
+                "incident_id": resolved_incident_id,
+                "incident_number": attributes.get("sequential_id"),
+                "incident_title": attributes.get("title"),
+                "retrospective_progress_status": attributes.get("retrospective_progress_status"),
+            }
+
+            reference = (relationships.get("incident_post_mortem") or {}).get("data") or {}
+            retrospective_id = reference.get("id")
+            if not retrospective_id:
+                # Not an error. Sub-incidents and incidents whose retrospective
+                # has never been created simply do not carry the relationship,
+                # and saying so is more use than a 404 the caller has to read.
+                summary["retrospective"] = None
+                summary["note"] = (
+                    "This incident has no retrospective. The progress status above "
+                    "says how far along it is; retrospectives are created in Rootly."
+                )
+                return summary
+
+            document_response = await make_authenticated_request(
+                "GET", f"/v1/post_mortems/{retrospective_id}"
+            )
+            document_response.raise_for_status()
+            document = document_response.json().get("data") or {}
+            document_attributes = document.get("attributes") or {}
+
+            summary["retrospective"] = {
+                "id": retrospective_id,
+                "title": document_attributes.get("title"),
+                "content": document_attributes.get("content"),
+                "status": document_attributes.get("status"),
+                "url": document_attributes.get("url"),
+                "started_at": document_attributes.get("started_at"),
+                "mitigated_at": document_attributes.get("mitigated_at"),
+                "resolved_at": document_attributes.get("resolved_at"),
+            }
+            return summary
+        except Exception as e:
+            return _reference_tool_error("Failed to retrieve incident retrospective", e)
+
+    @mcp.tool(
         name="list_incident_roles",
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
     )
