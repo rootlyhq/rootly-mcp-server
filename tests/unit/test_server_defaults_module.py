@@ -233,11 +233,16 @@ class TestAllowedPathsMatchTheApi:
         )
 
     def test_the_retrospective_document_is_reachable(self):
-        # The point of the change: the written retrospective, and the process
-        # template it is filled in against.
+        # The point of the change: the collection of written retrospectives.
         assert "/post_mortems" in DEFAULT_ALLOWED_PATHS
-        assert "/post_mortems/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/retrospective_processes" in DEFAULT_ALLOWED_PATHS
+
+    def test_the_single_document_path_is_not_a_tool_of_its_own(self):
+        # get_incident_retrospective calls /post_mortems/{id} directly. Listing
+        # it would add a second tool for the same document, named
+        # `list_incident_postmortem` by the API's operationId -- a by-id fetch
+        # that reads as a list.
+        assert "/post_mortems/{id}" not in DEFAULT_ALLOWED_PATHS
 
     def test_the_retrospective_document_stays_read_only(self):
         from rootly_mcp_server.server_defaults import DEFAULT_WRITE_ALLOWED_PATHS

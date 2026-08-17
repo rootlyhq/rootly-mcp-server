@@ -391,24 +391,21 @@ DEFAULT_ALLOWED_PATHS = [
     "/playbooks/{id}",
     "/playbook_tasks",
     "/playbook_tasks/{id}",
-    # Retrospectives. The written document lives behind `/post_mortems`; the
-    # `retrospective_*` paths are the process template it is filled in against.
-    # Both names refer to the same feature, which is how the document went
-    # unexposed: it was listed as `postmortem_templates`,
-    # `incidents/{id}/postmortems` and `incident_postmortems/{id}`, none of
-    # which the API has -- an entry matching no path is dropped in silence.
+    # Retrospectives. The written document lives behind `/post_mortems`, which
+    # went unexposed because the list asked for it as `postmortem_templates`,
+    # `incidents/{id}/postmortems` and `incident_postmortems/{id}` -- none of
+    # them API paths, and an entry matching no path is dropped in silence.
+    #
+    # Only the collection is exposed. `/post_mortems/{id}` is reached by
+    # `get_incident_retrospective`, which calls it directly, so listing it here
+    # would add a second tool for the same document under a name the API's
+    # operationId makes read as a list. Templates and process structure are
+    # authored in Rootly and nobody has asked to read them through here; every
+    # tool costs context whether or not it is called.
     "/post_mortems",
-    "/post_mortems/{id}",
-    "/post_mortem_templates",
-    "/post_mortem_templates/{id}",
     "/retrospective_processes",
     "/retrospective_processes/{id}",
-    # Groups and steps are listed under their process; there is no top-level
-    # collection for either, which is what `/retrospective_process_groups` and
-    # `/retrospective_steps` were reaching for.
-    "/retrospective_processes/{retrospective_process_id}/groups",
     "/retrospective_process_groups/{id}",
-    "/retrospective_processes/{retrospective_process_id}/retrospective_steps",
     "/retrospective_steps/{id}",
     # Heartbeat monitoring
     "/heartbeats",

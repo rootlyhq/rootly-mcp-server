@@ -20,6 +20,15 @@ StripHeavyNestedData = Callable[[JsonDict], JsonDict]
 GenerateRecommendation = Callable[[JsonDict], str]
 
 RETROSPECTIVE_PROGRESS_STATUSES = ("not_started", "active", "completed", "skipped")
+# Every retrospective in a list carries its whole document -- there is no way to
+# ask the API for shorter ones, and it enforces no ceiling of its own: measured
+# against the live API, page[size]=1000 returns 7MB, about 1.1 million tokens.
+# So the page size is the only lever, and this is the only place it exists.
+RETROSPECTIVE_PAGE_SIZE_DEFAULT = 5
+RETROSPECTIVE_PAGE_SIZE_MAX = 25
+# Mean document length across a live page of 100, used to tell a caller what a
+# larger page would cost before they ask for it.
+RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500
 INCIDENT_SEARCH_FIELDS = (
     "id,title,summary,status,created_at,updated_at,url,started_at,retrospective_progress_status"
 )
@@ -887,6 +896,119 @@ def register_incident_tools(
             return summary
         except Exception as e:
             return _reference_tool_error("Failed to retrieve incident retrospective", e)
+
+    @mcp.tool(
+        name="list_incident_post_mortems",
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+    )
+    async def list_incident_post_mortems(
+        page_size: Annotated[
+            int,
+            Field(
+                description=(
+                    f"Retrospectives per page (default {RETROSPECTIVE_PAGE_SIZE_DEFAULT}, "
+                    f"max {RETROSPECTIVE_PAGE_SIZE_MAX}). Each one carries its full "
+                    "document, so a large page is expensive; narrow with the filters "
+                    "instead of raising this."
+                )
+            ),
+        ] = RETROSPECTIVE_PAGE_SIZE_DEFAULT,
+        page_number: Annotated[int, Field(description="Page number, 1-indexed")] = 1,
+        status: Annotated[
+            str, Field(description="Filter by status, e.g. 'published' or 'draft'")
+        ] = "",
+        severity: Annotated[str, Field(description="Filter by severity slug")] = "",
+        team_ids: Annotated[str, Field(description="Comma-separated team IDs")] = "",
+        service_ids: Annotated[str, Field(description="Comma-separated service IDs")] = "",
+        created_after: Annotated[
+            str, Field(description="Only retrospectives created at or after this ISO date")
+        ] = "",
+        created_before: Annotated[
+            str, Field(description="Only retrospectives created at or before this ISO date")
+        ] = "",
+        sort: Annotated[
+            str, Field(description="Sort order, e.g. '-created_at' for newest first")
+        ] = "-created_at",
+    ) -> JsonDict:
+        """Browse retrospectives across incidents.
+
+        Answers "the last five retrospectives", "published ones for this team
+        since June", or "how many are still draft". Each result carries the
+        written document, so it is also how a bulk read is done.
+
+        Filtering happens upstream for status, severity, team, service and
+        dates. Free-text search is not offered here because the API's search
+        matches titles only, and titles are generated from the incident name --
+        it cannot find a retrospective by what it says. Use
+        `get_incident_retrospective` when the incident is already known.
+        """
+        try:
+            requested_page_size = page_size
+            page_size = max(1, min(page_size, RETROSPECTIVE_PAGE_SIZE_MAX))
+            params: dict[str, Any] = {
+                "page[size]": page_size,
+                "page[number]": max(1, page_number),
+                "sort": sort,
+            }
+            if status:
+                params["filter[status]"] = status
+            if severity:
+                params["filter[severity]"] = severity
+            if team_ids:
+                params["filter[team_ids]"] = _split_csv_values(team_ids)
+            if service_ids:
+                params["filter[service_ids]"] = _split_csv_values(service_ids)
+            if created_after:
+                params["filter[created_at][gte]"] = created_after
+            if created_before:
+                params["filter[created_at][lte]"] = created_before
+
+            response = await make_authenticated_request("GET", "/v1/post_mortems", params=params)
+            response.raise_for_status()
+            payload = response.json()
+
+            retrospectives = []
+            for record in payload.get("data") or []:
+                attributes = record.get("attributes") or {}
+                retrospectives.append(
+                    {
+                        "id": record.get("id"),
+                        "incident_id": attributes.get("incident_id"),
+                        "title": attributes.get("title"),
+                        "status": attributes.get("status"),
+                        "content": attributes.get("content"),
+                        "url": attributes.get("url"),
+                        "created_at": attributes.get("created_at"),
+                        "published_at": attributes.get("published_at"),
+                        "resolved_at": attributes.get("resolved_at"),
+                    }
+                )
+
+            total = (payload.get("meta") or {}).get("total_count")
+            result: JsonDict = {
+                "retrospectives": retrospectives,
+                "returned": len(retrospectives),
+                "total_matching": total,
+                "page_number": max(1, page_number),
+                "page_size": page_size,
+            }
+            if requested_page_size > RETROSPECTIVE_PAGE_SIZE_MAX:
+                result["page_size_note"] = (
+                    f"Asked for {requested_page_size}, capped at "
+                    f"{RETROSPECTIVE_PAGE_SIZE_MAX}. Retrospectives average about "
+                    f"{RETROSPECTIVE_MEAN_DOCUMENT_CHARS:,} characters each and the "
+                    "upstream enforces no limit, so an uncapped page can exceed a "
+                    "whole context window. Filter by team, service, status or date "
+                    "to narrow instead."
+                )
+            if isinstance(total, int) and total > len(retrospectives):
+                result["note"] = (
+                    f"Showing {len(retrospectives)} of {total:,}. Each carries its full "
+                    "document; page through or filter rather than widening the page."
+                )
+            return result
+        except Exception as e:
+            return _reference_tool_error("Failed to list retrospectives", e)
 
     @mcp.tool(
         name="list_incident_roles",
