@@ -1836,3 +1836,238 @@ class TestSearchIncidentsResultCap:
 
         assert self._params(request)["page[size]"] == 10
         assert "max_results=20" in payload["argument_adjustments"][0]
+
+
+class TestIncidentRetrospectiveTool:
+    """`get_incident_retrospective` collapses a hop a caller should not have to know.
+
+    `/post_mortems` cannot be filtered by incident and the document carries no
+    reference back to one, so the only route is the incident's own
+    `incident_post_mortem` relationship.
+    """
+
+    RETRO_ID = "5e29876e-1c95-4528-8851-d7ea176cd5de"
+    INCIDENT_ID = "ca50b12e-59a8-41d7-93c4-01a9eaf9617c"
+
+    def _register(self, responder):
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+        return mcp.tools
+
+    @staticmethod
+    def _ok(payload):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = payload
+        response.raise_for_status = Mock()
+        return response
+
+    def _responder(self, *, has_retrospective: bool):
+        incident = {
+            "id": self.INCIDENT_ID,
+            "attributes": {
+                # Matches the number each test asks for; the resolver only
+                # accepts an exact sequential_id match.
+                "sequential_id": 5184 if has_retrospective else 5185,
+                "title": "Elasticsearch mapping explosion",
+                "retrospective_progress_status": "active" if has_retrospective else "not_started",
+            },
+            "relationships": (
+                {"incident_post_mortem": {"data": {"id": self.RETRO_ID}}}
+                if has_retrospective
+                else {"causes": {"data": []}}
+            ),
+        }
+        seen: list[str] = []
+
+        async def responder(method, path, params=None, **kwargs):
+            seen.append(path)
+            if path == "/v1/incidents":
+                return self._ok({"data": [incident]})
+            if path.startswith("/v1/incidents/"):
+                return self._ok({"data": incident})
+            if path == f"/v1/post_mortems/{self.RETRO_ID}":
+                return self._ok(
+                    {
+                        "data": {
+                            "id": self.RETRO_ID,
+                            "attributes": {
+                                "title": "Retrospective: Elasticsearch mapping explosion",
+                                "content": "## Learnings\nEnforce strict mapping.",
+                                "status": "published",
+                                "url": "https://rootly.com/retro/5184",
+                            },
+                        }
+                    }
+                )
+            raise AssertionError(f"unexpected path {path}")
+
+        return responder, seen
+
+    @pytest.mark.asyncio
+    async def test_it_is_registered(self):
+        responder, _ = self._responder(has_retrospective=True)
+        assert "get_incident_retrospective" in self._register(responder)
+
+    @pytest.mark.asyncio
+    async def test_it_returns_the_document_for_an_incident(self):
+        responder, seen = self._responder(has_retrospective=True)
+        tools = self._register(responder)
+
+        result = await tools["get_incident_retrospective"](incident_id="5184")
+
+        assert result["incident_number"] == 5184
+        assert result["retrospective"]["content"] == "## Learnings\nEnforce strict mapping."
+        assert result["retrospective"]["id"] == self.RETRO_ID
+        # The document is reached through the incident, never guessed at.
+        assert f"/v1/post_mortems/{self.RETRO_ID}" in seen
+
+    @pytest.mark.asyncio
+    async def test_it_names_the_incident_alongside_the_document(self):
+        # The document carries no incident reference, so a caller reading the
+        # result would otherwise not know which incident it describes.
+        responder, _ = self._responder(has_retrospective=True)
+        tools = self._register(responder)
+
+        result = await tools["get_incident_retrospective"](incident_id="5184")
+
+        assert result["incident_title"] == "Elasticsearch mapping explosion"
+        assert result["incident_id"] == self.INCIDENT_ID
+
+    @pytest.mark.asyncio
+    async def test_no_retrospective_is_reported_not_raised(self):
+        # A sub-incident, or one nobody has started a retrospective for, has no
+        # relationship. That is an answer, not a failure.
+        responder, seen = self._responder(has_retrospective=False)
+        tools = self._register(responder)
+
+        result = await tools["get_incident_retrospective"](incident_id="5185")
+
+        assert result.get("error") is None
+        assert result["retrospective"] is None
+        assert result["retrospective_progress_status"] == "not_started"
+        assert "no retrospective" in result["note"]
+        # No point asking for a document whose id we do not have.
+        assert not any("post_mortems" in path for path in seen)
+
+    @pytest.mark.asyncio
+    async def test_an_upstream_failure_is_an_error(self):
+        async def responder(method, path, params=None, **kwargs):
+            raise RuntimeError("upstream exploded")
+
+        tools = self._register(responder)
+        result = await tools["get_incident_retrospective"](incident_id="5184")
+
+        assert result["error"] is True
+
+
+class TestRetrospectiveListCap:
+    """A page of retrospectives is unbounded upstream.
+
+    Every record carries its whole document and the API enforces no ceiling:
+    measured live, page[size]=1000 returns about 1.1 million tokens. The cap
+    here is the only thing between a caller and that.
+    """
+
+    def _register(self, responder):
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+        return mcp.tools
+
+    def _responder(self, total=5087):
+        seen: list[dict[str, Any]] = []
+
+        async def responder(method, path, params=None, **kwargs):
+            seen.append(dict(params or {}))
+            size = int((params or {}).get("page[size]", 5))
+            response = Mock()
+            response.status_code = 200
+            response.raise_for_status = Mock()
+            response.json.return_value = {
+                "data": [
+                    {
+                        "id": f"pm-{i}",
+                        "attributes": {
+                            "incident_id": f"inc-{i}",
+                            "title": f"Retrospective {i}",
+                            "status": "published",
+                            "content": "<h2>Summary</h2>",
+                        },
+                    }
+                    for i in range(size)
+                ],
+                "meta": {"total_count": total},
+            }
+            return response
+
+        return responder, seen
+
+    @pytest.mark.asyncio
+    async def test_the_default_page_is_small(self):
+        responder, seen = self._responder()
+        tools = self._register(responder)
+
+        result = await tools["list_incident_post_mortems"]()
+
+        assert result["returned"] == 5
+        assert seen[0]["page[size]"] == 5
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_page_is_capped(self):
+        responder, seen = self._responder()
+        tools = self._register(responder)
+
+        result = await tools["list_incident_post_mortems"](page_size=1000)
+
+        assert result["page_size"] == 10
+        assert seen[0]["page[size]"] == 10
+        # Silently returning 10 would read as "there were only 10".
+        assert "capped at 10" in result["page_size_note"]
+
+    @pytest.mark.asyncio
+    async def test_the_total_is_reported_so_a_page_is_not_read_as_everything(self):
+        responder, _ = self._responder(total=5087)
+        tools = self._register(responder)
+
+        result = await tools["list_incident_post_mortems"]()
+
+        assert result["total_matching"] == 5087
+        assert "5 of 5,087" in result["note"]
+
+    @pytest.mark.asyncio
+    async def test_no_note_when_the_page_holds_everything(self):
+        responder, _ = self._responder(total=3)
+        tools = self._register(responder)
+
+        result = await tools["list_incident_post_mortems"](page_size=5)
+
+        assert "note" not in result
+
+    @pytest.mark.asyncio
+    async def test_filters_reach_upstream(self):
+        responder, seen = self._responder()
+        tools = self._register(responder)
+
+        await tools["list_incident_post_mortems"](
+            status="published", severity="sev-1", team_ids="t1,t2", created_after="2026-08-01"
+        )
+
+        params = seen[0]
+        assert params["filter[status]"] == "published"
+        assert params["filter[severity]"] == "sev-1"
+        assert params["filter[team_ids]"] == ["t1", "t2"]
+        assert params["filter[created_at][gte]"] == "2026-08-01"

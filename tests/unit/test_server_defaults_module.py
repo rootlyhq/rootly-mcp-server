@@ -153,3 +153,98 @@ class TestServerDefaultsModule:
         # No flag and no env var: full access by default.
         with patch.dict("os.environ", {}, clear=True):
             assert resolve_write_tools_enabled(None) is True
+
+
+class TestAllowedPathsMatchTheApi:
+    """An allowlist entry that matches no API path is dropped in silence.
+
+    That is how the written retrospective went unexposed: it was listed three
+    times as `postmortem_templates`, `incidents/{id}/postmortems` and
+    `incident_postmortems/{id}`, while the API calls the resource
+    `post_mortems`. Nothing failed, no tool appeared, and it looked deliberate.
+    """
+
+    # Entries that still match nothing. Left in place rather than guessed at:
+    # some may be resources the bundled spec has not caught up with. Listed so
+    # the next wrong entry fails this test instead of joining them.
+    KNOWN_UNMATCHED = frozenset(
+        {
+            "/communications_groups",
+            "/communications_groups/{id}",
+            "/communications_stages",
+            "/communications_stages/{id}",
+            "/communications_templates",
+            "/communications_templates/{id}",
+            "/communications_types",
+            "/communications_types/{id}",
+            "/custom_field_options",
+            "/dashboard_panels",
+            "/form_field_placement_conditions",
+            "/form_field_placements",
+            "/form_set_conditions",
+            "/incident_events/{id}",
+            "/incident_status_pages/{id}",
+            "/incident_sub_statuses",
+            "/incidents/{incident_id}/status_pages",
+            "/playbook_tasks",
+            "/status_page_templates",
+            "/status_page_templates/{id}",
+            "/user_email_addresses/{id}",
+            "/user_notification_rules/{id}",
+            "/user_phone_numbers/{id}",
+        }
+    )
+
+    @staticmethod
+    def _api_paths() -> set[str]:
+        import json
+        from pathlib import Path
+
+        from rootly_mcp_server.spec_transform import _normalize_path_template as norm
+
+        spec_path = Path(__file__).parents[2] / "src/rootly_mcp_server/data/swagger.json"
+        spec = json.loads(spec_path.read_text())
+        # Entries are written without the version prefix the spec carries.
+        return {norm(p.removeprefix("/v1")) for p in spec["paths"]}
+
+    def test_no_new_unmatched_entries(self):
+        from rootly_mcp_server.server_defaults import DEFAULT_WRITE_ALLOWED_PATHS
+        from rootly_mcp_server.spec_transform import _normalize_path_template as norm
+
+        real = self._api_paths()
+        entries = set(DEFAULT_ALLOWED_PATHS) | set(DEFAULT_WRITE_ALLOWED_PATHS)
+        unmatched = {p for p in entries if norm(p) not in real}
+        assert unmatched - self.KNOWN_UNMATCHED == set(), (
+            "These allowlist entries match no API path, so they expose nothing: "
+            f"{sorted(unmatched - self.KNOWN_UNMATCHED)}"
+        )
+
+    def test_the_known_list_has_not_gone_stale(self):
+        # A fixed entry must leave this list, or it hides the next mistake.
+        from rootly_mcp_server.server_defaults import DEFAULT_WRITE_ALLOWED_PATHS
+        from rootly_mcp_server.spec_transform import _normalize_path_template as norm
+
+        real = self._api_paths()
+        entries = set(DEFAULT_ALLOWED_PATHS) | set(DEFAULT_WRITE_ALLOWED_PATHS)
+        unmatched = {p for p in entries if norm(p) not in real}
+        assert self.KNOWN_UNMATCHED - unmatched == set(), (
+            "These now match an API path or were removed; drop them from "
+            f"KNOWN_UNMATCHED: {sorted(self.KNOWN_UNMATCHED - unmatched)}"
+        )
+
+    def test_the_retrospective_document_is_reachable(self):
+        # The point of the change: the collection of written retrospectives.
+        assert "/post_mortems" in DEFAULT_ALLOWED_PATHS
+        assert "/retrospective_processes" in DEFAULT_ALLOWED_PATHS
+
+    def test_the_single_document_path_is_not_a_tool_of_its_own(self):
+        # get_incident_retrospective calls /post_mortems/{id} directly. Listing
+        # it would add a second tool for the same document, named
+        # `list_incident_postmortem` by the API's operationId -- a by-id fetch
+        # that reads as a list.
+        assert "/post_mortems/{id}" not in DEFAULT_ALLOWED_PATHS
+
+    def test_the_retrospective_document_stays_read_only(self):
+        from rootly_mcp_server.server_defaults import DEFAULT_WRITE_ALLOWED_PATHS
+
+        assert "/post_mortems/{id}" not in DEFAULT_WRITE_ALLOWED_PATHS
