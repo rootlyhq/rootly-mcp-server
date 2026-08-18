@@ -60,3 +60,47 @@ class TestMCPErrorModule:
         error_type, message = MCPError.categorize_error(Exception("boom"))
         assert error_type == "execution_error"
         assert "Tool execution error" in message
+
+
+class TestHttpStatusCategorization:
+    """Real HTTP failures were all landing in execution_error.
+
+    httpx renders a 400 as "Client error '400 Bad Request' for url ...", so a
+    scan of the first ten characters found no status and every HTTP failure was
+    categorized generically. Anything keyed off client_error -- the deep-page
+    guidance among it -- never fired.
+    """
+
+    @staticmethod
+    def _http_error(status: int) -> Exception:
+        import httpx
+
+        request = httpx.Request("GET", "https://api.rootly.com/v1/incidents")
+        return httpx.HTTPStatusError(
+            f"Client error '{status}' for url 'x'",
+            request=request,
+            response=httpx.Response(status, request=request),
+        )
+
+    def test_a_response_status_wins_over_the_message(self):
+        error_type, _ = MCPError.categorize_error(self._http_error(400))
+        assert error_type == "client_error"
+
+    def test_server_statuses_are_separated(self):
+        assert MCPError.categorize_error(self._http_error(503))[0] == "server_error"
+
+    def test_a_status_in_the_text_still_works(self):
+        # No response attached: the status is read out of the message instead.
+        assert MCPError.categorize_error(ValueError("HTTP error 404: gone"))[0] == "client_error"
+        assert (
+            MCPError.categorize_error(Exception("500 internal server error"))[0] == "server_error"
+        )
+
+    def test_earlier_branches_still_take_precedence(self):
+        # Auth and network are decided before the status, and a 401 reads as
+        # authentication rather than a generic client error.
+        assert MCPError.categorize_error(Exception("401 unauthorized"))[0] == "authentication_error"
+        assert MCPError.categorize_error(TimeoutError("timed out"))[0] == "network_error"
+
+    def test_an_unrelated_number_is_not_read_as_a_status(self):
+        assert MCPError.categorize_error(Exception("boom"))[0] == "execution_error"
