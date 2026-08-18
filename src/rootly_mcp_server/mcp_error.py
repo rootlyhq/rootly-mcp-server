@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -56,11 +57,22 @@ class MCPError:
         ):
             return "network_error", f"Network error: {error_str}"
 
-        # HTTP errors
-        if "40" in error_str[:10]:  # 4xx client errors
-            return "client_error", f"Client error: {error_str}"
-        elif "50" in error_str[:10]:  # 5xx server errors
-            return "server_error", f"Server error: {error_str}"
+        # HTTP errors. Read the status off the response when the exception
+        # carries one: httpx renders a 400 as "Client error '400 Bad Request'
+        # for url ...", whose first ten characters are "Client err", so looking
+        # for a status in the text missed every real HTTP failure and sent them
+        # all to execution_error.
+        status_code = getattr(getattr(exception, "response", None), "status_code", None)
+        if not isinstance(status_code, int):
+            # Otherwise take the first three-digit number, so "404 not found"
+            # and "HTTP error 500" categorize the same as a response would.
+            match = re.search(r"\b([1-5]\d{2})\b", error_str)
+            status_code = int(match.group(1)) if match else None
+        if isinstance(status_code, int):
+            if 400 <= status_code < 500:
+                return "client_error", f"Client error: {error_str}"
+            if 500 <= status_code < 600:
+                return "server_error", f"Server error: {error_str}"
 
         # Validation errors
         if any(
