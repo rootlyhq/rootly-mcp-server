@@ -20,14 +20,12 @@ StripHeavyNestedData = Callable[[JsonDict], JsonDict]
 GenerateRecommendation = Callable[[JsonDict], str]
 
 RETROSPECTIVE_PROGRESS_STATUSES = ("not_started", "active", "completed", "skipped")
-# Every retrospective in a list carries its whole document -- there is no way to
-# ask the API for shorter ones, and it enforces no ceiling of its own: measured
-# against the live API, page[size]=1000 returns 7MB, about 1.1 million tokens.
-# So the page size is the only lever, and this is the only place it exists.
+# Every retrospective in a list carries its whole document and the API enforces
+# no ceiling: page[size]=1000 returns about 1.1 million tokens. The page size is
+# the only lever, and this is the only place it exists.
 RETROSPECTIVE_PAGE_SIZE_DEFAULT = 5
 RETROSPECTIVE_PAGE_SIZE_MAX = 10
-# Mean document length across a live page of 100, used to tell a caller what a
-# larger page would cost before they ask for it.
+# Mean document length across a live page of 100.
 RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500
 INCIDENT_SEARCH_FIELDS = (
     "id,title,summary,status,created_at,updated_at,url,started_at,retrospective_progress_status"
@@ -972,9 +970,8 @@ def register_incident_tools(
             reference = (relationships.get("incident_post_mortem") or {}).get("data") or {}
             retrospective_id = reference.get("id")
             if not retrospective_id:
-                # Not an error. Sub-incidents and incidents whose retrospective
-                # has never been created simply do not carry the relationship,
-                # and saying so is more use than a 404 the caller has to read.
+                # Not an error: sub-incidents and unstarted retrospectives carry
+                # no relationship, and saying so beats a 404.
                 summary["retrospective"] = None
                 summary["note"] = (
                     "This incident has no retrospective. The progress status above "
@@ -1060,11 +1057,9 @@ def register_incident_tools(
                 params["filter[status]"] = status
             if severity:
                 params["filter[severity]"] = severity
-            # Joined, not passed as a list. A list becomes a repeated query key
-            # (`filter[team_ids]=a&filter[team_ids]=b`), which this endpoint
-            # matches nothing against -- verified live: two ids that way return
-            # zero, the same two comma-joined return the right rows. One id
-            # worked either way, which is how it would have gone unnoticed.
+            # Joined, not a list: a list becomes a repeated query key, which
+            # this endpoint matches nothing against. One id worked either way,
+            # which is how it went unnoticed.
             if team_ids:
                 params["filter[team_ids]"] = ",".join(_split_csv_values(team_ids))
             if service_ids:

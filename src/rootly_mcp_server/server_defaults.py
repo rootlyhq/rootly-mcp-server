@@ -391,17 +391,13 @@ DEFAULT_ALLOWED_PATHS = [
     "/playbooks/{id}",
     "/playbook_tasks",
     "/playbook_tasks/{id}",
-    # Retrospectives. The written document lives behind `/post_mortems`, which
-    # went unexposed because the list asked for it as `postmortem_templates`,
-    # `incidents/{id}/postmortems` and `incident_postmortems/{id}` -- none of
-    # them API paths, and an entry matching no path is dropped in silence.
+    # Retrospectives. The document lives behind `/post_mortems`; it went
+    # unexposed because the list asked for it as `postmortem_templates` and
+    # `incident_postmortems/{id}`, neither of them API paths.
     #
-    # Only the collection is exposed. `/post_mortems/{id}` is reached by
-    # `get_incident_retrospective`, which calls it directly, so listing it here
-    # would add a second tool for the same document under a name the API's
-    # operationId makes read as a list. Templates and process structure are
-    # authored in Rootly and nobody has asked to read them through here; every
-    # tool costs context whether or not it is called.
+    # Only the collection is exposed. `get_incident_retrospective` calls
+    # `/post_mortems/{id}` directly, so listing it would add a second tool for
+    # the same document under a name that reads as a list.
     "/post_mortems",
     "/retrospective_processes",
     "/retrospective_processes/{id}",
@@ -428,10 +424,8 @@ DEFAULT_ALLOWED_PATHS = [
     "/incident_events/{id}",
     "/incidents/{incident_id}/custom_field_selections",
     "/incident_custom_field_selections/{id}",
-    # A retrospective is reached through `/post_mortems` above, not from the
-    # incident: the API has no incident-scoped route for either the document or
-    # its steps. The incident carries an `incident_post_mortem` relationship,
-    # which is where the id comes from.
+    # No incident-scoped route exists for a retrospective or its steps; the id
+    # comes from the incident's `incident_post_mortem` relationship.
     "/incident_retrospective_steps/{id}",
     "/incidents/{incident_id}/status_pages",
     "/incident_status_pages/{id}",
@@ -591,14 +585,9 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/pulses/{id}",
     "/live_call_routers",
     "/live_call_routers/{id}",
-    # Retrospectives - create + update. `/post_incident_reviews` and
-    # `/postmortem_templates` stood here and match no API path.
-    #
-    # Nothing newly readable is added here. `/post_mortem_templates` and the
-    # nested group and step collections stay out: a write entry only takes
-    # effect once the path is readable, so listing them alongside this change
-    # would turn a read into four new write tools nobody asked for. Templates
-    # and steps are authored in Rootly; exposing that is its own decision.
+    # Retrospectives - create + update. A write entry only takes effect once the
+    # path is readable, so nothing newly readable is listed here: doing so would
+    # turn this change into four new write tools.
     "/retrospective_processes",
     "/retrospective_processes/{id}",
     "/retrospective_process_groups/{id}",
@@ -637,10 +626,8 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     # Extended incident management
     "/incident_events/{id}",
     "/incident_custom_field_selections/{id}",
-    # `/post_mortems/{id}` is deliberately absent: the read is exposed, the
-    # write is not. Rewriting a retrospective is not something a tool should be
-    # able to do by accident, and nobody has asked for it. The entry that stood
-    # here was `/incident_postmortems/{id}`, a path the API does not have.
+    # `/post_mortems/{id}` is absent deliberately: the read is exposed, the
+    # write is not.
     "/incident_retrospective_steps/{id}",
     "/incident_status_pages/{id}",
     # Form and field management - create + update
