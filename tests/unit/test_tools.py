@@ -2069,5 +2069,6 @@ class TestRetrospectiveListCap:
         params = seen[0]
         assert params["filter[status]"] == "published"
         assert params["filter[severity]"] == "sev-1"
-        assert params["filter[team_ids]"] == ["t1", "t2"]
+        # Comma-joined: a list becomes a repeated key the endpoint ignores.
+        assert params["filter[team_ids]"] == "t1,t2"
         assert params["filter[created_at][gte]"] == "2026-08-01"

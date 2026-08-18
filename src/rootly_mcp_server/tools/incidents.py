@@ -1060,10 +1060,15 @@ def register_incident_tools(
                 params["filter[status]"] = status
             if severity:
                 params["filter[severity]"] = severity
+            # Joined, not passed as a list. A list becomes a repeated query key
+            # (`filter[team_ids]=a&filter[team_ids]=b`), which this endpoint
+            # matches nothing against -- verified live: two ids that way return
+            # zero, the same two comma-joined return the right rows. One id
+            # worked either way, which is how it would have gone unnoticed.
             if team_ids:
-                params["filter[team_ids]"] = _split_csv_values(team_ids)
+                params["filter[team_ids]"] = ",".join(_split_csv_values(team_ids))
             if service_ids:
-                params["filter[service_ids]"] = _split_csv_values(service_ids)
+                params["filter[service_ids]"] = ",".join(_split_csv_values(service_ids))
             if created_after:
                 params["filter[created_at][gte]"] = created_after
             if created_before:
