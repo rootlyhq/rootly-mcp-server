@@ -1117,7 +1117,7 @@ class TestCollectIncidentsTool:
         result = await tools["collect_incidents"](
             teams="Infrastructure",
             max_results=3,
-            batch_size=2,
+            batch_size=10,
         )
 
         assert request.await_args_list == [
@@ -1147,7 +1147,7 @@ class TestCollectIncidentsTool:
                     "include": "",
                     "sort": "-created_at",
                     "filter[team_ids]": "team-123",
-                    "page[size]": 2,
+                    "page[size]": 10,
                     "page[number]": 1,
                 },
             ),
@@ -1159,7 +1159,7 @@ class TestCollectIncidentsTool:
                     "include": "",
                     "sort": "-created_at",
                     "filter[team_ids]": "team-123",
-                    "page[size]": 2,
+                    "page[size]": 10,
                     "page[number]": 2,
                 },
             ),
@@ -1168,7 +1168,7 @@ class TestCollectIncidentsTool:
         assert result["returned_incidents"] == 3
         assert result["collection"] == {
             "max_results": 3,
-            "batch_size": 2,
+            "batch_size": 10,
             "pages_fetched": 2,
             "total_matching_count": 5,
             "results_truncated": True,
@@ -1534,3 +1534,172 @@ class TestIncidentToolsHardening:
 
         assert result["meta"]["partial"] is True
         assert "error" in result["meta"]
+
+
+def _incidents_page(payload=None):
+    """A single incidents response with no further pages."""
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = payload or {
+        "data": [],
+        "meta": {"current_page": 1, "next_page": None, "total_pages": 1, "total_count": 0},
+    }
+    return response
+
+
+@pytest.mark.unit
+class TestNumericArgumentClamping:
+    """Out-of-range numbers are clamped and reported, not refused.
+
+    These bounds were pydantic constraints, so a caller asking for 20 results
+    when the ceiling was 10 got a validation error instead of 10 results. That
+    was the single highest-volume tool failure in production.
+    """
+
+    @staticmethod
+    def _register():
+        mcp = FakeMCP()
+        request = AsyncMock()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp.tools, request
+
+    @pytest.mark.asyncio
+    async def test_search_page_size_above_the_cap_is_clamped(self):
+        tools, request = self._register()
+        request.return_value = _incidents_page()
+
+        result = await tools["search_incidents"](page_size=50, page_number=1)
+
+        assert request.await_args_list[0].kwargs["params"]["page[size]"] == 20
+        assert result["argument_adjustments"] == [
+            "page_size=50 is outside the supported range; used 20 instead."
+        ]
+
+    @pytest.mark.asyncio
+    async def test_list_page_size_above_the_cap_is_clamped(self):
+        tools, request = self._register()
+        request.return_value = _incidents_page()
+
+        result = await tools["list_incidents"](page_size=500)
+
+        assert request.await_args_list[-1].kwargs["params"]["page[size]"] == 100
+        assert "page_size=500" in result["argument_adjustments"][0]
+
+    @pytest.mark.asyncio
+    async def test_collect_batch_size_below_the_floor_is_clamped(self):
+        tools, request = self._register()
+        request.return_value = _incidents_page()
+
+        result = await tools["collect_incidents"](batch_size=5)
+
+        assert request.await_args_list[-1].kwargs["params"]["page[size]"] == 10
+        assert result["collection"]["batch_size"] == 10
+        assert "batch_size=5" in result["argument_adjustments"][0]
+
+    @pytest.mark.asyncio
+    async def test_collect_max_results_above_the_cap_is_clamped(self):
+        tools, request = self._register()
+        request.return_value = _incidents_page()
+
+        result = await tools["collect_incidents"](max_results=200)
+
+        assert result["collection"]["max_results"] == 100
+        assert "max_results=200" in result["argument_adjustments"][0]
+
+    @pytest.mark.asyncio
+    async def test_an_in_range_call_carries_no_adjustment_key(self):
+        tools, request = self._register()
+        request.return_value = _incidents_page()
+
+        result = await tools["list_incidents"](page_size=25)
+
+        assert "argument_adjustments" not in result
+
+
+@pytest.mark.unit
+class TestResultCountArgumentAliases:
+    """`limit` is the name callers reach for, and it was rejected everywhere.
+
+    These go through a real FastMCP server because aliases live in argument
+    validation -- calling the Python function directly bypasses them entirely,
+    so a test on FakeMCP would pass whether or not the alias exists.
+    """
+
+    @staticmethod
+    def _server(request):
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("incident-alias-probe")
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["page_size", "limit", "max_results"])
+    async def test_list_incidents_accepts_every_result_count_spelling(self, name):
+        request = AsyncMock(return_value=_incidents_page())
+        mcp = self._server(request)
+
+        await mcp.call_tool("list_incidents", {name: 7})
+
+        assert request.await_args_list[-1].kwargs["params"]["page[size]"] == 7
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["batch_size", "page_size"])
+    async def test_collect_incidents_accepts_either_batch_spelling(self, name):
+        request = AsyncMock(return_value=_incidents_page())
+        mcp = self._server(request)
+
+        await mcp.call_tool("collect_incidents", {name: 40})
+
+        assert request.await_args_list[-1].kwargs["params"]["page[size]"] == 40
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["max_results", "limit"])
+    async def test_search_incidents_accepts_either_result_cap_spelling(self, name):
+        request = AsyncMock(return_value=_incidents_page())
+        mcp = self._server(request)
+
+        result = await mcp.call_tool("search_incidents", {name: 4, "page_number": 0})
+
+        payload = result.structured_content
+        assert payload is not None
+        assert payload["meta"]["max_results"] == 4
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["max_solutions", "max_results", "limit"])
+    async def test_suggest_solutions_accepts_every_result_cap_spelling(self, name):
+        # The tool was rejecting `max_results` outright; reaching the empty-set
+        # branch is proof the argument validated rather than being refused.
+        request = AsyncMock(return_value=_incidents_page())
+        mcp = self._server(request)
+
+        result = await mcp.call_tool(
+            "suggest_solutions", {"incident_title": "database timeouts", name: 2}
+        )
+
+        payload = result.structured_content
+        assert payload is not None
+        assert payload["solutions"] == []
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_argument_is_still_refused(self):
+        # Aliasing is not a licence to accept anything.
+        request = AsyncMock(return_value=_incidents_page())
+        mcp = self._server(request)
+
+        with pytest.raises(Exception, match="not_a_real_argument"):
+            await mcp.call_tool("list_incidents", {"not_a_real_argument": 1})
