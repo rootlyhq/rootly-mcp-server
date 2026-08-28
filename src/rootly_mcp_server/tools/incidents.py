@@ -590,7 +590,6 @@ def register_incident_tools(
             int,
             Field(
                 description="Number of incidents to request per upstream page while collecting (min: 10, max: 100)",
-                validation_alias=AliasChoices("batch_size", "page_size"),
             ),
         ] = 25,
     ) -> JsonDict:

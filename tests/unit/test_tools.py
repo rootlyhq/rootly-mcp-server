@@ -1658,14 +1658,39 @@ class TestResultCountArgumentAliases:
         assert request.await_args_list[-1].kwargs["params"]["page[size]"] == 7
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("name", ["batch_size", "page_size"])
-    async def test_collect_incidents_accepts_either_batch_spelling(self, name):
+    @pytest.mark.parametrize("name", ["max_results", "limit"])
+    async def test_collect_incidents_accepts_either_result_cap_spelling(self, name):
         request = AsyncMock(return_value=_incidents_page())
         mcp = self._server(request)
 
-        await mcp.call_tool("collect_incidents", {name: 40})
+        result = await mcp.call_tool("collect_incidents", {name: 40})
 
-        assert request.await_args_list[-1].kwargs["params"]["page[size]"] == 40
+        payload = result.structured_content
+        assert payload is not None
+        assert payload["collection"]["max_results"] == 40
+
+    @pytest.mark.asyncio
+    async def test_collect_incidents_does_not_alias_page_size(self):
+        # `page_size` is deliberately not an alias here. On list_incidents it is
+        # effectively the result count, but collect_incidents' nearest argument
+        # is the upstream batch size -- so honouring it would quietly mean
+        # something else than the caller asked for. `limit` covers the intent.
+        request = AsyncMock(return_value=_incidents_page())
+        mcp = self._server(request)
+
+        with pytest.raises(Exception, match="page_size"):
+            await mcp.call_tool("collect_incidents", {"page_size": 40})
+
+    @pytest.mark.asyncio
+    async def test_a_canonical_name_and_its_alias_together_are_refused(self):
+        # AliasChoices binds the first name it finds and the rest become
+        # unexpected. Worth pinning: two spellings of one argument in a single
+        # call is ambiguous, and guessing which one wins would be worse.
+        request = AsyncMock(return_value=_incidents_page())
+        mcp = self._server(request)
+
+        with pytest.raises(Exception, match="limit"):
+            await mcp.call_tool("list_incidents", {"page_size": 5, "limit": 9})
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("name", ["max_results", "limit"])
