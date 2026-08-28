@@ -90,6 +90,32 @@ def _normalize_optional_text(value: str | None) -> str | None:
     return normalized or None
 
 
+IDEMPOTENCY_KEY_MAX_LENGTH = 255
+
+
+def _validate_idempotency_key(value: str) -> str:
+    """Return a key that is safe to send as a header value, or raise ValueError.
+
+    This value arrives from a model and goes straight into an HTTP header.
+    httpx accepts CR, LF and NUL inside a header value when the request is
+    constructed, so nothing further down the stack reliably stops a crafted key
+    from attempting header injection -- this is the boundary that has to.
+    """
+    key = value.strip()
+    if not key:
+        raise ValueError("idempotency_key was provided but is empty")
+    if len(key) > IDEMPOTENCY_KEY_MAX_LENGTH:
+        raise ValueError(
+            f"idempotency_key must be at most {IDEMPOTENCY_KEY_MAX_LENGTH} characters "
+            f"(got {len(key)})"
+        )
+    if not key.isascii():
+        raise ValueError("idempotency_key must contain only ASCII characters")
+    if any(character < " " or character == "\x7f" for character in key):
+        raise ValueError("idempotency_key must not contain control characters")
+    return key
+
+
 def _extract_incident_severity(severity_value: Any) -> str | None:
     """Normalize severity values from Rootly API responses into a compact string."""
     if severity_value is None:
@@ -1012,8 +1038,25 @@ def register_incident_tools(
                 str | None,
                 Field(description="Comma-separated incident type IDs to attach to the incident."),
             ] = None,
+            idempotency_key: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Optional key forwarded to the Rootly API as the Idempotency-Key "
+                        "header, so that retrying a call with the same key does not create a "
+                        "second incident. Reuse the same key across retries of one logical "
+                        "declaration, and use a fresh key for a genuinely new incident. "
+                        "Max 255 ASCII characters."
+                    )
+                ),
+            ] = None,
         ) -> JsonDict:
-            """Create an incident with a scoped set of fields for agent-driven workflows."""
+            """Create an incident with a scoped set of fields for agent-driven workflows.
+
+            Supply idempotency_key when a retry must not be able to create a duplicate;
+            it is passed through to the API, which decides whether a repeated key
+            replays the original response.
+            """
             normalized_title = _normalize_optional_text(title)
             normalized_summary = _normalize_optional_text(summary)
 
@@ -1057,8 +1100,20 @@ def register_incident_tools(
                 }
             }
 
+            # Only send the header when a key was supplied, so a call without one
+            # is byte-for-byte the request this tool has always made.
+            request_kwargs: dict[str, Any] = {"json": payload}
+            if idempotency_key is not None:
+                try:
+                    validated_key = _validate_idempotency_key(idempotency_key)
+                except ValueError as exc:
+                    return cast(JsonDict, mcp_error.tool_error(str(exc), "validation_error"))
+                request_kwargs["headers"] = {"Idempotency-Key": validated_key}
+
             try:
-                response = await make_authenticated_request("POST", "/v1/incidents", json=payload)
+                response = await make_authenticated_request(
+                    "POST", "/v1/incidents", **request_kwargs
+                )
                 response.raise_for_status()
 
                 response_data = response.json()

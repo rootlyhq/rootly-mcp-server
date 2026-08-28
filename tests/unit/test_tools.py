@@ -1728,3 +1728,212 @@ class TestResultCountArgumentAliases:
 
         with pytest.raises(Exception, match="not_a_real_argument"):
             await mcp.call_tool("list_incidents", {"not_a_real_argument": 1})
+
+
+def _last_call(request):
+    """The most recent call to a request mock, asserted to exist.
+
+    `await_args` is Optional, and a test that reads it after no call was made
+    should say so rather than fail on an attribute of None.
+    """
+    call_args = request.await_args
+    assert call_args is not None, "expected a request to have been made"
+    return call_args
+
+
+@pytest.mark.unit
+class TestCreateIncidentIdempotencyKey:
+    """create_incident can forward an Idempotency-Key header.
+
+    The Rootly API documents this header for incident creation, but the tool
+    exposed no argument that could carry it, so a caller that needed retry
+    safety had no way to get one.
+    """
+
+    @staticmethod
+    def _register():
+        mcp = FakeMCP()
+        request = AsyncMock()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": {"id": "inc-1", "type": "incidents", "attributes": {"title": "Boom"}}
+        }
+        request.return_value = response
+        return mcp.tools, request
+
+    @pytest.mark.asyncio
+    async def test_the_key_is_sent_as_the_header(self):
+        tools, request = self._register()
+
+        await tools["create_incident"](title="Boom", idempotency_key="decl-2026-08-05-001")
+
+        assert _last_call(request).kwargs["headers"] == {"Idempotency-Key": "decl-2026-08-05-001"}
+
+    @pytest.mark.asyncio
+    async def test_without_a_key_the_request_is_unchanged(self):
+        # The regression that matters: every existing caller must produce exactly
+        # the request this tool made before the argument existed.
+        tools, request = self._register()
+
+        await tools["create_incident"](title="Boom")
+
+        assert "headers" not in _last_call(request).kwargs
+        assert set(_last_call(request).kwargs) == {"json"}
+        assert _last_call(request).args == ("POST", "/v1/incidents")
+
+    @pytest.mark.asyncio
+    async def test_surrounding_whitespace_is_trimmed(self):
+        tools, request = self._register()
+
+        await tools["create_incident"](title="Boom", idempotency_key="  key-1  ")
+
+        assert _last_call(request).kwargs["headers"] == {"Idempotency-Key": "key-1"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "key",
+        ["a\r\nX-Evil: 1", "a\nX-Evil: 1", "a\rX-Evil: 1", "a\x00b", "a\x7fb"],
+        ids=["crlf", "lf", "cr", "nul", "del"],
+    )
+    async def test_a_key_that_could_forge_a_header_is_refused(self, key):
+        # httpx accepts these inside a header value when the request is built,
+        # so rejecting them here is what actually prevents the injection.
+        tools, request = self._register()
+
+        result = await tools["create_incident"](title="Boom", idempotency_key=key)
+
+        assert result["error"] is True
+        assert result["error_type"] == "validation_error"
+        assert "control characters" in result["message"]
+        assert request.await_count == 0, "no request may be sent for a rejected key"
+
+    @pytest.mark.asyncio
+    async def test_a_non_ascii_key_is_refused(self):
+        # httpx raises UnicodeEncodeError on these; a validation error is clearer.
+        tools, request = self._register()
+
+        result = await tools["create_incident"](title="Boom", idempotency_key="clé-1")
+
+        assert result["error_type"] == "validation_error"
+        assert "ASCII" in result["message"]
+        assert request.await_count == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key", ["", "   "], ids=["empty", "whitespace"])
+    async def test_an_empty_key_is_refused_rather_than_ignored(self, key):
+        # Passing the argument signals intent to be retry-safe. Treating a blank
+        # value as "no key" would leave the caller believing it was protected.
+        tools, request = self._register()
+
+        result = await tools["create_incident"](title="Boom", idempotency_key=key)
+
+        assert result["error_type"] == "validation_error"
+        assert "empty" in result["message"]
+        assert request.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_an_over_long_key_is_refused(self):
+        tools, request = self._register()
+
+        result = await tools["create_incident"](title="Boom", idempotency_key="x" * 256)
+
+        assert result["error_type"] == "validation_error"
+        assert "255" in result["message"]
+        assert request.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_a_key_at_the_length_limit_is_accepted(self):
+        tools, request = self._register()
+
+        await tools["create_incident"](title="Boom", idempotency_key="x" * 255)
+
+        assert _last_call(request).kwargs["headers"] == {"Idempotency-Key": "x" * 255}
+
+    @pytest.mark.asyncio
+    async def test_the_missing_title_check_still_runs_first(self):
+        # Preserves the error a caller already gets today when both are wrong.
+        tools, request = self._register()
+
+        result = await tools["create_incident"](title="  ", idempotency_key="a\r\nb")
+
+        assert "at least one of title or summary" in result["message"]
+        assert request.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_the_payload_is_untouched_by_the_key(self):
+        tools, request = self._register()
+
+        await tools["create_incident"](title="Boom", severity_id="sev-1", idempotency_key="key-1")
+
+        assert _last_call(request).kwargs["json"] == {
+            "data": {
+                "type": "incidents",
+                "attributes": {"title": "Boom", "severity_id": "sev-1"},
+            }
+        }
+
+
+@pytest.mark.unit
+class TestCreateIncidentPublishedSchema:
+    """The argument has to appear in the schema clients read, not just in Python.
+
+    A caller integrating against the hosted endpoint discovers arguments from
+    tools/list, so an argument that works but is not advertised does not solve
+    their problem.
+    """
+
+    @staticmethod
+    async def _create_incident_schema():
+        from fastmcp import FastMCP
+
+        mcp = FastMCP("schema-probe")
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+        tool = await mcp.get_tool("create_incident")
+        assert tool is not None
+        return tool.parameters
+
+    @pytest.mark.asyncio
+    async def test_idempotency_key_is_advertised(self):
+        schema = await self._create_incident_schema()
+
+        assert "idempotency_key" in schema["properties"]
+
+    @pytest.mark.asyncio
+    async def test_it_is_optional_and_documented(self):
+        schema = await self._create_incident_schema()
+        field = schema["properties"]["idempotency_key"]
+
+        assert "idempotency_key" not in schema.get("required", [])
+        assert field.get("default") is None
+        assert "Idempotency-Key" in field["description"]
+
+    @pytest.mark.asyncio
+    async def test_the_existing_arguments_are_untouched(self):
+        schema = await self._create_incident_schema()
+
+        assert set(schema["properties"]) == {
+            "title",
+            "summary",
+            "severity_id",
+            "service_ids",
+            "team_ids",
+            "environment_ids",
+            "incident_type_ids",
+            "idempotency_key",
+        }

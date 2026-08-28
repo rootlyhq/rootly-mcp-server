@@ -287,3 +287,66 @@ class TestParameterTransformation:
         result = client._transform_params({})
 
         assert result == {}
+
+
+@pytest.mark.unit
+class TestCustomHeaderForwarding:
+    """A per-request header must reach the wire alongside the managed ones.
+
+    `request()` rebuilds the header dict on every call and a request event hook
+    overwrites content-type and accept, so "the tool passes headers=" is not on
+    its own evidence that the header is actually sent. create_incident's
+    Idempotency-Key support depends on this.
+    """
+
+    @staticmethod
+    def _client_recording_requests(seen, *, hosted=False):
+        import httpx
+
+        client = AuthenticatedHTTPXClient(hosted=hosted)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(dict(request.headers))
+            return httpx.Response(201, json={"data": {}})
+
+        client.client = httpx.AsyncClient(
+            base_url="https://api.rootly.com",
+            headers=dict(client.client.headers),
+            transport=httpx.MockTransport(handler),
+            event_hooks={"request": [client._enforce_jsonapi_headers]},
+        )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_a_custom_header_reaches_the_wire(self, mock_environment_token):
+        seen: list[dict] = []
+        client = self._client_recording_requests(seen)
+
+        await client.request(
+            "POST", "/v1/incidents", json={}, headers={"Idempotency-Key": "decl-001"}
+        )
+
+        assert seen[0]["idempotency-key"] == "decl-001"
+
+    @pytest.mark.asyncio
+    async def test_it_does_not_displace_the_managed_headers(self, mock_environment_token):
+        seen: list[dict] = []
+        client = self._client_recording_requests(seen)
+
+        await client.request(
+            "POST", "/v1/incidents", json={}, headers={"Idempotency-Key": "decl-001"}
+        )
+
+        sent = seen[0]
+        assert sent["authorization"] == f"Bearer {mock_environment_token}"
+        assert sent["content-type"] == "application/vnd.api+json"
+        assert sent["accept"] == "application/vnd.api+json"
+
+    @pytest.mark.asyncio
+    async def test_no_custom_header_means_none_is_sent(self, mock_environment_token):
+        seen: list[dict] = []
+        client = self._client_recording_requests(seen)
+
+        await client.request("POST", "/v1/incidents", json={})
+
+        assert "idempotency-key" not in seen[0]
