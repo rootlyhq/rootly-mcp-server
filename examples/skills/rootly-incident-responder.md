@@ -187,6 +187,9 @@ When handling multiple incidents:
 - For minor incidents: focus on permanent fixes rather than quick patches
 - Always check if similar incidents had faster resolution paths
 
+### Session IDs
+This MCP server occasionally uses session IDs to correlate tool calls with task state. More is included on this in tool descriptions for the parameter `session_id`.
+
 ## Example Workflow
 
 ```

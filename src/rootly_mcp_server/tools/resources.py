@@ -238,6 +238,9 @@ Updated: {attributes.get("updated_at", "N/A")}"""
 • Check oncall status before escalating
 • Review recent incidents for patterns: rootly://incidents resource
 • Use team resources for context: team://{team_id}
+
+🔗 SESSION IDS:
+This MCP server occasionally uses session IDs to correlate tool calls with task state. More is included on this in tool descriptions for the parameter `session_id`.
 """
 
         return {
