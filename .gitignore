@@ -193,10 +193,11 @@ swagger.json
 test_output/
 *.tmp
 
-# Markdown files (exclude all except README and CONTRIBUTING)
+# Markdown files (exclude all except project documentation)
 *.md
 !README.md
 !CONTRIBUTING.md
 !CHANGELOG.md
+!SECURITY.md
 .beads/
 .claude/
