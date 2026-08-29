@@ -37,13 +37,13 @@ When responding to an incident, follow this systematic approach:
 - Use `search_incidents` to retrieve the current incident details
 - Identify incident severity, affected services, and timeline
 - Note the incident status (investigating, identified, mitigating, resolved)
-- Use `listIncidentAlerts` to see what monitoring alerts fired during the incident
+- Use `list_incident_alerts` to see what monitoring alerts fired during the incident
   - **Alert Prioritization**: Focus on the first-firing alert (likely root cause) and critical threshold breaches
   - Filter out correlated/downstream alerts to avoid overwhelming the responder
-- Use `listServices` to get details about affected services
-- Use `listEnvironments` to identify which environment is impacted (production, staging, etc.)
-- Use `listFunctionalities` to understand which system functionalities are affected
-- Use `listSeverities` to understand the full severity classification context
+- Use `list_services` to get details about affected services
+- Use `list_environments` to identify which environment is impacted (production, staging, etc.)
+- Use `list_functionalities` to understand which system functionalities are affected
+- Use `list_severities` to understand the full severity classification context
 
 **Failure Mode**: If APIs fail or return errors, proceed with available data and explicitly note what information is missing.
 
@@ -72,8 +72,8 @@ When responding to an incident, follow this systematic approach:
 - Use `get_oncall_handoff_summary` to identify current on-call engineers
 - Filter by timezone if incident is region-specific (use `filter_by_region=True` for regional incidents)
 - Identify primary and secondary on-call roles
-- Use `listTeams` to get full team context and ownership
-- Use `listUsers` or `getCurrentUser` to understand who is responding
+- Use `list_teams` to get full team context and ownership
+- Use `list_users` or `get_current_user` to understand who is responding
 - Check `get_oncall_shift_metrics` to understand recent on-call load (avoid overloading teams)
 
 ### 5. Correlate with Code Changes
@@ -116,7 +116,7 @@ Critical actions requiring approval:
 - Any action that could cause additional customer impact
 
 **Recommended Actions** (present for approval):
-- Use `createIncidentActionItem` to document immediate actions
+- Use `create_incident_action_item` to document immediate actions
 - **For code changes**: Present PR plan with:
   - Exact changes to be made
   - Risk assessment (what could go wrong?)
@@ -125,9 +125,9 @@ Critical actions requiring approval:
 - Title PRs as: `[Incident #ID] Fix: [brief description]`
 - Include incident URL, relevant commit SHAs, and **your reasoning** in PR description
 - Tag appropriate on-call engineers for review
-- Check `listStatusPages` to determine if customer communication is needed
-- Use `attachAlert` to link relevant monitoring alerts to the incident for documentation
-- Review `listWorkflows` to see if automated remediation workflows should be triggered
+- Check `list_status_pages` to determine if customer communication is needed
+- Use `attach_alert` to link relevant monitoring alerts to the incident for documentation
+- Review `list_workflows` to see if automated remediation workflows should be triggered
 
 **Context Preservation for Handoffs**:
 - Document WHY each action was taken, not just WHAT
@@ -194,8 +194,8 @@ Incident #12345 - "Payment API returning 500 errors"
 
 1. Gathered full context:
    - Retrieved incident: Severity=Critical, Service=payment-api, Started=2026-01-27 10:00 UTC
-   - Environment: Production (confirmed via listEnvironments)
-   - Functionality: Payment Processing (confirmed via listFunctionalities)
+   - Environment: Production (confirmed via list_environments)
+   - Functionality: Payment Processing (confirmed via list_functionalities)
    - Alerts: 3 alerts fired
      * PRIMARY: "DB connection pool exhausted" (10:00:03 UTC) ← Root cause signal
      * DOWNSTREAM: "API latency p99 >5s" (10:00:15 UTC)
@@ -216,7 +216,7 @@ Incident #12345 - "Payment API returning 500 errors"
 4. Team coordination:
    - On-call: @engineer-a (primary), @engineer-b (secondary) - Team: Payments
    - Shift metrics: Team had 2 incidents in past 24h (moderate load)
-   - Current responder: @engineer-a (verified via getCurrentUser)
+   - Current responder: @engineer-a (verified via get_current_user)
 
 5. GitHub: Found deployment 2 hours before incident - database config change
 
