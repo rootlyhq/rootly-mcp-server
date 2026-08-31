@@ -215,29 +215,32 @@ Updated: {attributes.get("updated_at", "N/A")}"""
 
 🚨 INCIDENT RESPONSE WORKFLOW:
 1️⃣ Check ongoing incidents: list_incidents(status="open,investigating")
-2️⃣ Create new incident: createIncident(title="...", summary="...")
+2️⃣ Create new incident: create_incident(title="...", summary="...")
 3️⃣ Find similar past incidents: find_related_incidents(incident_description="...")
 4️⃣ Get solution suggestions: suggest_solutions(incident_id="...")
-5️⃣ Add action items: createIncidentActionItem(incident_id="...", description="...")
+5️⃣ Add action items: create_incident_action_item(incident_id="...", description="...")
 6️⃣ Check on-call status: get_oncall_handoff_summary()
 
 📅 SCHEDULE MANAGEMENT WORKFLOW:
-1️⃣ View schedules: listSchedules()
-2️⃣ Check current shifts: getScheduleShifts(schedule_id="...")
-3️⃣ Create override: createOverrideShift(schedule_id="...", user_id="...", start_time="...", end_time="...")
+1️⃣ View schedules: list_schedules()
+2️⃣ Check current shifts: get_schedule_shifts(schedule_id="...")
+3️⃣ Create override: create_override_shift(schedule_id="...", user_id="...", start_time="...", end_time="...")
 4️⃣ Review metrics: get_oncall_shift_metrics(start_date="...", end_date="...")
 
 📊 MONITORING SETUP WORKFLOW:
-1️⃣ Review alerts: listAlerts()
-2️⃣ Update alert configuration: updateAlert(id="...", ...)
-3️⃣ Create dashboard: createDashboard(name="...", description="...")
-4️⃣ Set up heartbeats: createHeartbeat(name="...", url="...")
+1️⃣ Review alerts: list_alerts()
+2️⃣ Update alert configuration: update_alert(id="...", ...)
+3️⃣ Create dashboard: create_dashboard(name="...", description="...")
+4️⃣ Set up heartbeats: create_heartbeat(name="...", url="...")
 
 💡 BEST PRACTICES:
 • Use find_related_incidents early in incident response
 • Check oncall status before escalating
 • Review recent incidents for patterns: rootly://incidents resource
 • Use team resources for context: team://{team_id}
+
+🔗 SESSION IDS:
+This MCP server occasionally uses session IDs to correlate tool calls with task state. More is included on this in tool descriptions for the parameter `session_id`.
 """
 
         return {

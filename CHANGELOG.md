@@ -5,6 +5,12 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`rootly://workflow-guide` and the example incident-responder skill name tools by their advertised `snake_case` names**: both still used the historical camelCase operationIds (`createIncident`, `listIncidentAlerts`, `getScheduleShifts`, …). Those names remain callable through the alias middleware but are hidden from `tools/list`, so the guidance pointed the model at tools it could not see. A unit test now fails if either document references a tool that is not advertised.
+
 ## [2.3.18] - Released 2026-08-29
 
 ### Fixed
