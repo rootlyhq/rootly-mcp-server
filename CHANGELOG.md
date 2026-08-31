@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`rootly://workflow-guide` and the example incident-responder skill name tools by their advertised `snake_case` names**: both still used the historical camelCase operationIds (`createIncident`, `listIncidentAlerts`, `getScheduleShifts`, …). Those names remain callable through the alias middleware but are hidden from `tools/list`, so the guidance pointed the model at tools it could not see. A unit test now fails if either document references a tool that is not advertised.
 
+## [2.3.18] - Released 2026-08-29
+
+### Fixed
+
+- **Shift date ranges are split at the spans the API actually accepts**: the chunking thresholds were set to 62 and 31 days, which are the first values `/v1/shifts` and `/v1/schedules/{id}/shifts` reject, so a long range was never split and the request failed. The caps are now 60 and 30 days. Long ranges are also split for `get_schedule_shifts` and for the shift metrics tools, which previously did not chunk at all.
+- **A failed shift page is no longer reported as zero shifts**: a page that errored mid-scan was silently dropped, so a partial result looked like an empty schedule. Truncated results now say so, and a page that fails before answering is retried rather than abandoned.
+- **A shift date range that cannot be used is rejected up front** instead of being sent and failing upstream, and `/v1/shifts` requests beyond the horizon where shifts have been generated now say so rather than returning an unexplained empty list.
+- **Result-count arguments no longer fail a call that can be answered**: `max_results`, `page_size` and `batch_size` were validated as hard bounds, so asking for 20 results when the ceiling is 10 returned a validation error instead of 10 results. This was the highest-volume tool failure in production. Values outside the supported range are now clamped, and every adjustment is reported under `argument_adjustments` on the result so a caller is never told it received more than it did.
+
+### Changed
+
+- **The result-count arguments accept the names callers reach for**: `limit` is accepted wherever a result cap exists, along with `max_results` on `suggest_solutions` and `list_incidents`. Unknown arguments are still refused.
+- **Shift date ranges are named the way the rest of the on-call tools name them** (`start_date`/`end_date`), with the previous `from`/`to` and `from_date`/`to_date` spellings still accepted.
+
 ## [2.3.17] - Released 2026-08-10
 
 ### Fixed
