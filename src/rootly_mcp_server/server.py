@@ -134,7 +134,11 @@ def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, An
             continue
 
         if method == "get":
-            tool.annotations = mt.ToolAnnotations(readOnlyHint=True, openWorldHint=True)
+            tool.annotations = mt.ToolAnnotations(
+                readOnlyHint=True,
+                destructiveHint=False,
+                openWorldHint=True,
+            )
         elif method == "delete":
             tool.annotations = mt.ToolAnnotations(
                 readOnlyHint=False,
@@ -455,91 +459,6 @@ class CamelCaseAliasMiddleware(fastmcp_middleware.Middleware):
         return await call_next(context)
 
 
-_ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
-    "collect_incidents": {
-        "end": "started_before",
-        "limit": "max_results",
-        "max_incidents": "max_results",
-        "start": "started_after",
-        "start_time": "started_after",
-    },
-    "find_related_incidents": {
-        "alert_description": "incident_description",
-        "alert_name": "incident_description",
-        "alert_summary": "incident_description",
-        "description": "incident_description",
-        "incident_title": "incident_description",
-        "limit": "max_results",
-        "max_solutions": "max_results",
-        "query": "incident_description",
-    },
-    "get_incident": {"id": "incident_id"},
-    "list_incidents": {
-        "created_after": "started_after",
-        "created_at_gt": "started_after",
-        "created_at_gte": "started_after",
-        "declared_after": "started_after",
-        "description": "query",
-        "incident_states": "status",
-        "limit": "page_size",
-        "per_page": "page_size",
-        "service_name": "query",
-    },
-    "list_shifts": {"from": "from_date", "to": "to_date"},
-    "search_incidents": {
-        "description": "query",
-        "limit": "max_results",
-        "max_tokens": "max_results",
-        "pattern": "query",
-        "search": "query",
-        "search_term": "query",
-    },
-    "suggest_solutions": {
-        "description": "incident_description",
-        "query": "incident_description",
-    },
-}
-
-_LIST_TO_CSV_ARGS: dict[str, set[str]] = {
-    "list_incidents": {"status"},
-    "list_shifts": {"schedule_ids", "user_ids"},
-    "get_oncall_shift_metrics": {"schedule_ids", "user_ids", "team_ids"},
-    "get_oncall_schedule_summary": {"schedule_ids", "team_ids"},
-}
-
-
-class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
-    """Rewrites common mis-named or mis-typed arguments before pydantic validation.
-
-    LLM clients frequently send ``from``/``to`` instead of ``from_date``/``to_date``
-    for shift tools, or pass a list where a comma-separated string is expected.
-    Fixing upstream is impossible (every client is different), so we normalize here.
-    """
-
-    async def on_call_tool(
-        self,
-        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
-        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
-    ) -> Any:
-        args = context.message.arguments
-        tool = context.message.name
-        if args:
-            renames = _ARGUMENT_RENAMES.get(tool)
-            if renames:
-                for old_key, new_key in renames.items():
-                    if old_key in args and new_key not in args:
-                        args[new_key] = args.pop(old_key)
-
-            csv_args = _LIST_TO_CSV_ARGS.get(tool)
-            if csv_args:
-                for key in csv_args:
-                    val = args.get(key)
-                    if isinstance(val, list) and val:
-                        args[key] = ",".join(str(v) for v in val)
-
-        return await call_next(context)
-
-
 class ToolUsageLoggingMiddleware(fastmcp_middleware.Middleware):
     """FastMCP middleware that logs per-tool usage with caller identity context."""
 
@@ -749,7 +668,6 @@ def create_rootly_mcp_server(
     # Alias middleware runs first so the historical camelCase names are rewritten
     # to snake_case before usage logging records the (canonical) tool name.
     mcp.add_middleware(CamelCaseAliasMiddleware(camel_to_snake_aliases))
-    mcp.add_middleware(ArgumentNormalizationMiddleware())
     mcp.add_middleware(ToolUsageLoggingMiddleware())
 
     @mcp.custom_route("/healthz", methods=["GET"])
