@@ -484,10 +484,8 @@ _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
         "created_at_gte": "started_after",
         "declared_after": "started_after",
         "description": "query",
-        "incident_states": "status",
         "limit": "page_size",
         "per_page": "page_size",
-        "service_name": "query",
     },
     "list_shifts": {"from": "from_date", "to": "to_date"},
     "search_incidents": {
@@ -505,7 +503,6 @@ _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
 }
 
 _LIST_TO_CSV_ARGS: dict[str, set[str]] = {
-    "list_incidents": {"status"},
     "list_shifts": {"schedule_ids", "user_ids"},
     "get_oncall_shift_metrics": {"schedule_ids", "user_ids", "team_ids"},
     "get_oncall_schedule_summary": {"schedule_ids", "team_ids"},

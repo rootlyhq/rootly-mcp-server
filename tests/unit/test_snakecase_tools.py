@@ -170,14 +170,6 @@ class TestArgumentNormalizationMiddleware:
         assert args[new_key] == "value"
         assert old_key not in args
 
-    async def test_converts_incident_states_list_to_status_csv(self):
-        _, args = await self._run(
-            "list_incidents",
-            {"incident_states": ["ACTIVE", "MITIGATED", "RESOLVED"]},
-        )
-        assert args["status"] == "ACTIVE,MITIGATED,RESOLVED"
-        assert "incident_states" not in args
-
     async def test_converts_list_schedule_ids_to_csv(self):
         _, args = await self._run(
             "list_shifts",
