@@ -11,6 +11,7 @@ import logging
 import os
 import time
 import traceback
+from collections.abc import Sequence
 from typing import Any
 
 import fastmcp.server.middleware as fastmcp_middleware
@@ -499,6 +500,44 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
         return await call_next(context)
 
 
+# Tools registered by the telemetry SDK rather than by us, with the annotations
+# they should carry. AgentCat 2.1.0 registers `get_more_tools` with only
+# `{"readOnlyHint": True}` (adapters/community.py), so `destructiveHint` and
+# `openWorldHint` fall back to the spec defaults -- both `true`, describing the
+# tool as destructive and open-world. It is neither: its handler returns a fixed
+# string and never reaches the API. Reported upstream; remove this once the SDK
+# sets them itself.
+_INJECTED_TOOL_ANNOTATIONS: dict[str, mt.ToolAnnotations] = {
+    "get_more_tools": mt.ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        openWorldHint=False,
+    ),
+}
+
+
+class InjectedToolAnnotationMiddleware(fastmcp_middleware.Middleware):
+    """Completes safety annotations on tools this server did not register.
+
+    An injected tool cannot be annotated where it is defined, and unset hints do
+    not read as "unknown" -- the MCP spec defaults them to the cautious answer.
+    A client that respects annotations may therefore prompt before every call,
+    and annotation scanners flag the tool.
+    """
+
+    async def on_list_tools(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.ListToolsRequest],
+        call_next: fastmcp_middleware.CallNext[mt.ListToolsRequest, Sequence[Any]],
+    ) -> Sequence[Any]:
+        tools = await call_next(context)
+        for tool in tools:
+            annotations = _INJECTED_TOOL_ANNOTATIONS.get(getattr(tool, "name", ""))
+            if annotations is not None:
+                tool.annotations = annotations
+        return tools
+
+
 class ToolUsageLoggingMiddleware(fastmcp_middleware.Middleware):
     """FastMCP middleware that logs per-tool usage with caller identity context."""
 
@@ -709,6 +748,7 @@ def create_rootly_mcp_server(
     # to snake_case before usage logging records the (canonical) tool name.
     mcp.add_middleware(CamelCaseAliasMiddleware(camel_to_snake_aliases))
     mcp.add_middleware(ArgumentNormalizationMiddleware())
+    mcp.add_middleware(InjectedToolAnnotationMiddleware())
     mcp.add_middleware(ToolUsageLoggingMiddleware())
 
     @mcp.custom_route("/healthz", methods=["GET"])
