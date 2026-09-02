@@ -1636,6 +1636,7 @@ class TestApplyAnnotationsToAutogenTools:
 
         ann = tools["list_items"].annotations
         assert ann.readOnlyHint is True
+        assert ann.destructiveHint is False
         assert ann.openWorldHint is True
 
     def test_post_marked_write_non_idempotent(self):
@@ -1712,5 +1713,6 @@ class TestApplyAnnotationsToAutogenTools:
         server_module._apply_annotations_to_autogen_tools(mcp, spec)
 
         assert tools["list_items"].annotations.readOnlyHint is True
+        assert tools["list_items"].annotations.destructiveHint is False
         assert tools["create_item"].annotations.readOnlyHint is False
         assert tools["delete_item"].annotations.destructiveHint is True

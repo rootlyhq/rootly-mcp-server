@@ -381,7 +381,11 @@ def register_incident_tools(
         return params, filters
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def list_incidents(
         query: Annotated[
@@ -524,7 +528,11 @@ def register_incident_tools(
             )
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def collect_incidents(
         query: Annotated[
@@ -690,7 +698,11 @@ def register_incident_tools(
             return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def search_incidents(
         query: Annotated[
@@ -843,7 +855,11 @@ def register_incident_tools(
 
     @mcp.tool(
         name="get_incident",
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def get_incident(
         incident_id: Annotated[
@@ -877,7 +893,11 @@ def register_incident_tools(
 
     @mcp.tool(
         name="list_incident_roles",
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def list_incident_roles(
         incident_id: Annotated[
@@ -1158,7 +1178,11 @@ def register_incident_tools(
                 return _reference_tool_error("Failed to update incident", e)
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def find_related_incidents(
         incident_id: str = "",
@@ -1323,7 +1347,11 @@ def register_incident_tools(
             return _reference_tool_error("Failed to find related incidents", e)
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def suggest_solutions(
         incident_id: str = "",

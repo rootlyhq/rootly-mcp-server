@@ -868,7 +868,11 @@ def create_rootly_mcp_server(
     # Add some custom tools for enhanced functionality
 
     @mcp.tool(
-        annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        annotations=mt.ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=False,
+        ),
     )
     def list_endpoints() -> list:
         """List all available Rootly API endpoints with their descriptions."""
@@ -893,7 +897,11 @@ def create_rootly_mcp_server(
         return endpoints
 
     @mcp.tool(
-        annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        annotations=mt.ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=False,
+        ),
     )
     def get_server_version() -> dict:
         """Get the Rootly MCP server version.

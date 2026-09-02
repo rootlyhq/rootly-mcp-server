@@ -275,7 +275,11 @@ def register_oncall_tools(
     """Register on-call analysis and scheduling tools on the MCP server."""
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def get_oncall_shift_metrics(
         start_date: Annotated[
@@ -670,7 +674,11 @@ def register_oncall_tools(
             )
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def get_oncall_handoff_summary(
         team_ids: Annotated[
@@ -1376,7 +1384,11 @@ def register_oncall_tools(
             )
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def get_shift_incidents(
         start_time: Annotated[
@@ -1789,7 +1801,11 @@ def register_oncall_tools(
             return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def get_schedule_shifts(
         id: Annotated[str, Field(description="Schedule ID (UUID) to fetch shifts for")],
@@ -2141,7 +2157,11 @@ def register_oncall_tools(
             )
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def get_oncall_schedule_summary(
         start_date: Annotated[
@@ -2409,7 +2429,11 @@ def register_oncall_tools(
             )
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def check_responder_availability(
         start_date: Annotated[
@@ -2589,7 +2613,11 @@ def register_oncall_tools(
             )
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def create_override_recommendation(
         schedule_id: Annotated[
@@ -2836,7 +2864,11 @@ def register_oncall_tools(
             )
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def check_oncall_health_risk(
         start_date: Annotated[
