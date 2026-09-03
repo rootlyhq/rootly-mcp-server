@@ -134,7 +134,11 @@ def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, An
             continue
 
         if method == "get":
-            tool.annotations = mt.ToolAnnotations(readOnlyHint=True, openWorldHint=True)
+            tool.annotations = mt.ToolAnnotations(
+                readOnlyHint=True,
+                destructiveHint=False,
+                openWorldHint=True,
+            )
         elif method == "delete":
             tool.annotations = mt.ToolAnnotations(
                 readOnlyHint=False,
@@ -456,8 +460,46 @@ class CamelCaseAliasMiddleware(fastmcp_middleware.Middleware):
 
 
 _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
+    "collect_incidents": {
+        "end": "started_before",
+        "limit": "max_results",
+        "max_incidents": "max_results",
+        "start": "started_after",
+        "start_time": "started_after",
+    },
+    "find_related_incidents": {
+        "alert_description": "incident_description",
+        "alert_name": "incident_description",
+        "alert_summary": "incident_description",
+        "description": "incident_description",
+        "incident_title": "incident_description",
+        "limit": "max_results",
+        "max_solutions": "max_results",
+        "query": "incident_description",
+    },
+    "get_incident": {"id": "incident_id"},
+    "list_incidents": {
+        "created_after": "started_after",
+        "created_at_gt": "started_after",
+        "created_at_gte": "started_after",
+        "declared_after": "started_after",
+        "description": "query",
+        "limit": "page_size",
+        "per_page": "page_size",
+    },
     "list_shifts": {"from": "from_date", "to": "to_date"},
-    "search_incidents": {"max_tokens": "max_results"},
+    "search_incidents": {
+        "description": "query",
+        "limit": "max_results",
+        "max_tokens": "max_results",
+        "pattern": "query",
+        "search": "query",
+        "search_term": "query",
+    },
+    "suggest_solutions": {
+        "description": "incident_description",
+        "query": "incident_description",
+    },
 }
 
 _LIST_TO_CSV_ARGS: dict[str, set[str]] = {
@@ -827,7 +869,11 @@ def create_rootly_mcp_server(
     # Add some custom tools for enhanced functionality
 
     @mcp.tool(
-        annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        annotations=mt.ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=False,
+        ),
     )
     def list_endpoints() -> list:
         """List all available Rootly API endpoints with their descriptions."""
@@ -852,7 +898,11 @@ def create_rootly_mcp_server(
         return endpoints
 
     @mcp.tool(
-        annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        annotations=mt.ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=False,
+        ),
     )
     def get_server_version() -> dict:
         """Get the Rootly MCP server version.
