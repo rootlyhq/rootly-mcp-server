@@ -329,6 +329,16 @@ def setup_logging(log_level, debug=False):
     logging.getLogger("rootly_mcp_server").setLevel(numeric_level)
     logging.getLogger("mcp").setLevel(numeric_level)
 
+    # httpx logs one INFO line per outbound request. At production request
+    # volume that was a quarter of everything this service ships to Datadog,
+    # and it is strictly less informative than what we already record: every
+    # 4xx/5xx upstream response is logged by the transport with the status,
+    # method, URL and a body excerpt. Successful calls belong in traces, not
+    # in a line per request. Left alone when debugging is explicitly on, where
+    # seeing every request is the point.
+    if numeric_level > logging.DEBUG:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+
     # Log the configuration
     logger = logging.getLogger(__name__)
     logger.info(f"Logging configured with level: {log_level}")
