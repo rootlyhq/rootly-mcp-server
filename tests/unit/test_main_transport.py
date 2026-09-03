@@ -2,6 +2,7 @@
 
 import argparse
 import dataclasses
+import logging
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -1035,3 +1036,50 @@ async def test_run_profiled_streamable_http_server_routes_requests_by_profile():
 
     assert fake_apps["full-server"].calls == ["", "tool_profile=unexpected"]
     assert fake_apps["slim-server"].calls == ["tool_profile=slim", ""]
+
+
+@pytest.mark.unit
+class TestHttpxRequestLoggingIsQuiet:
+    """httpx logs one INFO line per outbound request.
+
+    In production that was a quarter of everything this service shipped to
+    Datadog, duplicating upstream failures the transport already logs with more
+    context. These tests restore the level afterwards, since setup_logging
+    mutates global logging state.
+    """
+
+    @staticmethod
+    def _run(level):
+        from rootly_mcp_server.__main__ import setup_logging
+
+        httpx_logger = logging.getLogger("httpx")
+        previous = httpx_logger.level
+        try:
+            setup_logging(level)
+            return httpx_logger.level
+        finally:
+            httpx_logger.setLevel(previous)
+
+    def test_info_logging_silences_per_request_lines(self):
+        assert self._run("INFO") == logging.WARNING
+
+    def test_warning_logging_also_silences_them(self):
+        assert self._run("WARNING") == logging.WARNING
+
+    def test_debug_logging_keeps_them(self):
+        # Someone who asked for DEBUG wants to see every request.
+        assert self._run("DEBUG") != logging.WARNING
+
+    def test_our_own_loggers_are_untouched(self):
+        # The reduction must not come at the cost of our own diagnostics.
+        from rootly_mcp_server.__main__ import setup_logging
+
+        ours = logging.getLogger("rootly_mcp_server")
+        previous_ours = ours.level
+        previous_httpx = logging.getLogger("httpx").level
+        try:
+            setup_logging("INFO")
+            assert ours.level == logging.INFO
+        finally:
+            ours.setLevel(previous_ours)
+            logging.getLogger("httpx").setLevel(previous_httpx)
