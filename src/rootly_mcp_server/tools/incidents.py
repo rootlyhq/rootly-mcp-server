@@ -139,6 +139,14 @@ def _summarize_incident_record(incident: dict[str, Any]) -> dict[str, Any]:
 TRANSCRIPT_MAX_RECORDINGS_DEFAULT = 3
 TRANSCRIPT_MAX_RECORDINGS = 10
 TRANSCRIPT_MAX_CHARS = 40_000
+# Most recordings in production have no speech at all -- Scribe joined a call
+# that never happened. Asking the API for exactly as many recordings as the
+# caller wants transcripts for therefore returns nothing useful most of the
+# time, so read a full page and keep turning pages until enough recordings
+# with speech are found. The page cap bounds the work when an incident has a
+# long tail of silent recordings.
+TRANSCRIPT_LIST_PAGE_SIZE = 50
+TRANSCRIPT_MAX_LIST_PAGES = 5
 
 
 def _collapse_transcript_segments(transcript: Any) -> list[dict[str, str]]:
@@ -1156,24 +1164,66 @@ def register_incident_tools(
             return _reference_tool_error("Failed to resolve incident", e)
 
         notes: list[str] = []
-        try:
-            listing = await make_authenticated_request(
-                "GET",
-                f"/v1/incidents/{resolved_incident_id}/meeting_recordings",
-                params={"page[size]": limit, "page[number]": 1},
-            )
-            listing.raise_for_status()
-            records = listing.json().get("data") or []
-        except Exception as e:
-            error_type, error_message = mcp_error.categorize_error(e)
-            return cast(
-                JsonDict,
-                mcp_error.tool_error(
-                    f"Failed to list meeting recordings: {error_message}", error_type
-                ),
+        readable: list[JsonDict] = []
+        skipped_silent = 0
+        any_records = False
+        pages_read = 0
+        more_pages = True
+
+        while more_pages and len(readable) < limit and pages_read < TRANSCRIPT_MAX_LIST_PAGES:
+            pages_read += 1
+            try:
+                listing = await make_authenticated_request(
+                    "GET",
+                    f"/v1/incidents/{resolved_incident_id}/meeting_recordings",
+                    params={
+                        "page[size]": TRANSCRIPT_LIST_PAGE_SIZE,
+                        "page[number]": pages_read,
+                    },
+                )
+                listing.raise_for_status()
+                body = listing.json()
+            except Exception as e:
+                if readable:
+                    # Keep what was already found rather than losing it all.
+                    _, error_message = mcp_error.categorize_error(e)
+                    notes.append(f"Stopped listing recordings early: {error_message}")
+                    break
+                error_type, error_message = mcp_error.categorize_error(e)
+                return cast(
+                    JsonDict,
+                    mcp_error.tool_error(
+                        f"Failed to list meeting recordings: {error_message}", error_type
+                    ),
+                )
+
+            records = body.get("data") or []
+            any_records = any_records or bool(records)
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                summary = _summarize_recording(record)
+                word_count = summary.get("word_count")
+                # A recording where nobody spoke has no transcript to fetch;
+                # asking for one costs a request and returns an empty array.
+                if isinstance(word_count, int) and word_count == 0:
+                    skipped_silent += 1
+                    continue
+                if not summary.get("recording_id"):
+                    continue
+                readable.append(summary)
+                if len(readable) >= limit:
+                    break
+
+            more_pages = bool((body.get("meta") or {}).get("next_page"))
+
+        if more_pages and len(readable) < limit:
+            notes.append(
+                f"Stopped after scanning {pages_read} page(s) of recordings; "
+                "more may exist. Raise max_recordings or query a narrower incident."
             )
 
-        if not records:
+        if not any_records:
             return clamp.apply(
                 {
                     "incident_id": resolved_incident_id,
@@ -1182,25 +1232,6 @@ def register_incident_tools(
                     "notes": ["No Meeting Scribe recordings exist for this incident."],
                 }
             )
-
-        # Decide what to read before dividing the budget, so silent recordings
-        # do not take a share of it. Nine silent recordings alongside one real
-        # call should not leave that call with a tenth of the allowance.
-        readable: list[JsonDict] = []
-        skipped_silent = 0
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            summary = _summarize_recording(record)
-            word_count = summary.get("word_count")
-            # A recording where nobody spoke has no transcript to fetch; asking
-            # for one costs a request and returns an empty array.
-            if isinstance(word_count, int) and word_count == 0:
-                skipped_silent += 1
-                continue
-            if not summary.get("recording_id"):
-                continue
-            readable.append(summary)
 
         # Spend the budget across the calls actually being read, so one long
         # call cannot crowd out the rest.

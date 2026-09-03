@@ -2032,10 +2032,10 @@ class TestIncidentMeetingTranscripts:
         )
 
         assert "max_recordings=99" in result["argument_adjustments"][0]
-        listing = next(
-            c for c in request.await_args_list if c.args[1].endswith("/meeting_recordings")
-        )
-        assert listing.kwargs["params"]["page[size]"] == 10
+        # The cap bounds how many transcripts come back, not the list page size.
+        # Asserting on page[size] would pin the bug where silent recordings ate
+        # the requested count.
+        assert result["returned_recordings"] <= 10
 
     @pytest.mark.asyncio
     async def test_an_unknown_incident_reference_is_a_validation_error(self):
@@ -2056,16 +2056,22 @@ class TestIncidentMeetingTranscriptsArgumentNames:
     """
 
     @staticmethod
-    def _server():
+    def _server(spoken=0):
         from fastmcp import FastMCP
+
+        records = [_recording_record(f"spoken-{i}", word_count=100) for i in range(spoken)]
 
         async def responder(method, url, params=None, **_kwargs):
             response = Mock()
             response.raise_for_status.return_value = None
             if url.endswith("/meeting_recordings"):
-                response.json.return_value = {"data": []}
+                response.json.return_value = {"data": records, "meta": {"next_page": None}}
             else:
-                response.json.return_value = {"data": {}}
+                response.json.return_value = {
+                    "data": {
+                        "attributes": {"transcript": [{"speaker": "A", "words": [{"text": "hi"}]}]}
+                    }
+                }
             return response
 
         request = AsyncMock(side_effect=responder)
@@ -2097,17 +2103,19 @@ class TestIncidentMeetingTranscriptsArgumentNames:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("name", ["max_recordings", "limit", "max_results"])
     async def test_the_recording_cap_accepts_every_spelling(self, name):
-        mcp, request = self._server()
+        # Five recordings available, two asked for under each spelling. Counting
+        # the transcripts returned proves the alias reached max_recordings
+        # without pinning how the listing is paged.
+        mcp, _ = self._server(spoken=5)
 
-        await mcp.call_tool(
+        result = await mcp.call_tool(
             "get_incident_meeting_transcripts",
             {"incident_id": "2b0dd1f2-6c9c-4a2f-9e4e-0b1d5a9f9d11", name: 2},
         )
 
-        listing = next(
-            c for c in request.await_args_list if c.args[1].endswith("/meeting_recordings")
-        )
-        assert listing.kwargs["params"]["page[size]"] == 2
+        payload = result.structured_content
+        assert payload is not None
+        assert payload["returned_recordings"] == 2
 
 
 @pytest.mark.unit
@@ -2164,3 +2172,151 @@ class TestTranscriptBudgetIgnoresSilentRecordings:
         assert recording["recording_id"] == "spoken"
         assert len(recording["transcript"]) == 20, "every turn should survive"
         assert recording.get("transcript_truncated") is None
+
+
+@pytest.mark.unit
+class TestTranscriptPaginationFindsSpokenRecordings:
+    """Silent recordings must not consume the requested transcript count.
+
+    Most recordings in production have no speech -- Scribe joined a call that
+    never happened. Fetching exactly `max_recordings` list entries and then
+    filtering silent ones returned nothing whenever the first entries were
+    silent, while reporting that nobody spoke. Roughly one recording in eight
+    sampled had speech, so that was the common case rather than an edge.
+    """
+
+    @staticmethod
+    def _register(all_records):
+        mcp = FakeMCP()
+        pages_requested: list[int] = []
+
+        async def responder(method, url, params=None, **_kwargs):
+            response = Mock()
+            response.raise_for_status.return_value = None
+            if url.endswith("/meeting_recordings"):
+                size = int((params or {}).get("page[size]", 50))
+                number = int((params or {}).get("page[number]", 1))
+                pages_requested.append(number)
+                page = all_records[(number - 1) * size : number * size]
+                has_next = number * size < len(all_records)
+                response.json.return_value = {
+                    "data": page,
+                    "meta": {"next_page": number + 1 if has_next else None},
+                }
+            else:
+                response.json.return_value = {
+                    "data": {
+                        "attributes": {
+                            "transcript": [
+                                {
+                                    "speaker": "Luca",
+                                    "language": "en_us",
+                                    "words": [{"text": "hello"}],
+                                }
+                            ]
+                        }
+                    }
+                }
+            return response
+
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp.tools, pages_requested
+
+    @staticmethod
+    async def _run(tools, asked):
+        return await tools["get_incident_meeting_transcripts"](
+            incident_id="2b0dd1f2-6c9c-4a2f-9e4e-0b1d5a9f9d11", max_recordings=asked
+        )
+
+    @pytest.mark.asyncio
+    async def test_silent_recordings_first_do_not_hide_the_spoken_ones(self):
+        records = [_recording_record(f"silent-{i}", word_count=0) for i in range(5)]
+        records += [_recording_record(f"spoken-{i}", word_count=100) for i in range(7)]
+        tools, _ = self._register(records)
+
+        result = await self._run(tools, 3)
+
+        assert result["returned_recordings"] == 3
+        assert all(r["recording_id"].startswith("spoken") for r in result["recordings"])
+
+    @pytest.mark.asyncio
+    async def test_it_turns_the_page_when_a_whole_page_is_silent(self):
+        records = [_recording_record(f"silent-{i}", word_count=0) for i in range(60)]
+        records += [_recording_record(f"spoken-{i}", word_count=100) for i in range(4)]
+        tools, pages = self._register(records)
+
+        result = await self._run(tools, 3)
+
+        assert result["returned_recordings"] == 3
+        assert pages == [1, 2], "should read a second page to reach spoken recordings"
+
+    @pytest.mark.asyncio
+    async def test_paging_is_bounded_when_everything_is_silent(self):
+        tools, pages = self._register(
+            [_recording_record(f"silent-{i}", word_count=0) for i in range(500)]
+        )
+
+        result = await self._run(tools, 3)
+
+        assert result["returned_recordings"] == 0
+        assert len(pages) == 5, "must stop at the page cap rather than walk 500 records"
+        assert any("Stopped after scanning" in note for note in result["notes"])
+
+    @pytest.mark.asyncio
+    async def test_fewer_spoken_than_asked_is_not_an_error(self):
+        tools, _ = self._register(
+            [_recording_record(f"spoken-{i}", word_count=100) for i in range(2)]
+        )
+
+        result = await self._run(tools, 3)
+
+        assert result.get("error") is None
+        assert result["returned_recordings"] == 2
+
+    @pytest.mark.asyncio
+    async def test_a_listing_failure_mid_walk_keeps_what_was_found(self):
+        mcp = FakeMCP()
+        records = [_recording_record(f"spoken-{i}", word_count=100) for i in range(60)]
+
+        async def responder(method, url, params=None, **_kwargs):
+            response = Mock()
+            response.raise_for_status.return_value = None
+            if url.endswith("/meeting_recordings"):
+                number = int((params or {}).get("page[number]", 1))
+                if number > 1:
+                    raise RuntimeError("listing exploded")
+                response.json.return_value = {
+                    "data": records[:50],
+                    "meta": {"next_page": 2},
+                }
+            else:
+                response.json.return_value = {
+                    "data": {
+                        "attributes": {"transcript": [{"speaker": "A", "words": [{"text": "hi"}]}]}
+                    }
+                }
+            return response
+
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+
+        result = await mcp.tools["get_incident_meeting_transcripts"](
+            incident_id="2b0dd1f2-6c9c-4a2f-9e4e-0b1d5a9f9d11", max_recordings=3
+        )
+
+        # The first page satisfied the request, so the failure never happens.
+        assert result["returned_recordings"] == 3
+        assert result.get("error") is None
