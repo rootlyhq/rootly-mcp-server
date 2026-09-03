@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The server no longer logs one line per request**: httpx logged an INFO line for every outbound API call, and uvicorn logged one for every inbound request. Together those were about two thirds of this service's log volume while duplicating records that already exist elsewhere — the platform router logs every inbound request with more detail (method, path, status, byte count, request id), and the transport logs every 4xx/5xx upstream response with status, method, URL and a body excerpt. Both are left enabled when the log level is `DEBUG`, where seeing every request is the point, and error reporting is unchanged at every level.
+
 ### Fixed
 
 - **`rootly://workflow-guide` and the example incident-responder skill name tools by their advertised `snake_case` names**: both still used the historical camelCase operationIds (`createIncident`, `listIncidentAlerts`, `getScheduleShifts`, …). Those names remain callable through the alias middleware but are hidden from `tools/list`, so the guidance pointed the model at tools it could not see. A unit test now fails if either document references a tool that is not advertised.
