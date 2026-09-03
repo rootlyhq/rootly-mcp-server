@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`list_audits` reads the Rootly audit log**: who changed which configuration object, when, from where, and the before-and-after value of every modified field. Filters by `item_type`, user, API key, source and a `created_at` range. Two behaviours of the underlying endpoint are handled rather than passed through: a `404` is reported as the missing `Audits - read` role permission rather than as a missing record, and an empty result is annotated, because `filter[item_type]` accepts any value and silently matches nothing so a typo and "nothing changed" would otherwise be indistinguishable. Records are size-bounded and the full object state is opt-in.
+
 ### Fixed
 
 - **`rootly://workflow-guide` and the example incident-responder skill name tools by their advertised `snake_case` names**: both still used the historical camelCase operationIds (`createIncident`, `listIncidentAlerts`, `getScheduleShifts`, …). Those names remain callable through the alias middleware but are hidden from `tools/list`, so the guidance pointed the model at tools it could not see. A unit test now fails if either document references a tool that is not advertised.

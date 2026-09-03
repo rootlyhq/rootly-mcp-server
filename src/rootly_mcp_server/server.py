@@ -24,6 +24,7 @@ from .exceptions import RootlyAuthenticationError
 from .mcp_error import MCPError
 from .security import mask_sensitive_data, sanitize_error_message
 from .tools.alerts import register_alert_tools
+from .tools.audits import register_audit_tools
 from .tools.incidents import register_incident_tools
 from .tools.oncall import register_oncall_tools
 from .tools.resources import register_resource_handlers
@@ -1036,6 +1037,12 @@ def create_rootly_mcp_server(
     )
 
     register_alert_tools(
+        mcp=mcp,
+        make_authenticated_request=make_authenticated_request,
+        mcp_error=MCPError,
+    )
+
+    register_audit_tools(
         mcp=mcp,
         make_authenticated_request=make_authenticated_request,
         mcp_error=MCPError,
