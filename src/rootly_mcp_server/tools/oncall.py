@@ -1895,7 +1895,11 @@ def register_oncall_tools(
             )
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def list_shifts(
         from_date: Annotated[
