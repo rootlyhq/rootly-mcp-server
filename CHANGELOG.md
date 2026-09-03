@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The container image builds on `python:3.14-slim`**: the base image moved up from `python:3.13-slim`. The resolved dependency set is identical on both interpreters, and `numpy`, `scipy`, and `scikit-learn` all publish `cp314` manylinux wheels, so nothing is built from source. The test matrix still runs on 3.12 and 3.13, because the locked `scikit-learn` has no `cp314` wheel.
+
 ### Fixed
 
 - **`rootly://workflow-guide` and the example incident-responder skill name tools by their advertised `snake_case` names**: both still used the historical camelCase operationIds (`createIncident`, `listIncidentAlerts`, `getScheduleShifts`, …). Those names remain callable through the alias middleware but are hidden from `tools/list`, so the guidance pointed the model at tools it could not see. A unit test now fails if either document references a tool that is not advertised.
