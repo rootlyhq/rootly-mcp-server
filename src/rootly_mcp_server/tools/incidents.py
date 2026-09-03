@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal, cast
 
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import AliasChoices, Field
 
 from ..smart_utils import SolutionExtractor, TextSimilarityAnalyzer
 
@@ -33,6 +33,48 @@ INCIDENT_UUID_RE = re.compile(
     re.IGNORECASE,
 )
 INCIDENT_SEQUENTIAL_REF_RE = re.compile(r"^(?:#|INC-)?(\d+)$", re.IGNORECASE)
+
+
+ADJUSTMENTS_KEY = "argument_adjustments"
+
+
+class _ArgumentClamp:
+    """Moves numeric arguments into range instead of refusing the call.
+
+    These bounds used to be pydantic constraints, which turned an answerable
+    request into a failure: asking for 20 results when the ceiling is 10 got a
+    validation error rather than 10 results. The ceiling stays in each argument
+    description so callers still see it, and every adjustment is reported on the
+    result so nobody is left believing they received more than they did.
+    """
+
+    def __init__(self) -> None:
+        self.notes: list[str] = []
+
+    def __call__(
+        self,
+        name: str,
+        value: int,
+        *,
+        minimum: int | None = None,
+        maximum: int | None = None,
+    ) -> int:
+        used = value
+        if minimum is not None and used < minimum:
+            used = minimum
+        if maximum is not None and used > maximum:
+            used = maximum
+        if used != value:
+            self.notes.append(
+                f"{name}={value} is outside the supported range; used {used} instead."
+            )
+        return used
+
+    def apply(self, result: JsonDict) -> JsonDict:
+        """Record the adjustments, leaving an unadjusted call's result untouched."""
+        if self.notes:
+            result[ADJUSTMENTS_KEY] = self.notes
+        return result
 
 
 def _split_csv_values(value: str) -> list[str]:
@@ -339,7 +381,11 @@ def register_incident_tools(
         return params, filters
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def list_incidents(
         query: Annotated[
@@ -396,11 +442,16 @@ def register_incident_tools(
         ] = "-created_at",
         page_size: Annotated[
             int,
-            Field(description="Number of incidents per page (max: 100)", ge=1, le=100),
+            Field(
+                description="Number of incidents per page (max: 100)",
+                # This tool has no separate result cap, so a caller asking to
+                # limit the result set means the page size here.
+                validation_alias=AliasChoices("page_size", "limit", "max_results"),
+            ),
         ] = 25,
         page_number: Annotated[
             int,
-            Field(description="Page number to retrieve (1-indexed)", ge=1),
+            Field(description="Page number to retrieve (1-indexed)"),
         ] = 1,
     ) -> JsonDict:
         """
@@ -414,7 +465,14 @@ def register_incident_tools(
 
         Use this when you need date-range, team, service, severity, or status filters.
         For simple text searches, prefer search_incidents instead.
+
+        Argument caps: page_size <= 100. Values outside the bounds are clamped
+        and reported, not rejected.
         """
+        clamp = _ArgumentClamp()
+        page_size = clamp("page_size", page_size, minimum=1, maximum=100)
+        page_number = clamp("page_number", page_number, minimum=1)
+
         try:
             params, filters = await _prepare_incident_query_context(
                 query=query,
@@ -445,21 +503,23 @@ def register_incident_tools(
             incidents = response_data.get("data", [])
             meta = response_data.get("meta", {})
 
-            return {
-                "incidents": [_summarize_incident_record(incident) for incident in incidents],
-                "returned_incidents": len(incidents),
-                "pagination": {
-                    "page_size": page_size,
-                    "page_number": page_number,
-                    "current_page": meta.get("current_page", page_number),
-                    "next_page": meta.get("next_page"),
-                    "prev_page": meta.get("prev_page"),
-                    "total_pages": meta.get("total_pages"),
-                    "total_count": meta.get("total_count"),
-                    "has_more": meta.get("next_page") is not None,
-                },
-                "filters": filters,
-            }
+            return clamp.apply(
+                {
+                    "incidents": [_summarize_incident_record(incident) for incident in incidents],
+                    "returned_incidents": len(incidents),
+                    "pagination": {
+                        "page_size": page_size,
+                        "page_number": page_number,
+                        "current_page": meta.get("current_page", page_number),
+                        "next_page": meta.get("next_page"),
+                        "prev_page": meta.get("prev_page"),
+                        "total_pages": meta.get("total_pages"),
+                        "total_count": meta.get("total_count"),
+                        "has_more": meta.get("next_page") is not None,
+                    },
+                    "filters": filters,
+                }
+            )
         except Exception as e:
             error_type, error_message = mcp_error.categorize_error(e)
             return _augment_pagination_error(
@@ -468,7 +528,11 @@ def register_incident_tools(
             )
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def collect_incidents(
         query: Annotated[
@@ -527,16 +591,13 @@ def register_incident_tools(
             int,
             Field(
                 description="Maximum number of compact incident summaries to collect across pages (max: 100)",
-                ge=1,
-                le=100,
+                validation_alias=AliasChoices("max_results", "limit"),
             ),
         ] = 50,
         batch_size: Annotated[
             int,
             Field(
                 description="Number of incidents to request per upstream page while collecting (min: 10, max: 100)",
-                ge=10,
-                le=100,
             ),
         ] = 25,
     ) -> JsonDict:
@@ -545,7 +606,14 @@ def register_incident_tools(
 
         Use this instead of list_incidents when you want a compact batch of incidents in one
         tool call, while keeping payload size under control.
+
+        Argument caps: max_results <= 100, batch_size between 10 and 100. Values
+        outside those bounds are clamped and reported, not rejected.
         """
+        clamp = _ArgumentClamp()
+        max_results = clamp("max_results", max_results, minimum=1, maximum=100)
+        batch_size = clamp("batch_size", batch_size, minimum=10, maximum=100)
+
         try:
             params, filters = await _prepare_incident_query_context(
                 query=query,
@@ -609,62 +677,94 @@ def register_incident_tools(
             if total_matching_count is not None and total_matching_count > len(collected_incidents):
                 results_truncated = True
 
-            return {
-                "incidents": [
-                    _summarize_incident_record(incident) for incident in collected_incidents
-                ],
-                "returned_incidents": len(collected_incidents),
-                "collection": {
-                    "max_results": max_results,
-                    "batch_size": batch_size,
-                    "pages_fetched": pages_fetched,
-                    "total_matching_count": total_matching_count,
-                    "results_truncated": results_truncated,
-                },
-                "filters": filters,
-            }
+            return clamp.apply(
+                {
+                    "incidents": [
+                        _summarize_incident_record(incident) for incident in collected_incidents
+                    ],
+                    "returned_incidents": len(collected_incidents),
+                    "collection": {
+                        "max_results": max_results,
+                        "batch_size": batch_size,
+                        "pages_fetched": pages_fetched,
+                        "total_matching_count": total_matching_count,
+                        "results_truncated": results_truncated,
+                    },
+                    "filters": filters,
+                }
+            )
         except Exception as e:
             error_type, error_message = mcp_error.categorize_error(e)
             return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def search_incidents(
         query: Annotated[
             str, Field(description="Search query to filter incidents by title/summary")
         ] = "",
-        page_size: Annotated[
-            int, Field(description="Number of results per page (max: 20)", ge=1, le=20)
-        ] = 10,
+        page_size: Annotated[int, Field(description="Number of results per page (max: 20)")] = 10,
         page_number: Annotated[
-            int, Field(description="Page number to retrieve (use 0 for all pages)", ge=0)
+            int, Field(description="Page number to retrieve (use 0 for all pages)")
         ] = 1,
         max_results: Annotated[
-            int,
+            int | None,
             Field(
                 description=(
-                    "Maximum total results when fetching all pages "
-                    "(ignored if page_number > 0). Max: 10. For larger result sets, use "
-                    "page_number > 0 and paginate explicitly, or use collect_incidents."
+                    "Maximum incidents to return. Max: 10; defaults to 5 when fetching "
+                    "all pages, and to page_size when fetching a single page. For larger "
+                    "result sets, paginate with page_number > 0 or use collect_incidents."
                 ),
-                ge=1,
-                le=10,
+                # `limit` is the name callers reach for, and it was the single
+                # most common rejected argument on this tool.
+                validation_alias=AliasChoices("max_results", "limit"),
             ),
-        ] = 5,
+        ] = None,
     ) -> JsonDict:
         """
         Search incidents with flexible pagination control.
 
-        Use page_number=0 to fetch all matching results across multiple pages up to max_results.
+        Use page_number=0 to fetch all matching results across multiple pages.
         Use page_number>0 to fetch a specific page.
 
-        Argument caps: page_size <= 20, max_results <= 10.
+        max_results (also accepted as `limit`) caps how many incidents come back
+        in either mode: across pages when page_number=0, and within the page
+        otherwise. Left unset, a single page returns page_size incidents and
+        page_number=0 stops at 5.
+
+        Argument caps: page_size <= 20, max_results <= 10. Values outside those
+        bounds are clamped and reported, not rejected.
         """
+        clamp = _ArgumentClamp()
+        page_size = clamp("page_size", page_size, minimum=1, maximum=20)
+        page_number = clamp("page_number", page_number, minimum=0)
+        # Distinguish a caller-supplied cap from the default: it governs the page
+        # size on a single page, and only there when it was actually asked for.
+        requested_max_results = (
+            None
+            if max_results is None
+            else clamp("max_results", max_results, minimum=1, maximum=10)
+        )
+        max_results = 5 if requested_max_results is None else requested_max_results
+
         # Single page mode
         if page_number > 0:
+            # A caller asking for at most N results should not be handed a full
+            # page of page_size. This cap previously applied only when fetching
+            # all pages, so `limit=5` on the default page returned page_size rows
+            # and silently ignored the limit.
+            effective_page_size = (
+                page_size
+                if requested_max_results is None
+                else min(page_size, requested_max_results)
+            )
             params = {
-                "page[size]": page_size,  # Use requested page size (already limited to max 20)
+                "page[size]": effective_page_size,
                 "page[number]": page_number,
                 "include": "",
                 "fields[incidents]": INCIDENT_SEARCH_FIELDS,
@@ -675,7 +775,7 @@ def register_incident_tools(
             try:
                 response = await make_authenticated_request("GET", "/v1/incidents", params=params)
                 response.raise_for_status()
-                return strip_heavy_nested_data(response.json())
+                return clamp.apply(strip_heavy_nested_data(response.json()))
             except Exception as e:
                 error_type, error_message = mcp_error.categorize_error(e)
                 return _augment_pagination_error(
@@ -752,21 +852,23 @@ def register_incident_tools(
             if len(all_incidents) > max_results:
                 all_incidents = all_incidents[:max_results]
 
-            return strip_heavy_nested_data(
-                {
-                    "data": all_incidents,
-                    "meta": {
-                        "total_fetched": len(all_incidents),
-                        "max_results": max_results,
-                        "query": query,
-                        "pages_fetched": current_page - 1,
-                        "page_size": effective_page_size,
-                        # True when paging stopped early due to a page error; the
-                        # result set is incomplete.
-                        "partial": page_error is not None,
-                        **({"error": page_error} if page_error else {}),
-                    },
-                }
+            return clamp.apply(
+                strip_heavy_nested_data(
+                    {
+                        "data": all_incidents,
+                        "meta": {
+                            "total_fetched": len(all_incidents),
+                            "max_results": max_results,
+                            "query": query,
+                            "pages_fetched": current_page - 1,
+                            "page_size": effective_page_size,
+                            # True when paging stopped early due to a page error;
+                            # the result set is incomplete.
+                            "partial": page_error is not None,
+                            **({"error": page_error} if page_error else {}),
+                        },
+                    }
+                )
             )
         except Exception as e:
             error_type, error_message = mcp_error.categorize_error(e)
@@ -774,7 +876,11 @@ def register_incident_tools(
 
     @mcp.tool(
         name="get_incident",
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def get_incident(
         incident_id: Annotated[
@@ -808,7 +914,11 @@ def register_incident_tools(
 
     @mcp.tool(
         name="list_incident_roles",
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def list_incident_roles(
         incident_id: Annotated[
@@ -1089,7 +1199,11 @@ def register_incident_tools(
                 return _reference_tool_error("Failed to update incident", e)
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def find_related_incidents(
         incident_id: str = "",
@@ -1098,7 +1212,11 @@ def register_incident_tools(
             float, Field(description="Minimum similarity score (0.0-1.0)", ge=0.0, le=1.0)
         ] = 0.15,
         max_results: Annotated[
-            int, Field(description="Maximum number of related incidents to return", ge=1, le=20)
+            int,
+            Field(
+                description="Maximum number of related incidents to return (max: 20)",
+                validation_alias=AliasChoices("max_results", "limit"),
+            ),
         ] = 5,
         status_filter: Annotated[
             str,
@@ -1118,7 +1236,13 @@ def register_incident_tools(
 
         Provide either incident_id OR incident_description (e.g., 'website is down', 'database timeout errors').
         Use status_filter to limit to specific incident statuses or leave empty for all incidents.
+
+        Argument caps: max_results <= 20. Values outside the bounds are clamped
+        and reported, not rejected.
         """
+        clamp = _ArgumentClamp()
+        max_results = clamp("max_results", max_results, minimum=1, maximum=20)
+
         try:
             target_incident: dict[str, Any] = {}
             resolved_incident_id = ""
@@ -1224,32 +1348,44 @@ def register_incident_tools(
                     }
                 )
 
-            return {
-                "target_incident": {
-                    "id": incident_id or "synthetic",
-                    "resolved_incident_id": resolved_incident_id or None,
-                    "title": target_incident.get("attributes", {}).get(
-                        "title", incident_description
-                    ),
-                },
-                "related_incidents": related_incidents,
-                "total_found": len(filtered_incidents),
-                "similarity_threshold": similarity_threshold,
-                "analysis_summary": f"Found {len(filtered_incidents)} similar incidents out of {len(historical_incidents)} historical incidents",
-            }
+            return clamp.apply(
+                {
+                    "target_incident": {
+                        "id": incident_id or "synthetic",
+                        "resolved_incident_id": resolved_incident_id or None,
+                        "title": target_incident.get("attributes", {}).get(
+                            "title", incident_description
+                        ),
+                    },
+                    "related_incidents": related_incidents,
+                    "total_found": len(filtered_incidents),
+                    "similarity_threshold": similarity_threshold,
+                    "analysis_summary": f"Found {len(filtered_incidents)} similar incidents out of {len(historical_incidents)} historical incidents",
+                }
+            )
 
         except Exception as e:
             return _reference_tool_error("Failed to find related incidents", e)
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def suggest_solutions(
         incident_id: str = "",
         incident_title: str = "",
         incident_description: str = "",
         max_solutions: Annotated[
-            int, Field(description="Maximum number of solution suggestions", ge=1, le=10)
+            int,
+            Field(
+                description="Maximum number of solution suggestions (max: 10)",
+                # Callers reach for max_results here because every neighbouring
+                # tool uses that name; it was this tool's only rejected argument.
+                validation_alias=AliasChoices("max_solutions", "max_results", "limit"),
+            ),
         ] = 3,
         status_filter: Annotated[
             str,
@@ -1268,7 +1404,13 @@ def register_incident_tools(
         • For training new responders on resolution patterns
 
         Provide either incident_id OR title/description. Defaults to resolved incidents for solution mining.
+
+        Argument caps: max_solutions <= 10. Values outside the bounds are clamped
+        and reported, not rejected.
         """
+        clamp = _ArgumentClamp()
+        max_solutions = clamp("max_solutions", max_solutions, minimum=1, maximum=10)
+
         try:
             target_incident: dict[str, Any] = {}
             resolved_incident_id = ""
@@ -1361,23 +1503,25 @@ def register_incident_tools(
             solution_data = solution_extractor.extract_solutions(relevant_incidents)
 
             # Format response
-            return {
-                "target_incident": {
-                    "id": incident_id or "synthetic",
-                    "resolved_incident_id": resolved_incident_id or None,
-                    "title": target_incident.get("attributes", {}).get("title", incident_title),
-                    "description": target_incident.get("attributes", {}).get(
-                        "summary", incident_description
-                    ),
-                },
-                "solutions": solution_data["solutions"][:max_solutions],
-                "insights": {
-                    "common_patterns": solution_data["common_patterns"],
-                    "average_resolution_time_hours": solution_data["average_resolution_time"],
-                    "total_similar_incidents": solution_data["total_similar_incidents"],
-                },
-                "recommendation": generate_recommendation(solution_data),
-            }
+            return clamp.apply(
+                {
+                    "target_incident": {
+                        "id": incident_id or "synthetic",
+                        "resolved_incident_id": resolved_incident_id or None,
+                        "title": target_incident.get("attributes", {}).get("title", incident_title),
+                        "description": target_incident.get("attributes", {}).get(
+                            "summary", incident_description
+                        ),
+                    },
+                    "solutions": solution_data["solutions"][:max_solutions],
+                    "insights": {
+                        "common_patterns": solution_data["common_patterns"],
+                        "average_resolution_time_hours": solution_data["average_resolution_time"],
+                        "total_similar_incidents": solution_data["total_similar_incidents"],
+                    },
+                    "recommendation": generate_recommendation(solution_data),
+                }
+            )
 
         except Exception as e:
             return _reference_tool_error("Failed to suggest solutions", e)

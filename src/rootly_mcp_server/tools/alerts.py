@@ -35,7 +35,11 @@ def register_alert_tools(
     """Register alert tools on the MCP server."""
 
     @mcp.tool(
-        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
     )
     async def get_alert_by_short_id(
         short_id: Annotated[

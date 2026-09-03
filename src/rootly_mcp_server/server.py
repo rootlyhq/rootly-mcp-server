@@ -11,6 +11,7 @@ import logging
 import os
 import time
 import traceback
+from collections.abc import Sequence
 from typing import Any
 
 import fastmcp.server.middleware as fastmcp_middleware
@@ -134,7 +135,11 @@ def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, An
             continue
 
         if method == "get":
-            tool.annotations = mt.ToolAnnotations(readOnlyHint=True, openWorldHint=True)
+            tool.annotations = mt.ToolAnnotations(
+                readOnlyHint=True,
+                destructiveHint=False,
+                openWorldHint=True,
+            )
         elif method == "delete":
             tool.annotations = mt.ToolAnnotations(
                 readOnlyHint=False,
@@ -456,8 +461,46 @@ class CamelCaseAliasMiddleware(fastmcp_middleware.Middleware):
 
 
 _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
+    "collect_incidents": {
+        "end": "started_before",
+        "limit": "max_results",
+        "max_incidents": "max_results",
+        "start": "started_after",
+        "start_time": "started_after",
+    },
+    "find_related_incidents": {
+        "alert_description": "incident_description",
+        "alert_name": "incident_description",
+        "alert_summary": "incident_description",
+        "description": "incident_description",
+        "incident_title": "incident_description",
+        "limit": "max_results",
+        "max_solutions": "max_results",
+        "query": "incident_description",
+    },
+    "get_incident": {"id": "incident_id"},
+    "list_incidents": {
+        "created_after": "started_after",
+        "created_at_gt": "started_after",
+        "created_at_gte": "started_after",
+        "declared_after": "started_after",
+        "description": "query",
+        "limit": "page_size",
+        "per_page": "page_size",
+    },
     "list_shifts": {"from": "from_date", "to": "to_date"},
-    "search_incidents": {"max_tokens": "max_results"},
+    "search_incidents": {
+        "description": "query",
+        "limit": "max_results",
+        "max_tokens": "max_results",
+        "pattern": "query",
+        "search": "query",
+        "search_term": "query",
+    },
+    "suggest_solutions": {
+        "description": "incident_description",
+        "query": "incident_description",
+    },
 }
 
 _LIST_TO_CSV_ARGS: dict[str, set[str]] = {
@@ -497,6 +540,44 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
                         args[key] = ",".join(str(v) for v in val)
 
         return await call_next(context)
+
+
+# Tools registered by the telemetry SDK rather than by us, with the annotations
+# they should carry. AgentCat 2.1.0 registers `get_more_tools` with only
+# `{"readOnlyHint": True}` (adapters/community.py), so `destructiveHint` and
+# `openWorldHint` fall back to the spec defaults -- both `true`, describing the
+# tool as destructive and open-world. It is neither: its handler returns a fixed
+# string and never reaches the API. Reported upstream; remove this once the SDK
+# sets them itself.
+_INJECTED_TOOL_ANNOTATIONS: dict[str, mt.ToolAnnotations] = {
+    "get_more_tools": mt.ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        openWorldHint=False,
+    ),
+}
+
+
+class InjectedToolAnnotationMiddleware(fastmcp_middleware.Middleware):
+    """Completes safety annotations on tools this server did not register.
+
+    An injected tool cannot be annotated where it is defined, and unset hints do
+    not read as "unknown" -- the MCP spec defaults them to the cautious answer.
+    A client that respects annotations may therefore prompt before every call,
+    and annotation scanners flag the tool.
+    """
+
+    async def on_list_tools(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.ListToolsRequest],
+        call_next: fastmcp_middleware.CallNext[mt.ListToolsRequest, Sequence[Any]],
+    ) -> Sequence[Any]:
+        tools = await call_next(context)
+        for tool in tools:
+            annotations = _INJECTED_TOOL_ANNOTATIONS.get(getattr(tool, "name", ""))
+            if annotations is not None:
+                tool.annotations = annotations
+        return tools
 
 
 class ToolUsageLoggingMiddleware(fastmcp_middleware.Middleware):
@@ -709,6 +790,7 @@ def create_rootly_mcp_server(
     # to snake_case before usage logging records the (canonical) tool name.
     mcp.add_middleware(CamelCaseAliasMiddleware(camel_to_snake_aliases))
     mcp.add_middleware(ArgumentNormalizationMiddleware())
+    mcp.add_middleware(InjectedToolAnnotationMiddleware())
     mcp.add_middleware(ToolUsageLoggingMiddleware())
 
     @mcp.custom_route("/healthz", methods=["GET"])
@@ -827,7 +909,11 @@ def create_rootly_mcp_server(
     # Add some custom tools for enhanced functionality
 
     @mcp.tool(
-        annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        annotations=mt.ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=False,
+        ),
     )
     def list_endpoints() -> list:
         """List all available Rootly API endpoints with their descriptions."""
@@ -852,7 +938,11 @@ def create_rootly_mcp_server(
         return endpoints
 
     @mcp.tool(
-        annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        annotations=mt.ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=False,
+        ),
     )
     def get_server_version() -> dict:
         """Get the Rootly MCP server version.

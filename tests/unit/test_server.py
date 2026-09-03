@@ -1636,6 +1636,7 @@ class TestApplyAnnotationsToAutogenTools:
 
         ann = tools["list_items"].annotations
         assert ann.readOnlyHint is True
+        assert ann.destructiveHint is False
         assert ann.openWorldHint is True
 
     def test_post_marked_write_non_idempotent(self):
@@ -1712,5 +1713,124 @@ class TestApplyAnnotationsToAutogenTools:
         server_module._apply_annotations_to_autogen_tools(mcp, spec)
 
         assert tools["list_items"].annotations.readOnlyHint is True
+        assert tools["list_items"].annotations.destructiveHint is False
         assert tools["create_item"].annotations.readOnlyHint is False
         assert tools["delete_item"].annotations.destructiveHint is True
+
+
+@pytest.mark.unit
+class TestInjectedToolAnnotations:
+    """The telemetry SDK registers `get_more_tools` with only readOnlyHint.
+
+    Unset hints are not "unknown" -- the MCP spec defaults destructiveHint and
+    openWorldHint to true, so the tool advertises itself as destructive and
+    open-world. It is neither. We cannot annotate a tool we did not register, so
+    the listing is completed on the way out.
+    """
+
+    @staticmethod
+    async def _list_through_middleware(tools):
+        from typing import Any, cast
+
+        from rootly_mcp_server.server import InjectedToolAnnotationMiddleware
+
+        async def call_next(context):
+            return tools
+
+        # The hook reads nothing off the context, so a placeholder is enough to
+        # exercise it without building a full MiddlewareContext.
+        return await InjectedToolAnnotationMiddleware().on_list_tools(cast(Any, None), call_next)
+
+    @pytest.mark.asyncio
+    async def test_completes_the_injected_tools_annotations(self):
+        injected = SimpleNamespace(
+            name="get_more_tools",
+            annotations=mt.ToolAnnotations(readOnlyHint=True),
+        )
+
+        result = await self._list_through_middleware([injected])
+
+        ann = result[0].annotations
+        assert ann.readOnlyHint is True
+        assert ann.destructiveHint is False
+        assert ann.openWorldHint is False
+
+    @pytest.mark.asyncio
+    async def test_leaves_our_own_tools_alone(self):
+        ours = SimpleNamespace(
+            name="list_incidents",
+            annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        )
+
+        result = await self._list_through_middleware([ours])
+
+        assert result[0].annotations.openWorldHint is True
+        assert result[0].annotations.destructiveHint is None
+
+    @pytest.mark.asyncio
+    async def test_a_tool_with_no_annotations_is_untouched(self):
+        bare = SimpleNamespace(name="something_else", annotations=None)
+
+        result = await self._list_through_middleware([bare])
+
+        assert result[0].annotations is None
+
+    def test_the_key_matches_the_name_the_sdk_registers(self):
+        """The patch is keyed by name, so an upstream rename disables it silently.
+
+        Compared against the SDK's own constant rather than a literal, so an
+        upgrade that renames the tool fails here. `agentcat` is installed only in
+        the container image, not by `uv sync --dev`, so this skips in the unit
+        test jobs and runs wherever the SDK is actually present.
+        """
+        constants = pytest.importorskip("agentcat.modules.constants")
+
+        from rootly_mcp_server.server import _INJECTED_TOOL_ANNOTATIONS
+
+        assert constants.GET_MORE_TOOLS_NAME in _INJECTED_TOOL_ANNOTATIONS
+
+
+@pytest.mark.unit
+class TestEveryToolDeclaresItsSafety:
+    """No tool may leave a safety hint unset.
+
+    Unset is not "unknown": the MCP spec defaults destructiveHint and
+    openWorldHint to true, so an omission advertises the tool as destructive and
+    open-world. Annotation scanners flag it, and clients that honour annotations
+    may prompt before every call.
+
+    Annotating tools one at a time missed `list_shifts`, which is why this
+    asserts over the whole surface rather than a list someone has to maintain.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_tool_omits_destructive_hint(self, mock_environment_token):
+        server = create_rootly_mcp_server(hosted=False)
+
+        missing = [
+            tool.name
+            for tool in await server.list_tools()
+            if tool.annotations is not None and tool.annotations.destructiveHint is None
+        ]
+
+        assert missing == [], f"tools missing destructiveHint: {sorted(missing)}"
+
+    @pytest.mark.asyncio
+    async def test_no_tool_omits_open_world_hint(self, mock_environment_token):
+        server = create_rootly_mcp_server(hosted=False)
+
+        missing = [
+            tool.name
+            for tool in await server.list_tools()
+            if tool.annotations is not None and tool.annotations.openWorldHint is None
+        ]
+
+        assert missing == [], f"tools missing openWorldHint: {sorted(missing)}"
+
+    @pytest.mark.asyncio
+    async def test_every_tool_is_annotated_at_all(self, mock_environment_token):
+        server = create_rootly_mcp_server(hosted=False)
+
+        unannotated = [tool.name for tool in await server.list_tools() if tool.annotations is None]
+
+        assert unannotated == [], f"tools with no annotations: {sorted(unannotated)}"

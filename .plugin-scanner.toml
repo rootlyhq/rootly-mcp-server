@@ -1,0 +1,16 @@
+[scanner]
+# These files contain reviewed test credentials, documentation placeholders,
+# environment-variable names, or CI secret references. Keep this list
+# path-specific so hardcoded-secret detection remains enabled everywhere else.
+ignore_paths = [
+  "Makefile",
+  ".github/workflows/ci.yml",
+  "src/rootly_mcp_server/__main__.py",
+  "src/rootly_mcp_server/server_defaults.py",
+  "tests/conftest.py",
+  "tests/integration/remote/test_essential.py",
+  "tests/unit/test_authentication.py",
+  "tests/unit/test_och_client.py",
+  "tests/unit/test_security.py",
+  "tests/unit/test_telemetry_scrubber.py",
+]
