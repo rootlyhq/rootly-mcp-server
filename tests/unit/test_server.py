@@ -1716,3 +1716,69 @@ class TestApplyAnnotationsToAutogenTools:
         assert tools["list_items"].annotations.destructiveHint is False
         assert tools["create_item"].annotations.readOnlyHint is False
         assert tools["delete_item"].annotations.destructiveHint is True
+
+
+@pytest.mark.unit
+class TestInjectedToolAnnotations:
+    """The telemetry SDK registers `get_more_tools` with only readOnlyHint.
+
+    Unset hints are not "unknown" -- the MCP spec defaults destructiveHint and
+    openWorldHint to true, so the tool advertises itself as destructive and
+    open-world. It is neither. We cannot annotate a tool we did not register, so
+    the listing is completed on the way out.
+    """
+
+    @staticmethod
+    async def _list_through_middleware(tools):
+        from typing import Any, cast
+
+        from rootly_mcp_server.server import InjectedToolAnnotationMiddleware
+
+        async def call_next(context):
+            return tools
+
+        # The hook reads nothing off the context, so a placeholder is enough to
+        # exercise it without building a full MiddlewareContext.
+        return await InjectedToolAnnotationMiddleware().on_list_tools(cast(Any, None), call_next)
+
+    @pytest.mark.asyncio
+    async def test_completes_the_injected_tools_annotations(self):
+        injected = SimpleNamespace(
+            name="get_more_tools",
+            annotations=mt.ToolAnnotations(readOnlyHint=True),
+        )
+
+        result = await self._list_through_middleware([injected])
+
+        ann = result[0].annotations
+        assert ann.readOnlyHint is True
+        assert ann.destructiveHint is False
+        assert ann.openWorldHint is False
+
+    @pytest.mark.asyncio
+    async def test_leaves_our_own_tools_alone(self):
+        ours = SimpleNamespace(
+            name="list_incidents",
+            annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        )
+
+        result = await self._list_through_middleware([ours])
+
+        assert result[0].annotations.openWorldHint is True
+        assert result[0].annotations.destructiveHint is None
+
+    @pytest.mark.asyncio
+    async def test_a_tool_with_no_annotations_is_untouched(self):
+        bare = SimpleNamespace(name="something_else", annotations=None)
+
+        result = await self._list_through_middleware([bare])
+
+        assert result[0].annotations is None
+
+    @pytest.mark.asyncio
+    async def test_the_injected_tool_is_still_named_get_more_tools(self):
+        # Keyed by name: if the SDK renames the tool this patch silently stops
+        # applying, so pin the name we are compensating for.
+        from rootly_mcp_server.server import _INJECTED_TOOL_ANNOTATIONS
+
+        assert "get_more_tools" in _INJECTED_TOOL_ANNOTATIONS
