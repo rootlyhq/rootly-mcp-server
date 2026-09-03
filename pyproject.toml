@@ -40,7 +40,7 @@ dependencies = [
     "authlib>=1.7.1",  # Override vulnerable transitive authlib (GHSA-jj8c-mmj3-mmgv, GHSA-w8p2-r796-3vmq)
     "python-dotenv>=1.2.2",  # Override vulnerable transitive python-dotenv (GHSA-m8f7-34r5-grfg)
     "python-multipart>=0.0.31",  # Override vulnerable transitive python-multipart (CVE-2026-40347, GHSA-v9pg-7xvm-68hf and others)
-    "cryptography>=48.0.1",  # Override vulnerable transitive cryptography (GHSA-537c-gmf6-5ccf)
+    "cryptography>=50.0.0",  # Override vulnerable transitive cryptography (GHSA-537c-gmf6-5ccf, PKCS#7 Bleichenbacher oracle)
     "Pygments>=2.20.0",  # Override vulnerable transitive Pygments
     "pyjwt>=2.13.0",  # Override vulnerable transitive pyjwt (GHSA-xgmm-8j9v-c9wx and others)
     "msgpack>=1.2.1",  # Override vulnerable transitive msgpack (GHSA-6v7p-g79w-8964)
@@ -110,6 +110,10 @@ dev = [
     "sseclient-py>=1.8.0", # Server-Sent Events client for remote tests
     "bandit>=1.7.0", # Security linter
     "pip-audit>=2.7.0", # Dependency vulnerability checker
+    # Pulled in transitively by pip-audit via pip-api. Floor raised to clear
+    # two advisories: doubly-encoded index URLs, and path traversal via
+    # console_scripts entry point names.
+    "pip>=26.2.0",
     "detect-secrets>=1.5.0", # Independent oracle for the telemetry scrubber tests
     "mypy>=1.0.0", # Static type checker
     "types-requests>=2.32.0", # Type stubs for requests
