@@ -130,6 +130,85 @@ def _summarize_incident_record(incident: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# One line per speaker turn instead of one object per word. The API passes
+# through raw speech-to-text output, where every word carries its own
+# confidence and start/end timestamps -- 125 bytes of JSON per spoken word,
+# measured. That shape exists to drive a UI with timestamps synced to video;
+# for a model reading a conversation it is 93% overhead. A 40-minute call is
+# ~731 KB word-level against ~47 KB collapsed.
+TRANSCRIPT_MAX_RECORDINGS_DEFAULT = 3
+TRANSCRIPT_MAX_RECORDINGS = 10
+TRANSCRIPT_MAX_CHARS = 40_000
+
+
+def _collapse_transcript_segments(transcript: Any) -> list[dict[str, str]]:
+    """Turn the API's per-word arrays into one text block per speaker turn."""
+    if not isinstance(transcript, list):
+        return []
+    segments: list[dict[str, str]] = []
+    for segment in transcript:
+        if not isinstance(segment, dict):
+            continue
+        words = segment.get("words")
+        if isinstance(words, list):
+            text = " ".join(
+                str(word.get("text", "")) for word in words if isinstance(word, dict)
+            ).strip()
+        else:
+            # Tolerate a future shape that already returns text.
+            text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        collapsed = {"text": text}
+        speaker = segment.get("speaker")
+        if speaker:
+            collapsed["speaker"] = str(speaker)
+        language = segment.get("language")
+        if language:
+            collapsed["language"] = str(language)
+        segments.append(collapsed)
+    return segments
+
+
+def _truncate_transcript_segments(
+    segments: list[dict[str, str]], *, budget: int
+) -> tuple[list[dict[str, str]], bool]:
+    """Keep whole speaker turns until the character budget is spent."""
+    kept: list[dict[str, str]] = []
+    spent = 0
+    for segment in segments:
+        length = len(segment["text"])
+        if kept and spent + length > budget:
+            return kept, True
+        kept.append(segment)
+        spent += length
+        if spent > budget:
+            # The first turn alone can exceed the budget; keep it but stop.
+            return kept, len(kept) < len(segments)
+    return kept, False
+
+
+def _summarize_recording(recording: dict[str, Any]) -> dict[str, Any]:
+    """Recording metadata worth returning, without the signed video URL.
+
+    `video_url` is a presigned S3 link of roughly two kilobytes, mostly AWS
+    credential query string, and it expires in an hour. It is dead weight in a
+    transcript response.
+    """
+    attrs = recording.get("attributes") or {}
+    return {
+        "recording_id": recording.get("id"),
+        "platform": attrs.get("platform"),
+        "status": attrs.get("status"),
+        "started_at": attrs.get("started_at"),
+        "ended_at": attrs.get("ended_at"),
+        "duration_minutes": attrs.get("duration_minutes"),
+        "speaker_count": attrs.get("speaker_count"),
+        "word_count": attrs.get("word_count"),
+        "summary": attrs.get("transcript_summary"),
+    }
+
+
 def _extract_sequential_id(incident: dict[str, Any]) -> int | None:
     """Extract a numeric sequential incident ID from a Rootly incident record."""
     attrs = incident.get("attributes") or {}
@@ -1012,6 +1091,165 @@ def register_incident_tools(
             )
         except Exception as e:
             return _reference_tool_error("Failed to list incident roles", e)
+
+    @mcp.tool(
+        name="get_incident_meeting_transcripts",
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
+    )
+    async def get_incident_meeting_transcripts(
+        incident_id: Annotated[
+            str,
+            Field(
+                description=("Incident UUID or number (e.g. '5185', '#5185', 'INC-5185')."),
+                validation_alias=AliasChoices("incident_id", "id"),
+            ),
+        ],
+        max_recordings: Annotated[
+            int | None,
+            Field(
+                description=(
+                    f"How many recordings to read transcripts for, newest first. "
+                    f"Max: {TRANSCRIPT_MAX_RECORDINGS}; defaults to "
+                    f"{TRANSCRIPT_MAX_RECORDINGS_DEFAULT}."
+                ),
+                validation_alias=AliasChoices("max_recordings", "limit", "max_results"),
+            ),
+        ] = None,
+    ) -> JsonDict:
+        """
+        Read what was said on an incident's calls (Rootly Meeting Scribe).
+
+        Returns the spoken transcript of each recorded call for the incident, as
+        text per speaker turn, alongside Scribe's own summary. Covers Google Meet,
+        Zoom and Microsoft Teams calls that Scribe recorded.
+
+        Use this to catch up on a call you missed, or to pull decisions and
+        actions out of an incident bridge. Recordings where nobody spoke are
+        skipped rather than returned empty.
+        """
+        clamp = _ArgumentClamp()
+        requested = (
+            None
+            if max_recordings is None
+            else clamp(
+                "max_recordings",
+                max_recordings,
+                minimum=1,
+                maximum=TRANSCRIPT_MAX_RECORDINGS,
+            )
+        )
+        limit = TRANSCRIPT_MAX_RECORDINGS_DEFAULT if requested is None else requested
+
+        try:
+            resolved_incident_id = await _resolve_incident_reference_to_uuid(
+                incident_id, make_authenticated_request
+            )
+        except ValueError as e:
+            return cast(JsonDict, mcp_error.tool_error(str(e), "validation_error"))
+        except LookupError as e:
+            return cast(JsonDict, mcp_error.tool_error(str(e), "not_found"))
+        except Exception as e:
+            return _reference_tool_error("Failed to resolve incident", e)
+
+        notes: list[str] = []
+        try:
+            listing = await make_authenticated_request(
+                "GET",
+                f"/v1/incidents/{resolved_incident_id}/meeting_recordings",
+                params={"page[size]": limit, "page[number]": 1},
+            )
+            listing.raise_for_status()
+            records = listing.json().get("data") or []
+        except Exception as e:
+            error_type, error_message = mcp_error.categorize_error(e)
+            return cast(
+                JsonDict,
+                mcp_error.tool_error(
+                    f"Failed to list meeting recordings: {error_message}", error_type
+                ),
+            )
+
+        if not records:
+            return clamp.apply(
+                {
+                    "incident_id": resolved_incident_id,
+                    "recordings": [],
+                    "returned_recordings": 0,
+                    "notes": ["No Meeting Scribe recordings exist for this incident."],
+                }
+            )
+
+        # Decide what to read before dividing the budget, so silent recordings
+        # do not take a share of it. Nine silent recordings alongside one real
+        # call should not leave that call with a tenth of the allowance.
+        readable: list[JsonDict] = []
+        skipped_silent = 0
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            summary = _summarize_recording(record)
+            word_count = summary.get("word_count")
+            # A recording where nobody spoke has no transcript to fetch; asking
+            # for one costs a request and returns an empty array.
+            if isinstance(word_count, int) and word_count == 0:
+                skipped_silent += 1
+                continue
+            if not summary.get("recording_id"):
+                continue
+            readable.append(summary)
+
+        # Spend the budget across the calls actually being read, so one long
+        # call cannot crowd out the rest.
+        per_recording_budget = max(TRANSCRIPT_MAX_CHARS // max(len(readable), 1), 1_000)
+        recordings: list[JsonDict] = []
+
+        for summary in readable:
+            recording_id = summary["recording_id"]
+            try:
+                detail = await make_authenticated_request(
+                    "GET",
+                    f"/v1/meeting_recordings/{recording_id}",
+                    params={"include": "transcript"},
+                )
+                detail.raise_for_status()
+                attributes = (detail.json().get("data") or {}).get("attributes") or {}
+            except Exception as e:
+                _, error_message = mcp_error.categorize_error(e)
+                summary["transcript"] = []
+                summary["error"] = f"Failed to read transcript: {error_message}"
+                recordings.append(summary)
+                continue
+
+            segments = _collapse_transcript_segments(attributes.get("transcript"))
+            kept, truncated = _truncate_transcript_segments(segments, budget=per_recording_budget)
+            summary["transcript"] = kept
+            if truncated:
+                summary["transcript_truncated"] = True
+                notes.append(
+                    f"Recording {recording_id} was truncated at "
+                    f"{per_recording_budget} characters; "
+                    f"{len(segments) - len(kept)} later speaker turn(s) omitted."
+                )
+            recordings.append(summary)
+
+        if skipped_silent:
+            notes.append(
+                f"Skipped {skipped_silent} recording(s) with no speech; "
+                "Scribe joined but nobody spoke."
+            )
+
+        result: JsonDict = {
+            "incident_id": resolved_incident_id,
+            "recordings": recordings,
+            "returned_recordings": len(recordings),
+        }
+        if notes:
+            result["notes"] = notes
+        return clamp.apply(result)
 
     if enable_write_tools:
 

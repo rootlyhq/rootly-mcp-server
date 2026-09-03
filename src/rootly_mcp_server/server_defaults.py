@@ -68,6 +68,7 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_escalation_policy",
         "get_functionality",
         "get_incident",
+        "get_incident_meeting_transcripts",
         "get_meeting_recording",
         "get_oncall_handoff_summary",
         "get_oncall_schedule_summary",

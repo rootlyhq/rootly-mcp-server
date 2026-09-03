@@ -9,6 +9,7 @@ Tests cover:
 - Error handling and response formatting
 """
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call, patch
 
@@ -1836,3 +1837,330 @@ class TestSearchIncidentsResultCap:
 
         assert self._params(request)["page[size]"] == 10
         assert "max_results=20" in payload["argument_adjustments"][0]
+
+
+def _recording_record(rec_id, *, word_count=41, platform="google_meet"):
+    return {
+        "id": rec_id,
+        "type": "meeting_recordings",
+        "attributes": {
+            "platform": platform,
+            "status": "completed",
+            "started_at": "2026-09-02T16:37:56-07:00",
+            "ended_at": "2026-09-02T16:38:17-07:00",
+            "duration_minutes": 0,
+            "speaker_count": 1,
+            "word_count": word_count,
+            "transcript_summary": "Ten customers reported search was slow.",
+            # ~2KB of presigned AWS query string in production.
+            "video_url": "https://rootly-storage.s3.amazonaws.com/x?X-Amz-Credential=" + "A" * 400,
+        },
+    }
+
+
+def _word_transcript(*turns):
+    """The API's shape: one object per word, with confidence and timings."""
+    return [
+        {
+            "speaker": speaker,
+            "language": "en_us",
+            "speaker_id": None,
+            "words": [
+                {
+                    "text": word,
+                    "language": None,
+                    "confidence": 0.97,
+                    "start_timestamp": i * 0.3,
+                    "end_timestamp": i * 0.3 + 0.2,
+                }
+                for i, word in enumerate(text.split())
+            ],
+        }
+        for speaker, text in turns
+    ]
+
+
+@pytest.mark.unit
+class TestIncidentMeetingTranscripts:
+    """Reading an incident's call transcripts used to take three calls.
+
+    Resolve the incident, list its recordings, then fetch each one with
+    `include=transcript` -- and the caller had to know that `include` value
+    exists, since it appears nowhere in the bundled spec. The API also returns
+    one object per spoken word, which is 125 bytes of JSON per word.
+    """
+
+    @staticmethod
+    def _register(*, recordings=None, transcript=None, detail_error=False):
+        mcp = FakeMCP()
+        recordings = [] if recordings is None else recordings
+
+        async def responder(method, url, params=None, **_kwargs):
+            response = Mock()
+            response.raise_for_status.return_value = None
+            if url == "/v1/incidents":  # sequential-id resolution
+                response.json.return_value = {
+                    "data": [{"id": "inc-uuid", "attributes": {"sequential_id": 5185}}]
+                }
+            elif url.endswith("/meeting_recordings"):
+                response.json.return_value = {"data": recordings}
+            elif "/v1/meeting_recordings/" in url:
+                if detail_error:
+                    raise RuntimeError("upstream exploded")
+                response.json.return_value = {
+                    "data": {"attributes": {"transcript": transcript or []}}
+                }
+            else:
+                response.json.return_value = {"data": {}}
+            return response
+
+        request = AsyncMock(side_effect=responder)
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp.tools, request
+
+    @pytest.mark.asyncio
+    async def test_word_level_output_becomes_text_per_speaker_turn(self):
+        tools, _ = self._register(
+            recordings=[_recording_record("rec-1")],
+            transcript=_word_transcript(
+                ("Luca Tirelli", "we have about 10 customers reporting slow search"),
+                ("Ada Lovelace", "starting the investigation now"),
+            ),
+        )
+
+        result = await tools["get_incident_meeting_transcripts"](incident_id="INC-5185")
+
+        assert result["returned_recordings"] == 1
+        assert result["recordings"][0]["transcript"] == [
+            {
+                "text": "we have about 10 customers reporting slow search",
+                "speaker": "Luca Tirelli",
+                "language": "en_us",
+            },
+            {
+                "text": "starting the investigation now",
+                "speaker": "Ada Lovelace",
+                "language": "en_us",
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_signed_video_url_is_not_returned(self):
+        # ~2KB of AWS credential query string per record, expiring in an hour.
+        tools, _ = self._register(
+            recordings=[_recording_record("rec-1")],
+            transcript=_word_transcript(("Luca", "hello")),
+        )
+
+        result = await tools["get_incident_meeting_transcripts"](incident_id="5185")
+
+        assert "video_url" not in result["recordings"][0]
+        assert "X-Amz-Credential" not in json.dumps(result)
+
+    @pytest.mark.asyncio
+    async def test_recordings_where_nobody_spoke_are_skipped(self):
+        tools, request = self._register(
+            recordings=[
+                _recording_record("silent", word_count=0),
+                _recording_record("spoken", word_count=12),
+            ],
+            transcript=_word_transcript(("Luca", "we are live")),
+        )
+
+        result = await tools["get_incident_meeting_transcripts"](incident_id="5185")
+
+        assert result["returned_recordings"] == 1
+        assert result["recordings"][0]["recording_id"] == "spoken"
+        assert any("nobody spoke" in note for note in result["notes"])
+        # And no request was wasted fetching the empty one.
+        fetched = [
+            c.args[1] for c in request.await_args_list if "/v1/meeting_recordings/" in c.args[1]
+        ]
+        assert fetched == ["/v1/meeting_recordings/spoken"]
+
+    @pytest.mark.asyncio
+    async def test_a_long_transcript_is_truncated_and_says_so(self):
+        long_turns = [("Speaker", "word " * 400) for _ in range(60)]
+        tools, _ = self._register(
+            recordings=[_recording_record("rec-1", word_count=24000)],
+            transcript=_word_transcript(*long_turns),
+        )
+
+        result = await tools["get_incident_meeting_transcripts"](incident_id="5185")
+
+        recording = result["recordings"][0]
+        assert recording["transcript_truncated"] is True
+        assert len(recording["transcript"]) < 60
+        assert any("truncated" in note for note in result["notes"])
+
+    @pytest.mark.asyncio
+    async def test_no_recordings_is_not_an_error(self):
+        tools, _ = self._register(recordings=[])
+
+        result = await tools["get_incident_meeting_transcripts"](incident_id="5185")
+
+        assert result.get("error") is None
+        assert result["returned_recordings"] == 0
+        assert "No Meeting Scribe recordings" in result["notes"][0]
+
+    @pytest.mark.asyncio
+    async def test_one_unreadable_transcript_does_not_lose_the_response(self):
+        tools, _ = self._register(recordings=[_recording_record("rec-1")], detail_error=True)
+
+        result = await tools["get_incident_meeting_transcripts"](incident_id="5185")
+
+        assert result["returned_recordings"] == 1
+        assert result["recordings"][0]["transcript"] == []
+        assert "Failed to read transcript" in result["recordings"][0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_max_recordings_is_clamped_and_reported(self):
+        tools, request = self._register(
+            recordings=[_recording_record("rec-1")],
+            transcript=_word_transcript(("Luca", "hello")),
+        )
+
+        result = await tools["get_incident_meeting_transcripts"](
+            incident_id="5185", max_recordings=99
+        )
+
+        assert "max_recordings=99" in result["argument_adjustments"][0]
+        listing = next(
+            c for c in request.await_args_list if c.args[1].endswith("/meeting_recordings")
+        )
+        assert listing.kwargs["params"]["page[size]"] == 10
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_incident_reference_is_a_validation_error(self):
+        tools, _ = self._register()
+
+        result = await tools["get_incident_meeting_transcripts"](incident_id="../../etc")
+
+        assert result["error"] is True
+        assert result["error_type"] == "validation_error"
+
+
+@pytest.mark.unit
+class TestIncidentMeetingTranscriptsArgumentNames:
+    """`limit` and `id` are the names callers reach for.
+
+    Through a real FastMCP server: aliases live in argument validation, so
+    calling the function directly bypasses them entirely.
+    """
+
+    @staticmethod
+    def _server():
+        from fastmcp import FastMCP
+
+        async def responder(method, url, params=None, **_kwargs):
+            response = Mock()
+            response.raise_for_status.return_value = None
+            if url.endswith("/meeting_recordings"):
+                response.json.return_value = {"data": []}
+            else:
+                response.json.return_value = {"data": {}}
+            return response
+
+        request = AsyncMock(side_effect=responder)
+        mcp = FastMCP("transcript-alias-probe")
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp, request
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["incident_id", "id"])
+    async def test_the_incident_can_be_named_either_way(self, name):
+        mcp, _ = self._server()
+
+        result = await mcp.call_tool(
+            "get_incident_meeting_transcripts",
+            {name: "2b0dd1f2-6c9c-4a2f-9e4e-0b1d5a9f9d11"},
+        )
+
+        payload = result.structured_content
+        assert payload is not None
+        assert payload["returned_recordings"] == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["max_recordings", "limit", "max_results"])
+    async def test_the_recording_cap_accepts_every_spelling(self, name):
+        mcp, request = self._server()
+
+        await mcp.call_tool(
+            "get_incident_meeting_transcripts",
+            {"incident_id": "2b0dd1f2-6c9c-4a2f-9e4e-0b1d5a9f9d11", name: 2},
+        )
+
+        listing = next(
+            c for c in request.await_args_list if c.args[1].endswith("/meeting_recordings")
+        )
+        assert listing.kwargs["params"]["page[size]"] == 2
+
+
+@pytest.mark.unit
+class TestTranscriptBudgetIgnoresSilentRecordings:
+    """Silent recordings must not take a share of the character budget.
+
+    The budget is divided across the calls actually read. Dividing by the
+    number listed would leave one real call among nine silent ones with a
+    tenth of the allowance, truncating a transcript that fits comfortably.
+
+    Uses many speaker turns deliberately: a single turn is always kept whole
+    regardless of budget, so one turn cannot tell the two behaviours apart.
+    """
+
+    @pytest.mark.asyncio
+    async def test_one_spoken_call_among_many_silent_keeps_every_turn(self):
+        mcp = FakeMCP()
+        # 20 turns of 200 words: ~1k chars each, ~20k total. Fits the full
+        # 40k budget; a tenth of it (4k) would drop most of them.
+        turns = [
+            {
+                "speaker": f"Speaker {i}",
+                "language": "en_us",
+                "words": [{"text": "word", "confidence": 1} for _ in range(200)],
+            }
+            for i in range(20)
+        ]
+        records = [_recording_record(f"silent-{i}", word_count=0) for i in range(9)]
+        records.append(_recording_record("spoken", word_count=4000))
+
+        async def responder(method, url, params=None, **_kwargs):
+            response = Mock()
+            response.raise_for_status.return_value = None
+            if url.endswith("/meeting_recordings"):
+                response.json.return_value = {"data": records}
+            else:
+                response.json.return_value = {"data": {"attributes": {"transcript": turns}}}
+            return response
+
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+
+        result = await mcp.tools["get_incident_meeting_transcripts"](
+            incident_id="2b0dd1f2-6c9c-4a2f-9e4e-0b1d5a9f9d11", max_recordings=10
+        )
+
+        recording = result["recordings"][0]
+        assert recording["recording_id"] == "spoken"
+        assert len(recording["transcript"]) == 20, "every turn should survive"
+        assert recording.get("transcript_truncated") is None
