@@ -1775,10 +1775,16 @@ class TestInjectedToolAnnotations:
 
         assert result[0].annotations is None
 
-    @pytest.mark.asyncio
-    async def test_the_injected_tool_is_still_named_get_more_tools(self):
-        # Keyed by name: if the SDK renames the tool this patch silently stops
-        # applying, so pin the name we are compensating for.
+    def test_the_key_matches_the_name_the_sdk_registers(self):
+        """The patch is keyed by name, so an upstream rename disables it silently.
+
+        Compared against the SDK's own constant rather than a literal, so an
+        upgrade that renames the tool fails here. `agentcat` is installed only in
+        the container image, not by `uv sync --dev`, so this skips in the unit
+        test jobs and runs wherever the SDK is actually present.
+        """
+        constants = pytest.importorskip("agentcat.modules.constants")
+
         from rootly_mcp_server.server import _INJECTED_TOOL_ANNOTATIONS
 
-        assert "get_more_tools" in _INJECTED_TOOL_ANNOTATIONS
+        assert constants.GET_MORE_TOOLS_NAME in _INJECTED_TOOL_ANNOTATIONS
