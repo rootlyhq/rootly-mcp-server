@@ -729,8 +729,13 @@ def register_incident_tools(
         """
         Search incidents with flexible pagination control.
 
-        Use page_number=0 to fetch all matching results across multiple pages up to max_results.
+        Use page_number=0 to fetch all matching results across multiple pages.
         Use page_number>0 to fetch a specific page.
+
+        max_results (also accepted as `limit`) caps how many incidents come back
+        in either mode: across pages when page_number=0, and within the page
+        otherwise. Left unset, a single page returns page_size incidents and
+        page_number=0 stops at 5.
 
         Argument caps: page_size <= 20, max_results <= 10. Values outside those
         bounds are clamped and reported, not rejected.
