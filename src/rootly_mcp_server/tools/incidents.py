@@ -713,24 +713,29 @@ def register_incident_tools(
             int, Field(description="Page number to retrieve (use 0 for all pages)")
         ] = 1,
         max_results: Annotated[
-            int,
+            int | None,
             Field(
                 description=(
-                    "Maximum total results when fetching all pages "
-                    "(ignored if page_number > 0). Max: 10. For larger result sets, use "
-                    "page_number > 0 and paginate explicitly, or use collect_incidents."
+                    "Maximum incidents to return. Max: 10; defaults to 5 when fetching "
+                    "all pages, and to page_size when fetching a single page. For larger "
+                    "result sets, paginate with page_number > 0 or use collect_incidents."
                 ),
                 # `limit` is the name callers reach for, and it was the single
                 # most common rejected argument on this tool.
                 validation_alias=AliasChoices("max_results", "limit"),
             ),
-        ] = 5,
+        ] = None,
     ) -> JsonDict:
         """
         Search incidents with flexible pagination control.
 
-        Use page_number=0 to fetch all matching results across multiple pages up to max_results.
+        Use page_number=0 to fetch all matching results across multiple pages.
         Use page_number>0 to fetch a specific page.
+
+        max_results (also accepted as `limit`) caps how many incidents come back
+        in either mode: across pages when page_number=0, and within the page
+        otherwise. Left unset, a single page returns page_size incidents and
+        page_number=0 stops at 5.
 
         Argument caps: page_size <= 20, max_results <= 10. Values outside those
         bounds are clamped and reported, not rejected.
@@ -738,12 +743,28 @@ def register_incident_tools(
         clamp = _ArgumentClamp()
         page_size = clamp("page_size", page_size, minimum=1, maximum=20)
         page_number = clamp("page_number", page_number, minimum=0)
-        max_results = clamp("max_results", max_results, minimum=1, maximum=10)
+        # Distinguish a caller-supplied cap from the default: it governs the page
+        # size on a single page, and only there when it was actually asked for.
+        requested_max_results = (
+            None
+            if max_results is None
+            else clamp("max_results", max_results, minimum=1, maximum=10)
+        )
+        max_results = 5 if requested_max_results is None else requested_max_results
 
         # Single page mode
         if page_number > 0:
+            # A caller asking for at most N results should not be handed a full
+            # page of page_size. This cap previously applied only when fetching
+            # all pages, so `limit=5` on the default page returned page_size rows
+            # and silently ignored the limit.
+            effective_page_size = (
+                page_size
+                if requested_max_results is None
+                else min(page_size, requested_max_results)
+            )
             params = {
-                "page[size]": page_size,  # Use requested page size (already limited to max 20)
+                "page[size]": effective_page_size,
                 "page[number]": page_number,
                 "include": "",
                 "fields[incidents]": INCIDENT_SEARCH_FIELDS,

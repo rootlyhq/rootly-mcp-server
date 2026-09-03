@@ -1728,3 +1728,111 @@ class TestResultCountArgumentAliases:
 
         with pytest.raises(Exception, match="not_a_real_argument"):
             await mcp.call_tool("list_incidents", {"not_a_real_argument": 1})
+
+
+@pytest.mark.unit
+class TestSearchIncidentsResultCap:
+    """`limit` must limit on the default page, not only when fetching all pages.
+
+    `max_results` applied only in multi-page mode, and `limit` aliases it, so
+    `search_incidents(query=..., limit=5)` on the default page silently returned
+    a full page_size of rows. `limit` was the most frequently rejected argument
+    on this tool, so it was accepted and then ignored.
+
+    These run through a real FastMCP server: `limit` is a validation alias, and
+    calling the Python function directly bypasses it entirely.
+    """
+
+    @staticmethod
+    def _params(request):
+        """The params of the most recent call, asserted to exist."""
+        call_args = request.await_args
+        assert call_args is not None, "expected a request to have been made"
+        return call_args.kwargs["params"]
+
+    @staticmethod
+    def _server():
+        from fastmcp import FastMCP
+
+        async def responder(method, url, params=None, **_kwargs):
+            # The API returns at most page[size] rows; mirror that or the cap
+            # under test cannot be observed.
+            size = min(int((params or {}).get("page[size]", 10)), 10)
+            response = Mock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {
+                "data": [
+                    {"id": f"i{i}", "type": "incidents", "attributes": {"title": f"t{i}"}}
+                    for i in range(size)
+                ],
+                "meta": {"current_page": 1, "next_page": None, "total_pages": 1},
+            }
+            return response
+
+        request = AsyncMock(side_effect=responder)
+        mcp = FastMCP("search-cap-probe")
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=request,
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp, request
+
+    @staticmethod
+    async def _search(mcp, **arguments):
+        result = await mcp.call_tool("search_incidents", {"query": "db", **arguments})
+        payload = result.structured_content
+        assert payload is not None
+        return payload
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["limit", "max_results"])
+    async def test_the_cap_applies_on_the_default_page(self, name):
+        mcp, request = self._server()
+
+        payload = await self._search(mcp, **{name: 5})
+
+        assert self._params(request)["page[size]"] == 5
+        assert len(payload["data"]) == 5
+
+    @pytest.mark.asyncio
+    async def test_the_smaller_of_the_two_wins(self):
+        mcp, request = self._server()
+
+        await self._search(mcp, limit=5, page_size=3)
+
+        assert self._params(request)["page[size]"] == 3
+
+    @pytest.mark.asyncio
+    async def test_no_cap_leaves_the_page_size_alone(self):
+        # The regression guard: an existing caller that never passed a cap must
+        # keep receiving a full page.
+        mcp, request = self._server()
+
+        payload = await self._search(mcp)
+
+        assert self._params(request)["page[size]"] == 10
+        assert len(payload["data"]) == 10
+
+    @pytest.mark.asyncio
+    async def test_multi_page_mode_is_unchanged(self):
+        mcp, _ = self._server()
+
+        capped = await self._search(mcp, limit=5, page_number=0)
+        defaulted = await self._search(mcp, page_number=0)
+
+        assert len(capped["data"]) == 5
+        # Still defaults to 5 across pages when no cap is given.
+        assert len(defaulted["data"]) == 5
+
+    @pytest.mark.asyncio
+    async def test_an_over_large_cap_is_still_clamped_and_reported(self):
+        mcp, request = self._server()
+
+        payload = await self._search(mcp, limit=20)
+
+        assert self._params(request)["page[size]"] == 10
+        assert "max_results=20" in payload["argument_adjustments"][0]

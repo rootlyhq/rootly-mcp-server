@@ -1775,10 +1775,62 @@ class TestInjectedToolAnnotations:
 
         assert result[0].annotations is None
 
-    @pytest.mark.asyncio
-    async def test_the_injected_tool_is_still_named_get_more_tools(self):
-        # Keyed by name: if the SDK renames the tool this patch silently stops
-        # applying, so pin the name we are compensating for.
+    def test_the_key_matches_the_name_the_sdk_registers(self):
+        """The patch is keyed by name, so an upstream rename disables it silently.
+
+        Compared against the SDK's own constant rather than a literal, so an
+        upgrade that renames the tool fails here. `agentcat` is installed only in
+        the container image, not by `uv sync --dev`, so this skips in the unit
+        test jobs and runs wherever the SDK is actually present.
+        """
+        constants = pytest.importorskip("agentcat.modules.constants")
+
         from rootly_mcp_server.server import _INJECTED_TOOL_ANNOTATIONS
 
-        assert "get_more_tools" in _INJECTED_TOOL_ANNOTATIONS
+        assert constants.GET_MORE_TOOLS_NAME in _INJECTED_TOOL_ANNOTATIONS
+
+
+@pytest.mark.unit
+class TestEveryToolDeclaresItsSafety:
+    """No tool may leave a safety hint unset.
+
+    Unset is not "unknown": the MCP spec defaults destructiveHint and
+    openWorldHint to true, so an omission advertises the tool as destructive and
+    open-world. Annotation scanners flag it, and clients that honour annotations
+    may prompt before every call.
+
+    Annotating tools one at a time missed `list_shifts`, which is why this
+    asserts over the whole surface rather than a list someone has to maintain.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_tool_omits_destructive_hint(self, mock_environment_token):
+        server = create_rootly_mcp_server(hosted=False)
+
+        missing = [
+            tool.name
+            for tool in await server.list_tools()
+            if tool.annotations is not None and tool.annotations.destructiveHint is None
+        ]
+
+        assert missing == [], f"tools missing destructiveHint: {sorted(missing)}"
+
+    @pytest.mark.asyncio
+    async def test_no_tool_omits_open_world_hint(self, mock_environment_token):
+        server = create_rootly_mcp_server(hosted=False)
+
+        missing = [
+            tool.name
+            for tool in await server.list_tools()
+            if tool.annotations is not None and tool.annotations.openWorldHint is None
+        ]
+
+        assert missing == [], f"tools missing openWorldHint: {sorted(missing)}"
+
+    @pytest.mark.asyncio
+    async def test_every_tool_is_annotated_at_all(self, mock_environment_token):
+        server = create_rootly_mcp_server(hosted=False)
+
+        unannotated = [tool.name for tool in await server.list_tools() if tool.annotations is None]
+
+        assert unannotated == [], f"tools with no annotations: {sorted(unannotated)}"
