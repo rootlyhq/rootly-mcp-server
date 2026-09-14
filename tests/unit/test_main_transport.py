@@ -2,6 +2,7 @@
 
 import argparse
 import dataclasses
+import logging
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -11,6 +12,7 @@ from starlette.requests import Request
 
 from rootly_mcp_server.__main__ import (
     _get_sorted_tool_names,
+    _uvicorn_access_log_enabled,
     agentcat_options_supports,
     build_mcpcat_identify_callback,
     get_server,
@@ -18,6 +20,7 @@ from rootly_mcp_server.__main__ import (
     maybe_enable_mcpcat_tracking,
     normalize_transport,
     resolve_requested_hosted_tool_profile,
+    run_dual_http_server,
     run_profiled_streamable_http_server,
     streamable_http_stateless_enabled,
 )
@@ -981,6 +984,8 @@ async def test_run_profiled_streamable_http_server_routes_requests_by_profile():
         )
 
     assert captured["server_run_called"] is True
+    # log_level="ERROR" above, so uvicorn's per-request access log is off.
+    assert captured["config_kwargs"]["access_log"] is False
     route = cast(Any, captured["routes"][0])
 
     full_request = Request(
@@ -1035,3 +1040,176 @@ async def test_run_profiled_streamable_http_server_routes_requests_by_profile():
 
     assert fake_apps["full-server"].calls == ["", "tool_profile=unexpected"]
     assert fake_apps["slim-server"].calls == ["tool_profile=slim", ""]
+
+
+@pytest.mark.unit
+class TestHttpxRequestLoggingIsQuiet:
+    """httpx logs one INFO line per outbound request.
+
+    In production that was a quarter of everything this service shipped to
+    Datadog, duplicating upstream failures the transport already logs with more
+    context. These tests restore the level afterwards, since setup_logging
+    mutates global logging state.
+    """
+
+    @staticmethod
+    def _run(level):
+        from rootly_mcp_server.__main__ import setup_logging
+
+        httpx_logger = logging.getLogger("httpx")
+        previous = httpx_logger.level
+        try:
+            setup_logging(level)
+            return httpx_logger.level
+        finally:
+            httpx_logger.setLevel(previous)
+
+    def test_info_logging_silences_per_request_lines(self):
+        assert self._run("INFO") == logging.WARNING
+
+    def test_warning_logging_also_silences_them(self):
+        assert self._run("WARNING") == logging.WARNING
+
+    def test_debug_logging_keeps_them(self):
+        # Someone who asked for DEBUG wants to see every request.
+        assert self._run("DEBUG") != logging.WARNING
+
+    def test_our_own_loggers_are_untouched(self):
+        # The reduction must not come at the cost of our own diagnostics.
+        from rootly_mcp_server.__main__ import setup_logging
+
+        ours = logging.getLogger("rootly_mcp_server")
+        previous_ours = ours.level
+        previous_httpx = logging.getLogger("httpx").level
+        try:
+            setup_logging("INFO")
+            assert ours.level == logging.INFO
+        finally:
+            ours.setLevel(previous_ours)
+            logging.getLogger("httpx").setLevel(previous_httpx)
+
+
+class TestUvicornAccessLogIsQuiet:
+    """uvicorn logs one line per inbound request.
+
+    The platform router already logs every request with more detail, so
+    the duplicate is dropped unless debugging is explicitly requested.
+    """
+
+    @pytest.mark.parametrize("level", ["INFO", "info", "WARNING", "ERROR", "CRITICAL"])
+    def test_access_log_is_off_at_and_above_info(self, level: str):
+        assert _uvicorn_access_log_enabled(level) is False
+
+    @pytest.mark.parametrize("level", ["DEBUG", "debug"])
+    def test_access_log_is_kept_when_debugging(self, level: str):
+        assert _uvicorn_access_log_enabled(level) is True
+
+    def test_unparseable_level_keeps_the_access_log(self):
+        # Losing request visibility is worse than an extra line, so an
+        # unrecognised level must not silently disable the access log.
+        assert _uvicorn_access_log_enabled("not-a-level") is True
+
+    def test_error_visibility_does_not_depend_on_the_access_log(self):
+        # The access log only carries completed-request lines. Levels at
+        # WARNING and above still propagate, which is what error logging
+        # in the transport relies on.
+        assert _uvicorn_access_log_enabled("INFO") is False
+        assert logging.getLogger("uvicorn.error").isEnabledFor(logging.WARNING)
+
+
+def test_dual_http_server_disables_the_uvicorn_access_log():
+    """The container runs ROOTLY_TRANSPORT=both, so this is the production path.
+
+    Its uvicorn.Config was previously exercised by no test at all — the
+    function is only ever patched out — so the access-log setting here is
+    pinned explicitly.
+    """
+    captured: dict[str, Any] = {}
+
+    class FakeSessionManager:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        class _RunContext:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        def run(self):
+            return self._RunContext()
+
+    class FakeASGIApp:
+        def __init__(self, session_manager):
+            self.session_manager = session_manager
+
+        async def __call__(self, scope, receive, send):
+            return None
+
+    class FakeSseTransport:
+        def __init__(self, message_path):
+            self.message_path = message_path
+
+        async def handle_post_message(self, scope, receive, send):
+            return None
+
+    def fake_create_base_app(*, routes, middleware, debug, lifespan):
+        captured["routes"] = routes
+        return SimpleNamespace(state=SimpleNamespace())
+
+    class FakeConfig:
+        def __init__(self, app, **kwargs):
+            captured["config_kwargs"] = kwargs
+
+    class FakeServerRunner:
+        def __init__(self, config):
+            self.config = config
+
+        def run(self):
+            captured["server_run_called"] = True
+
+    fake_fastmcp = cast(Any, ModuleType("fastmcp"))
+    fake_fastmcp.settings = SimpleNamespace(
+        streamable_http_path="/mcp",
+        sse_path="/sse",
+        message_path="/messages/",
+        stateless_http=False,
+        json_response=False,
+        debug=False,
+        host="127.0.0.1",
+        port=8000,
+        log_level="INFO",
+    )
+    fake_fastmcp_http = cast(Any, ModuleType("fastmcp.server.http"))
+    fake_fastmcp_http.StreamableHTTPASGIApp = FakeASGIApp
+    fake_fastmcp_http.create_base_app = fake_create_base_app
+    fake_sse = cast(Any, ModuleType("mcp.server.sse"))
+    fake_sse.SseServerTransport = FakeSseTransport
+    fake_streamable_manager = cast(Any, ModuleType("mcp.server.streamable_http_manager"))
+    fake_streamable_manager.StreamableHTTPSessionManager = FakeSessionManager
+    fake_uvicorn = cast(Any, ModuleType("uvicorn"))
+    fake_uvicorn.Config = FakeConfig
+    fake_uvicorn.Server = FakeServerRunner
+
+    server = SimpleNamespace(
+        name="test-server",
+        _mcp_server="main-server",
+        _get_additional_http_routes=lambda: [],
+    )
+
+    with patch.dict(
+        "sys.modules",
+        {
+            "fastmcp": fake_fastmcp,
+            "fastmcp.server.http": fake_fastmcp_http,
+            "mcp.server.sse": fake_sse,
+            "mcp.server.streamable_http_manager": fake_streamable_manager,
+            "uvicorn": fake_uvicorn,
+        },
+        clear=False,
+    ):
+        run_dual_http_server(server=server, log_level="INFO", middleware=[])
+
+    assert captured["server_run_called"] is True
+    assert captured["config_kwargs"]["access_log"] is False

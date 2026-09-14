@@ -309,6 +309,28 @@ def parse_args():
     return parser.parse_args()
 
 
+def _uvicorn_access_log_enabled(log_level: str) -> bool:
+    """Whether uvicorn should log one line per inbound request.
+
+    The platform router already logs every request with strictly more
+    detail than uvicorn's access line: method, path, status, byte count
+    and request id. Keeping both means every request is recorded twice,
+    and uvicorn's copy is the single largest contributor to this
+    service's log volume. It is dropped unless debugging is explicitly
+    on, where seeing every request is the point.
+
+    Error visibility is unaffected: the transport logs every 4xx/5xx
+    upstream response with a body excerpt, and uvicorn still reports
+    exceptions it raises itself, which do not go through the access log.
+    """
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        # Unparseable level: keep the access log rather than silently
+        # dropping request visibility.
+        return True
+    return numeric_level <= logging.DEBUG
+
+
 def setup_logging(log_level, debug=False):
     """Set up logging configuration."""
     if debug or os.getenv("DEBUG", "").lower() in ("true", "1", "yes"):
@@ -328,6 +350,17 @@ def setup_logging(log_level, debug=False):
     # Set specific logger levels
     logging.getLogger("rootly_mcp_server").setLevel(numeric_level)
     logging.getLogger("mcp").setLevel(numeric_level)
+
+    # httpx logs one INFO line per outbound request. At production request
+    # volume that is an eighth of this service's log events and, because the
+    # lines carry full URLs, a larger share of the bytes ingested. It is also
+    # strictly less informative than what we already record: every
+    # 4xx/5xx upstream response is logged by the transport with the status,
+    # method, URL and a body excerpt. Successful calls belong in traces, not
+    # in a line per request. Left alone when debugging is explicitly on, where
+    # seeing every request is the point.
+    if numeric_level > logging.DEBUG:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
 
     # Log the configuration
     logger = logging.getLogger(__name__)
@@ -611,6 +644,7 @@ def run_dual_http_server(
         lifespan="on",
         ws="websockets-sansio",
         log_level=default_log_level_to_use,
+        access_log=_uvicorn_access_log_enabled(default_log_level_to_use),
     )
     uvicorn.Server(config).run()
 
@@ -706,6 +740,7 @@ def run_profiled_streamable_http_server(
         lifespan="on",
         ws="websockets-sansio",
         log_level=(log_level or fastmcp.settings.log_level).lower(),
+        access_log=_uvicorn_access_log_enabled(log_level or fastmcp.settings.log_level),
     )
     uvicorn.Server(config).run()
 
