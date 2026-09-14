@@ -68,6 +68,15 @@ class TestServerDefaultsModule:
         assert "/meeting_recordings" in DEFAULT_ALLOWED_PATHS
         assert "/meeting_recordings/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/incidents/{incident_id}/meeting_recordings" in DEFAULT_ALLOWED_PATHS
+        assert "/schedules/{schedule_id}/shift_coverage_requests" in DEFAULT_ALLOWED_PATHS
+        assert "/shift_coverage_requests/{id}" in DEFAULT_ALLOWED_PATHS
+
+    def test_shift_coverage_request_read_tools_in_hosted_slim_profile(self):
+        assert "list_shift_coverage_requests" in DEFAULT_HOSTED_ENABLED_TOOLS
+        assert "get_shift_coverage_request" in DEFAULT_HOSTED_ENABLED_TOOLS
+        # Read-only surface: write/delete tools are intentionally not enabled.
+        assert "create_shift_coverage_request" not in DEFAULT_HOSTED_ENABLED_TOOLS
+        assert "delete_shift_coverage_request" not in DEFAULT_HOSTED_ENABLED_TOOLS
 
     def test_generate_recommendation_when_no_solutions(self):
         result = _generate_recommendation({"solutions": [], "average_resolution_time": None})
