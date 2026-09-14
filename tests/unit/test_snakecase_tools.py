@@ -194,3 +194,26 @@ class TestArgumentNormalizationMiddleware:
     async def test_no_op_for_unrelated_tools(self):
         _, args = await self._run("get_incident", {"incident_id": "123"})
         assert args == {"incident_id": "123"}
+
+    @pytest.mark.parametrize(
+        ("tool", "key"),
+        [
+            ("update_incident", "incident_type_ids"),
+            ("update_incident", "service_ids"),
+            ("update_incident", "team_ids"),
+            ("update_incident", "environment_ids"),
+            ("update_incident", "functionality_ids"),
+            ("create_incident", "service_ids"),
+            ("create_incident", "team_ids"),
+            ("create_incident", "incident_type_ids"),
+        ],
+    )
+    async def test_converts_incident_id_list_args_to_csv(self, tool, key):
+        _, args = await self._run(tool, {"incident_id": "INC-1", key: ["a", "b"]})
+        assert args[key] == "a,b"
+
+    async def test_incident_string_id_args_left_alone(self):
+        _, args = await self._run(
+            "update_incident", {"incident_id": "INC-1", "service_ids": "svc-1,svc-2"}
+        )
+        assert args["service_ids"] == "svc-1,svc-2"

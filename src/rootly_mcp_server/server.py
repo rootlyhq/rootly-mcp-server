@@ -508,6 +508,16 @@ _LIST_TO_CSV_ARGS: dict[str, set[str]] = {
     "list_shifts": {"schedule_ids", "user_ids"},
     "get_oncall_shift_metrics": {"schedule_ids", "user_ids", "team_ids"},
     "get_oncall_schedule_summary": {"schedule_ids", "team_ids"},
+    # The incident tools take comma-separated id lists, but LLM clients often
+    # send a JSON array. Coerce those to CSV before schema validation.
+    "create_incident": {"service_ids", "team_ids", "environment_ids", "incident_type_ids"},
+    "update_incident": {
+        "service_ids",
+        "team_ids",
+        "environment_ids",
+        "incident_type_ids",
+        "functionality_ids",
+    },
 }
 
 
