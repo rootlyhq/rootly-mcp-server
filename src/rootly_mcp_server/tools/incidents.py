@@ -1412,33 +1412,136 @@ def register_incident_tools(
                 str | None,
                 Field(description="Updated incident summary"),
             ] = None,
+            title: Annotated[
+                str | None,
+                Field(description="Updated incident title"),
+            ] = None,
+            status: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Incident status (e.g. started, detected, acknowledged, mitigated, "
+                        "resolved, cancelled). Only set this when you intend to change the "
+                        "lifecycle status."
+                    )
+                ),
+            ] = None,
+            severity_id: Annotated[
+                str | None,
+                Field(description="Severity ID to set on the incident"),
+            ] = None,
+            resolution_message: Annotated[
+                str | None,
+                Field(description="Native resolution message (how the incident was resolved)"),
+            ] = None,
+            mitigation_message: Annotated[
+                str | None,
+                Field(description="Native mitigation message (how the incident was mitigated)"),
+            ] = None,
+            detected_at: Annotated[
+                str | None,
+                Field(description="When the incident was detected (ISO 8601 timestamp)"),
+            ] = None,
+            started_at: Annotated[
+                str | None,
+                Field(description="When the incident started (ISO 8601 timestamp)"),
+            ] = None,
+            acknowledged_at: Annotated[
+                str | None,
+                Field(description="When the incident was acknowledged (ISO 8601 timestamp)"),
+            ] = None,
+            mitigated_at: Annotated[
+                str | None,
+                Field(description="When the incident was mitigated (ISO 8601 timestamp)"),
+            ] = None,
+            resolved_at: Annotated[
+                str | None,
+                Field(description="When the incident was resolved (ISO 8601 timestamp)"),
+            ] = None,
+            incident_type_ids: Annotated[
+                str | None,
+                Field(description="Comma-separated incident type IDs to set on the incident"),
+            ] = None,
+            service_ids: Annotated[
+                str | None,
+                Field(description="Comma-separated service IDs to set on the incident"),
+            ] = None,
+            team_ids: Annotated[
+                str | None,
+                Field(description="Comma-separated team IDs to set on the incident"),
+            ] = None,
+            environment_ids: Annotated[
+                str | None,
+                Field(description="Comma-separated environment IDs to set on the incident"),
+            ] = None,
+            functionality_ids: Annotated[
+                str | None,
+                Field(description="Comma-separated functionality IDs to set on the incident"),
+            ] = None,
         ) -> JsonDict:
-            """Update scoped incident fields for PIR lifecycle automation."""
+            """Update native incident fields via ``PUT /v1/incidents/{id}``.
+
+            Only the arguments you provide are sent, so unspecified fields —
+            including the lifecycle ``status`` — are left untouched.
+            """
+            if retrospective_progress_status is not None and (
+                retrospective_progress_status not in RETROSPECTIVE_PROGRESS_STATUSES
+            ):
+                allowed = ", ".join(RETROSPECTIVE_PROGRESS_STATUSES)
+                return cast(
+                    JsonDict,
+                    mcp_error.tool_error(
+                        f"retrospective_progress_status must be one of: {allowed}",
+                        "validation_error",
+                    ),
+                )
+
             attributes: dict[str, Any] = {}
 
             if retrospective_progress_status is not None:
-                if retrospective_progress_status not in RETROSPECTIVE_PROGRESS_STATUSES:
-                    allowed = ", ".join(RETROSPECTIVE_PROGRESS_STATUSES)
-                    return cast(
-                        JsonDict,
-                        mcp_error.tool_error(
-                            f"retrospective_progress_status must be one of: {allowed}",
-                            "validation_error",
-                        ),
-                    )
                 attributes["retrospective_progress_status"] = retrospective_progress_status
 
-            # Normalize like create_incident so a whitespace-only summary isn't
-            # sent to the API verbatim.
-            summary = _normalize_optional_text(summary)
-            if summary is not None:
-                attributes["summary"] = summary
+            # Text fields: normalize like create_incident so a whitespace-only
+            # value isn't sent to the API verbatim.
+            text_attribute_map = (
+                ("summary", summary),
+                ("title", title),
+                ("status", status),
+                ("severity_id", severity_id),
+                ("resolution_message", resolution_message),
+                ("mitigation_message", mitigation_message),
+                ("detected_at", detected_at),
+                ("started_at", started_at),
+                ("acknowledged_at", acknowledged_at),
+                ("mitigated_at", mitigated_at),
+                ("resolved_at", resolved_at),
+            )
+            for attribute_name, raw_value in text_attribute_map:
+                normalized = _normalize_optional_text(raw_value)
+                if normalized is not None:
+                    attributes[attribute_name] = normalized
+
+            # CSV id lists -> arrays. `team_ids` maps to the native `group_ids`
+            # attribute, matching create_incident.
+            csv_attribute_map = (
+                ("incident_type_ids", incident_type_ids),
+                ("service_ids", service_ids),
+                ("group_ids", team_ids),
+                ("environment_ids", environment_ids),
+                ("functionality_ids", functionality_ids),
+            )
+            for attribute_name, raw_value in csv_attribute_map:
+                if raw_value is None:
+                    continue
+                values = _split_csv_values(raw_value)
+                if values:
+                    attributes[attribute_name] = values
 
             if not attributes:
                 return cast(
                     JsonDict,
                     mcp_error.tool_error(
-                        "Must provide at least one of retrospective_progress_status or summary",
+                        "Must provide at least one field to update",
                         "validation_error",
                     ),
                 )

@@ -742,6 +742,86 @@ class TestScopedIncidentUpdateTool:
         assert "retrospective_progress_status must be one of" in result["message"]
 
     @pytest.mark.asyncio
+    async def test_update_incident_sets_native_fields(self):
+        uuid = "11111111-1111-4111-8111-111111111111"
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": {"id": uuid, "type": "incidents", "attributes": {}}}
+        request.return_value = response
+
+        await tools["update_incident"](
+            incident_id=uuid,
+            resolution_message="Disabled the staging DB query cache.",
+            detected_at="2026-07-21T16:29:00+00:00",
+            incident_type_ids="type-1, type-2",
+            team_ids="team-1,team-2",
+            service_ids="svc-1",
+            functionality_ids="func-1",
+            severity_id="sev-1",
+            title="Permission file role not loading",
+            status="resolved",
+        )
+
+        request.assert_awaited_once()
+        awaited_call = request.await_args
+        assert awaited_call is not None
+        method, path = awaited_call.args[0], awaited_call.args[1]
+        attrs = awaited_call.kwargs["json"]["data"]["attributes"]
+        assert (method, path) == ("PUT", f"/v1/incidents/{uuid}")
+        assert attrs["resolution_message"] == "Disabled the staging DB query cache."
+        assert attrs["detected_at"] == "2026-07-21T16:29:00+00:00"
+        assert attrs["incident_type_ids"] == ["type-1", "type-2"]
+        assert attrs["service_ids"] == ["svc-1"]
+        assert attrs["functionality_ids"] == ["func-1"]
+        # team_ids maps to the native group_ids attribute (matching create_incident)
+        assert attrs["group_ids"] == ["team-1", "team-2"]
+        assert "team_ids" not in attrs
+        assert attrs["severity_id"] == "sev-1"
+        assert attrs["title"] == "Permission file role not loading"
+        assert attrs["status"] == "resolved"
+        # Unspecified fields are never sent, so status/summary stay untouched.
+        assert "summary" not in attrs
+        assert "retrospective_progress_status" not in attrs
+
+    @pytest.mark.asyncio
+    async def test_update_incident_omits_blank_and_unset_fields(self):
+        uuid = "11111111-1111-4111-8111-111111111111"
+        tools, request = self._register_tools()
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"data": {"id": uuid, "type": "incidents", "attributes": {}}}
+        request.return_value = response
+
+        # Whitespace-only text and empty CSV alongside one real change.
+        await tools["update_incident"](
+            incident_id=uuid,
+            resolution_message="   ",
+            incident_type_ids=" , ",
+            detected_at="2026-07-21T16:29:00+00:00",
+        )
+
+        awaited_call = request.await_args
+        assert awaited_call is not None
+        attrs = awaited_call.kwargs["json"]["data"]["attributes"]
+        assert attrs == {"detected_at": "2026-07-21T16:29:00+00:00"}
+
+    @pytest.mark.asyncio
+    async def test_update_incident_blank_only_fields_are_validation_error(self):
+        tools, request = self._register_tools()
+
+        result = await tools["update_incident"](
+            incident_id="11111111-1111-4111-8111-111111111111",
+            resolution_message="   ",
+            incident_type_ids=" , ",
+        )
+
+        request.assert_not_awaited()
+        assert result["error"] is True
+        assert result["error_type"] == "validation_error"
+        assert "Must provide at least one" in result["message"]
+
+    @pytest.mark.asyncio
     async def test_search_incidents_requests_retrospective_progress_status_field(self):
         tools, request = self._register_tools()
         response = Mock()
