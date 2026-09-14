@@ -764,8 +764,10 @@ class TestScopedIncidentUpdateTool:
         )
 
         request.assert_awaited_once()
-        method, path = request.await_args.args[0], request.await_args.args[1]
-        attrs = request.await_args.kwargs["json"]["data"]["attributes"]
+        awaited_call = request.await_args
+        assert awaited_call is not None
+        method, path = awaited_call.args[0], awaited_call.args[1]
+        attrs = awaited_call.kwargs["json"]["data"]["attributes"]
         assert (method, path) == ("PUT", f"/v1/incidents/{uuid}")
         assert attrs["resolution_message"] == "Disabled the staging DB query cache."
         assert attrs["detected_at"] == "2026-07-21T16:29:00+00:00"
@@ -799,7 +801,9 @@ class TestScopedIncidentUpdateTool:
             detected_at="2026-07-21T16:29:00+00:00",
         )
 
-        attrs = request.await_args.kwargs["json"]["data"]["attributes"]
+        awaited_call = request.await_args
+        assert awaited_call is not None
+        attrs = awaited_call.kwargs["json"]["data"]["attributes"]
         assert attrs == {"detected_at": "2026-07-21T16:29:00+00:00"}
 
     @pytest.mark.asyncio
