@@ -1478,6 +1478,12 @@ def register_oncall_tools(
         "data": None,
         "timestamp": 0.0,
         "ttl_seconds": 300,  # 5 minutes
+        # Whether the cached schedules listing is the whole set. The lookup is
+        # bounded by a page budget and best-effort about failures, so a short
+        # map has two very different meanings. Anyone turning "not in the map"
+        # into a statement about the workspace -- rather than into a display
+        # name -- has to know which one they are holding.
+        "schedules_complete": False,
     }
     _lookup_maps_lock = asyncio.Lock()
 
@@ -1797,9 +1803,10 @@ def register_oncall_tools(
             # first page also fans out. A shared semaphore caps total
             # concurrency to avoid hammering upstream.
             request_semaphore = asyncio.Semaphore(10)
+            schedules_report: dict[str, Any] = {}
             users, schedules, teams = await asyncio.gather(
                 _fetch_all_pages("/v1/users", request_semaphore),
-                _fetch_all_pages("/v1/schedules", request_semaphore),
+                _fetch_all_pages("/v1/schedules", request_semaphore, report=schedules_report),
                 _fetch_all_pages("/v1/teams", request_semaphore),
             )
 
@@ -1820,6 +1827,16 @@ def register_oncall_tools(
                 tid = t.get("id")
                 if isinstance(tid, str):
                     teams_map[tid] = t
+
+            # `fetch_pages` is only recorded once a page has actually been read,
+            # and this lookup swallows a failed first page into an empty list.
+            # Its absence therefore separates "upstream did not answer" from a
+            # workspace that genuinely has no schedules, which a plain
+            # `if schedules_map` cannot tell apart.
+            _lookup_maps_cache["schedules_complete"] = bool(
+                schedules_report.get("fetched_pages") is not None
+                and not schedules_report.get("truncated")
+            )
 
             result = (users_map, schedules_map, teams_map)
             _lookup_maps_cache["data"] = result
@@ -2297,6 +2314,29 @@ def register_oncall_tools(
                     team_schedule_ids
                     if selected_schedule_ids is None
                     else selected_schedule_ids & team_schedule_ids
+                )
+
+            # `team_ids` is the one filter that has to be resolved through the
+            # schedules listing -- `/v1/schedules` has no owner-group filter, and
+            # `/v1/shifts` takes schedule ids rather than team ids. When that
+            # listing is short, a team with schedules is indistinguishable from
+            # a team without any, so "no schedule matched" would be a confident
+            # answer drawn from data known to be incomplete. `schedule_ids` is
+            # unaffected: it is passed upstream untouched.
+            if (
+                team_id_filter
+                and selected_schedule_ids is not None
+                and not selected_schedule_ids
+                and not _lookup_maps_cache["schedules_complete"]
+            ):
+                return mcp_error.tool_error(
+                    "Cannot resolve team_ids to schedules: the schedule listing "
+                    "this resolution depends on came back incomplete, so a team "
+                    "with schedules cannot be told apart from a team without "
+                    "any. Retry, or pass schedule_ids instead -- those are sent "
+                    "upstream directly and do not depend on the listing.",
+                    "execution_error",
+                    details={"team_ids": team_ids, "schedule_ids": schedule_ids},
                 )
 
             if selected_schedule_ids is not None and not selected_schedule_ids:

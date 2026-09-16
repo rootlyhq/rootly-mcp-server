@@ -104,10 +104,16 @@ class Upstream:
         shifts: list[dict[str, Any]] | None = None,
         total_pages: int = 1,
         rotation_users: list[str] | None = None,
+        schedules_status: int = 200,
+        schedules_total_pages: int = 1,
     ) -> None:
         self.shifts = SHIFTS if shifts is None else shifts
         self.total_pages = total_pages
         self.rotation_users = rotation_users or []
+        # The schedules listing is bounded and best-effort, so it can come back
+        # short either by failing or by running past its page budget.
+        self.schedules_status = schedules_status
+        self.schedules_total_pages = schedules_total_pages
         self.shift_queries: list[dict[str, Any]] = []
 
     async def handle(self, method: str, url: str, params: dict | None = None, **_: Any) -> Mock:
@@ -142,6 +148,24 @@ class Upstream:
                 }
             )
         if url.endswith("/v1/schedules"):
+            if self.schedules_status != 200:
+                failed = Mock()
+                failed.status_code = self.schedules_status
+                failed.json.return_value = {}
+                return failed
+            if self.schedules_total_pages > 1:
+                # A full page, so the fetcher reads meta.total_pages instead of
+                # treating a short first page as the end of the listing.
+                padding = [
+                    {"id": f"pad-{i}", "attributes": {"name": f"Pad {i}", "owner_group_ids": []}}
+                    for i in range(100 - len(SCHEDULES))
+                ]
+                return _ok(
+                    {
+                        "data": [*SCHEDULES, *padding],
+                        "meta": {"total_pages": self.schedules_total_pages},
+                    }
+                )
             return _ok({"data": SCHEDULES, "meta": {"total_pages": 1}})
         if url.endswith("/v1/users"):
             return _ok({"data": USERS, "meta": {"total_pages": 1}})
@@ -197,6 +221,51 @@ class TestScheduleSummaryScoping:
         # name the filter as the reason.
         assert "No schedule matched the filter" in result["note"]
         assert "team_ids" in result["note"]
+
+    async def test_an_unresolvable_team_is_not_reported_as_no_match(self):
+        # The schedules listing is how team_ids becomes schedule ids, and it is
+        # bounded and best-effort. When it fails, a team with schedules looks
+        # exactly like a team without any, so "no schedule matched" would be a
+        # confident claim drawn from data known to be incomplete.
+        upstream = Upstream(schedules_status=500)
+        result = await _tools(upstream)["get_oncall_schedule_summary"](
+            start_date=START, end_date=END, team_ids="team-1"
+        )
+
+        assert result["error"] is True
+        assert "came back incomplete" in result["message"]
+        assert not upstream.shift_queries
+
+    async def test_a_truncated_schedule_listing_is_also_unresolvable(self):
+        upstream = Upstream(schedules_total_pages=40)
+        result = await _tools(upstream)["get_oncall_schedule_summary"](
+            start_date=START, end_date=END, team_ids="no-such-team"
+        )
+
+        assert result["error"] is True
+        assert "came back incomplete" in result["message"]
+
+    async def test_a_complete_listing_still_reports_a_genuine_no_match(self):
+        # The hedge above must not swallow the real answer: with the whole
+        # listing in hand, an unmatched team is a fact about the workspace.
+        upstream = Upstream()
+        result = await _tools(upstream)["get_oncall_schedule_summary"](
+            start_date=START, end_date=END, team_ids="no-such-team"
+        )
+
+        assert result.get("error") is None
+        assert "No schedule matched the filter" in result["note"]
+
+    async def test_schedule_ids_do_not_depend_on_the_listing(self):
+        # They are passed upstream untouched, so an unusable listing costs
+        # display names but not the filter itself.
+        upstream = Upstream(schedules_status=500)
+        result = await _tools(upstream)["get_oncall_schedule_summary"](
+            start_date=START, end_date=END, schedule_ids="sched-a"
+        )
+
+        assert result.get("error") is None
+        assert upstream.last_shift_query["schedule_ids[]"] == ["sched-a"]
 
     async def test_both_filters_together_must_agree(self):
         # schedule_ids and team_ids intersect rather than union, so a schedule
