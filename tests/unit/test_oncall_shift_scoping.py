@@ -106,6 +106,8 @@ class Upstream:
         rotation_users: list[str] | None = None,
         schedules_status: int = 200,
         schedules_total_pages: int = 1,
+        schedule_detail_status: int = 200,
+        rotation_users_status: int = 200,
     ) -> None:
         self.shifts = SHIFTS if shifts is None else shifts
         self.total_pages = total_pages
@@ -114,6 +116,10 @@ class Upstream:
         # short either by failing or by running past its page budget.
         self.schedules_status = schedules_status
         self.schedules_total_pages = schedules_total_pages
+        # A single schedule and its rotation membership are separate reads, and
+        # either can fail independently of the other.
+        self.schedule_detail_status = schedule_detail_status
+        self.rotation_users_status = rotation_users_status
         self.shift_queries: list[dict[str, Any]] = []
 
     async def handle(self, method: str, url: str, params: dict | None = None, **_: Any) -> Mock:
@@ -127,6 +133,11 @@ class Upstream:
                 }
             )
         if "/schedule_rotation_users" in url:
+            if self.rotation_users_status != 200:
+                failed = Mock()
+                failed.status_code = self.rotation_users_status
+                failed.json.return_value = {}
+                return failed
             return _ok(
                 {
                     "data": [
@@ -137,6 +148,11 @@ class Upstream:
                 }
             )
         if "/v1/schedules/" in url:
+            if self.schedule_detail_status != 200:
+                failed = Mock()
+                failed.status_code = self.schedule_detail_status
+                failed.json.return_value = {}
+                return failed
             return _ok(
                 {
                     "data": {
@@ -421,6 +437,48 @@ class TestOverrideRecommendationScoping:
 
         assert result["error_type"] == "validation_error"
         assert not upstream.shift_queries
+
+    @pytest.mark.parametrize("status", [404, 403, 500])
+    async def test_an_unreadable_schedule_is_not_a_schedule_without_rotations(self, status: int):
+        # The schedule read was only consumed on a 200, so any other status left
+        # the rotation set empty and the response blamed the schedule's setup --
+        # sending the caller to check configuration when the id was wrong or the
+        # token could not see it.
+        upstream = Upstream(rotation_users=["94178"], schedule_detail_status=status)
+        result = await _tools(upstream)["create_override_recommendation"](
+            schedule_id="sched-a", original_user_id=2381, start_date=START, end_date=END
+        )
+
+        assert result["error"] is True
+        assert "Cannot read schedule" in result["message"]
+        assert result["details"]["upstream_status"] == status
+        assert "rotations configured" not in result["message"]
+        assert not upstream.shift_queries
+
+    async def test_unreadable_rotation_membership_is_not_an_unstaffed_schedule(self):
+        # Same shape one level down: a rotation whose membership failed to load
+        # is unknown, not empty, and was previously dropped into an empty
+        # candidate list that read as "nobody is in this rotation".
+        upstream = Upstream(rotation_users=["94178"], rotation_users_status=500)
+        result = await _tools(upstream)["create_override_recommendation"](
+            schedule_id="sched-a", original_user_id=2381, start_date=START, end_date=END
+        )
+
+        assert result["error"] is True
+        assert "Cannot read rotation membership" in result["message"]
+        assert result["details"]["rotations_failed"] == 1
+        assert not upstream.shift_queries
+
+    async def test_a_schedule_with_no_rotations_still_says_so(self):
+        # The hedges above must not swallow the real answer: rotations that were
+        # read successfully and named nobody are a fact about the schedule.
+        upstream = Upstream(rotation_users=[])
+        result = await _tools(upstream)["create_override_recommendation"](
+            schedule_id="sched-a", original_user_id=2381, start_date=START, end_date=END
+        )
+
+        assert result.get("error") is None
+        assert "may not have any rotations configured" in result["warning"]
 
 
 @pytest.mark.unit

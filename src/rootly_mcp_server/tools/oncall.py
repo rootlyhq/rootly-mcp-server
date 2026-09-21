@@ -2835,50 +2835,95 @@ def register_oncall_tools(
             )
 
             # Fetch schedule rotations to find rotation users
-            rotation_users = set()
+            rotation_users: set[str] = set()
 
             # First, get the schedule to find its rotations
             schedule_response = await make_authenticated_request(
                 "GET", f"/v1/schedules/{schedule_id}"
             )
 
-            if schedule_response and schedule_response.status_code == 200:
-                schedule_data = schedule_response.json()
-                schedule_obj = schedule_data.get("data", {})
-                relationships = schedule_obj.get("relationships", {})
+            # A schedule that could not be read is not a schedule without
+            # rotations. Continuing past a non-200 left `rotation_users` empty
+            # and the response said the schedule "may not have any rotations
+            # configured" -- pointing the caller at the schedule's setup when
+            # the id was wrong or the token could not see it.
+            schedule_status = getattr(schedule_response, "status_code", None)
+            if schedule_status != 200:
+                return mcp_error.tool_error(
+                    f"Cannot read schedule {schedule_id}: upstream answered "
+                    f"{schedule_status if schedule_status is not None else 'nothing'}. "
+                    "Rootly answers 404 both for a schedule that does not exist and "
+                    "for one this token cannot see, so confirm the id with "
+                    "list_schedules and check the token's access before reading "
+                    "this as a configuration problem.",
+                    "execution_error",
+                    details={"schedule_id": schedule_id, "upstream_status": schedule_status},
+                )
 
-                # Get schedule rotations
-                rotations = relationships.get("schedule_rotations", {}).get("data", [])
-                rotation_ids = [r.get("id") for r in rotations if r.get("id")]
+            schedule_data = schedule_response.json()
+            schedule_obj = schedule_data.get("data", {})
+            relationships = schedule_obj.get("relationships", {})
 
-                # Fetch all rotation users in parallel
-                if rotation_ids:
+            # Get schedule rotations
+            rotations = relationships.get("schedule_rotations", {}).get("data", [])
+            rotation_ids = [r.get("id") for r in rotations if r.get("id")]
 
-                    async def fetch_rotation_users(rotation_id: str):
-                        response = await make_authenticated_request(
-                            "GET",
-                            f"/v1/schedule_rotations/{rotation_id}/schedule_rotation_users",
-                            params={"page[size]": 100},
-                        )
-                        if response and response.status_code == 200:
-                            return response.json().get("data", [])
-                        return []
+            # A rotation whose membership could not be read is unknown, not
+            # empty. Counted rather than dropped, so a candidate missing because
+            # of a failed request is never scored as a schedule with nobody in it.
+            rotation_failures = 0
 
-                    # Execute all rotation user fetches in parallel
-                    rotation_results = await asyncio.gather(
-                        *[fetch_rotation_users(rid) for rid in rotation_ids], return_exceptions=True
+            # Fetch all rotation users in parallel
+            if rotation_ids:
+
+                async def fetch_rotation_users(rotation_id: str) -> list[dict[str, Any]] | None:
+                    response = await make_authenticated_request(
+                        "GET",
+                        f"/v1/schedule_rotations/{rotation_id}/schedule_rotation_users",
+                        params={"page[size]": 100},
                     )
+                    if response and response.status_code == 200:
+                        return cast(list[dict[str, Any]], response.json().get("data", []))
+                    # `None` rather than `[]`: an empty rotation and an
+                    # unreadable one must not arrive looking the same.
+                    return None
 
-                    # Process results
-                    for result in rotation_results:
-                        if isinstance(result, list):
-                            for ru in result:
-                                user_rel = (
-                                    ru.get("relationships", {}).get("user", {}).get("data", {})
-                                )
-                                user_id = user_rel.get("id")
-                                if user_id:
-                                    rotation_users.add(str(user_id))
+                # Execute all rotation user fetches in parallel
+                rotation_results = await asyncio.gather(
+                    *[fetch_rotation_users(rid) for rid in rotation_ids], return_exceptions=True
+                )
+
+                # Process results
+                for result in rotation_results:
+                    # Either the `None` above or an exception captured by
+                    # `return_exceptions`. Both mean this rotation's membership
+                    # is unknown.
+                    if not isinstance(result, list):
+                        rotation_failures += 1
+                        continue
+                    for ru in result:
+                        user_rel = ru.get("relationships", {}).get("user", {}).get("data", {})
+                        user_id = user_rel.get("id")
+                        if user_id:
+                            rotation_users.add(str(user_id))
+
+            # Nothing readable and something failed: recommending from an empty
+            # candidate list would be indistinguishable from a schedule whose
+            # rotations are genuinely unstaffed.
+            if rotation_failures and not rotation_users:
+                return mcp_error.tool_error(
+                    f"Cannot read rotation membership for schedule {schedule_id}: "
+                    f"{rotation_failures} of {len(rotation_ids)} rotation(s) failed to "
+                    "load and none of the rest named anyone, so there is no candidate "
+                    "list to recommend from. This is an upstream failure rather than "
+                    "an unstaffed schedule.",
+                    "execution_error",
+                    details={
+                        "schedule_id": schedule_id,
+                        "rotations_total": len(rotation_ids),
+                        "rotations_failed": rotation_failures,
+                    },
+                )
 
             # Fetch shifts to calculate current load for rotation users
             # (concurrent pagination via _fetch_all_pages). Load is only ever
@@ -3009,7 +3054,10 @@ def register_oncall_tools(
                 **({"meta": fetch_meta} if fetch_meta else {}),
             }
 
-            # Add warning if no recommendations available
+            # Add warning if no recommendations available. Reaching here with no
+            # rotation users means every rotation was read successfully and named
+            # nobody -- the unreadable case returned above -- so the claim about
+            # configuration is one this can now actually make.
             if not rotation_users:
                 response["warning"] = (
                     "No rotation users found for this schedule. The schedule may not have any rotations configured."
@@ -3017,6 +3065,15 @@ def register_oncall_tools(
             elif not recommendations:
                 response["warning"] = (
                     "All rotation users are either excluded or the original user. No recommendations available."
+                )
+
+            if rotation_failures:
+                # Candidates were found, so the call still answers, but it is
+                # drawn from part of the rotation and says which part.
+                response["partial_rotation_warning"] = (
+                    f"{rotation_failures} of {len(rotation_ids)} rotation(s) could not be "
+                    "read, so anyone rostered only in those is missing from these "
+                    "recommendations and from the load figures."
                 )
 
             return response
