@@ -382,6 +382,12 @@ the exporter is configured.
 Free-form event text is redacted and actor names are omitted from Sentry-bound
 telemetry; stable internal actor IDs remain available for correlation.
 
+AgentCat's `enable_tool_call_context` and `enable_report_missing` options are
+disabled. The SDK does not add an analytics `context` parameter or the
+`get_more_tools` feedback tool. Tool-call telemetry remains enabled, including
+arguments, responses, timing, errors, and configured identity information,
+subject to the existing redaction hooks.
+
 Telemetry runs on AgentCat v2 (MCP 2026-07-28 spec). Sessions are correlated via
 a session_id carried in the tool list rather than stateful connections, which
 suits our stateless hosted transport; `initialize` and `tools/list` events are no

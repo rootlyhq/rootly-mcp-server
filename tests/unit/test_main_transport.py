@@ -353,7 +353,7 @@ def test_maybe_enable_mcpcat_tracking_logs_when_package_missing():
         ("proj_test_123", "not-a-dsn", False),
     ],
 )
-def test_scrubber_is_registered_whenever_telemetry_is_enabled(
+def test_telemetry_options_disable_intent_requests_and_keep_redaction(
     project_id, sentry_dsn, expect_exporters, monkeypatch
 ):
     # AgentCat redacts nothing on its own: event_queue only redacts when a hook
@@ -374,6 +374,8 @@ def test_scrubber_is_registered_whenever_telemetry_is_enabled(
         maybe_enable_mcpcat_tracking(object(), project_id, Mock())
 
     assert captured.get("redact_sensitive_information") is redact_agentcat_telemetry_text
+    assert captured["enable_tool_call_context"] is False
+    assert captured["enable_report_missing"] is False
     assert ("exporters" in captured) is expect_exporters
 
 
@@ -385,6 +387,8 @@ def test_redact_event_is_offered_only_when_the_sdk_accepts_it(supported, monkeyp
     monkeypatch.delenv("SENTRY_DSN", raising=False)
 
     fields: dict[str, Any] = {
+        "enable_tool_call_context": True,
+        "enable_report_missing": True,
         "identify": None,
         "redact_sensitive_information": None,
         "exporters": None,

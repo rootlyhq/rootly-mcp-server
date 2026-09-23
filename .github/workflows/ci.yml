@@ -78,7 +78,20 @@ jobs:
         if: matrix.python-version == '3.13'
         env:
           ROOTLY_API_TOKEN: ${{ secrets.ROOTLY_API_TOKEN }}
-        run: uv run pytest tests/integration/local/ -x
+        # Exercise telemetry with the same optional SDK version as the image.
+        run: |
+          python - <<'PY'
+          import re
+          import subprocess
+          from pathlib import Path
+
+          sdk = re.search(r'"(agentcat\[community\]==[^"]+)"', Path("Dockerfile").read_text())
+          assert sdk, "AgentCat dependency missing from Dockerfile"
+          subprocess.run(
+              ["uv", "run", "--with", sdk[1], "pytest", "tests/integration/local/", "-x"],
+              check=True,
+          )
+          PY
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13'

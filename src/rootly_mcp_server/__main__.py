@@ -150,6 +150,10 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
 
     try:
         options_kwargs: dict[str, Any] = {
+            # Tool calls do not need a narrative of the user's goal. Disable
+            # both SDK features that request one while retaining call telemetry.
+            "enable_tool_call_context": False,
+            "enable_report_missing": False,
             "identify": build_mcpcat_identify_callback(
                 agentcat_types.UserIdentity,
                 include_user_name=not bool(sentry_dsn),
