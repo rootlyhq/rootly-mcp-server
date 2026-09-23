@@ -1037,6 +1037,7 @@ def create_rootly_mcp_server(
         mcp=mcp,
         make_authenticated_request=make_authenticated_request,
         mcp_error=MCPError,
+        enable_oncall_health=not hosted,
     )
 
     register_resource_handlers(

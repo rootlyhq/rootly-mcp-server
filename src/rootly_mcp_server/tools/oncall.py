@@ -271,6 +271,8 @@ def register_oncall_tools(
     mcp: Any,
     make_authenticated_request: MakeAuthenticatedRequest,
     mcp_error: MCPErrorLike,
+    *,
+    enable_oncall_health: bool = True,
 ) -> None:
     """Register on-call analysis and scheduling tools on the MCP server."""
 
@@ -2867,6 +2869,11 @@ def register_oncall_tools(
                 },
             )
 
+    # Individual health-risk profiling is unavailable in hosted deployments.
+    # Omit registration so direct calls and Code Mode cannot access it either.
+    if not enable_oncall_health:
+        return
+
     @mcp.tool(
         annotations=ToolAnnotations(
             readOnlyHint=True,
@@ -2906,11 +2913,9 @@ def register_oncall_tools(
 
         Privacy: This tool surfaces identifiable employee workload health data from On-Call Health.
         It is an opt-in feature — an administrator must explicitly configure the ONCALLHEALTH_API_KEY
-        environment variable to enable it. On-Call Health displays a visible indicator on each
-        responder's profile page showing their health score and risk level, ensuring employees
-        are aware that workload analytics are collected and visible to their organization.
+        environment variable to enable it.
 
-        Requires ONCALLHEALTH_API_KEY environment variable.
+        Available only in self-hosted deployments. Requires ONCALLHEALTH_API_KEY environment variable.
         """
         try:
             # Validate OCH API key is configured

@@ -382,6 +382,12 @@ the exporter is configured.
 Free-form event text is redacted and actor names are omitted from Sentry-bound
 telemetry; stable internal actor IDs remain available for correlation.
 
+AgentCat's `enable_tool_call_context` and `enable_report_missing` options are
+disabled. The SDK does not add an analytics `context` parameter or the
+`get_more_tools` feedback tool. Tool-call telemetry remains enabled, including
+arguments, responses, timing, errors, and configured identity information,
+subject to the existing redaction hooks.
+
 Telemetry runs on AgentCat v2 (MCP 2026-07-28 spec). Sessions are correlated via
 a session_id carried in the tool list rather than stateful connections, which
 suits our stateless hosted transport; `initialize` and `tools/list` events are no
@@ -473,11 +479,11 @@ The full hosted and self-hosted surface exposes 200+ tools. If you want tighter 
 ROOTLY_MCP_ENABLED_TOOLS="list_incidents,get_incident,create_incident,update_incident,search_incidents,find_related_incidents,suggest_solutions,create_incident_action_item,list_incident_action_items,update_incident_form_field_selection,list_teams,get_current_user,list_services,list_severities,get_alert,list_alerts,get_alert_by_short_id,list_escalation_policies,get_escalation_policy,list_on_call_roles,list_schedules,get_schedule_shifts,get_oncall_handoff_summary,get_shift_incidents,list_endpoints"
 ```
 
-### 📅 On-Call Management (35 tools)  
+### 📅 On-Call Management (33 tools)
 *For schedule coordinators and on-call managers*
 
 ```bash
-ROOTLY_MCP_ENABLED_TOOLS="list_schedules,get_schedule,update_schedule,get_schedule_shifts,list_shifts,create_schedule_rotation,update_schedule_rotation,list_schedule_rotations,get_schedule_rotation,list_schedule_rotation_users,update_schedule_rotation_user,create_on_call_shadow,update_on_call_shadow,list_on_call_shadows,create_override_shift,update_override_shift,list_override_shifts,list_on_call_roles,update_on_call_role,get_oncall_schedule_summary,get_oncall_shift_metrics,check_oncall_health_risk,check_responder_availability,create_override_recommendation,list_teams,get_team,list_users,get_user,get_current_user,list_escalation_policies,update_escalation_policy,list_escalation_paths,update_escalation_path,list_escalation_levels"
+ROOTLY_MCP_ENABLED_TOOLS="list_schedules,get_schedule,update_schedule,get_schedule_shifts,list_shifts,create_schedule_rotation,update_schedule_rotation,list_schedule_rotations,get_schedule_rotation,list_schedule_rotation_users,update_schedule_rotation_user,create_on_call_shadow,update_on_call_shadow,list_on_call_shadows,create_override_shift,update_override_shift,list_override_shifts,list_on_call_roles,update_on_call_role,get_oncall_schedule_summary,get_oncall_shift_metrics,check_responder_availability,create_override_recommendation,list_teams,get_team,list_users,get_user,get_current_user,list_escalation_policies,update_escalation_policy,list_escalation_paths,update_escalation_path,list_escalation_levels"
 ```
 
 ### 📊 Monitoring & Alerting (40 tools)
@@ -556,7 +562,7 @@ You can run multiple MCP instances with different tool subsets:
   - **`suggest_solutions`**: Mines past incident resolutions to recommend actionable solutions
 - **MCP Resources**: Exposes incidents, teams, on-call status, and workflow guides as structured resources for AI context
 - **Intelligent Pattern Recognition**: Automatically identifies services, error types, and resolution patterns
-- **On-Call Health Integration**: Detects workload health risk in scheduled responders
+- **On-Call Health Integration (self-hosted only)**: Detects workload health risk in scheduled responders
 
 ## Supported Tools
 
@@ -568,7 +574,7 @@ The default tool surface depends on deployment profile:
 
 ### Custom Agentic Tools
 
-- `check_oncall_health_risk`
+- `check_oncall_health_risk` - self-hosted only
 - `check_responder_availability`
 - `collect_incidents`
 - `create_incident` - create a new incident with a scoped set of fields for agent workflows
@@ -708,9 +714,17 @@ update_workflow_task
 
 Delete operations remain disabled in the default tool surface.
 
-## On-Call Health Integration
+## On-Call Health Integration (Self-Hosted Only)
 
 Integrates with [On-Call Health](https://oncallhealth.ai) to detect workload health risk in scheduled responders.
+
+`check_oncall_health_risk` is unavailable on the hosted MCP service, including
+the full and slim profiles, SSE, Streamable HTTP, and Code Mode. It is not
+registered in hosted mode, so an API key or `ROOTLY_MCP_ENABLED_TOOLS` allowlist
+cannot enable it. Ordinary on-call scheduling and incident tools remain available.
+
+Self-hosted deployments retain this integration. Operators are responsible for
+appropriate employee disclosure and data handling for their deployment.
 
 ### Setup
 
