@@ -136,7 +136,9 @@ async def test_self_hosted_allowlists_match_live_mcp_tool_list(
     try:
         await _wait_for_health(base_url)
 
-        async with streamable_http_client(f"{base_url}/mcp") as (read_stream, write_stream, _):
+        # MCP SDK v2 yields (read, write); the trailing get_session_id callable
+        # the v1 client returned is gone.
+        async with streamable_http_client(f"{base_url}/mcp") as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 tools = await session.list_tools()

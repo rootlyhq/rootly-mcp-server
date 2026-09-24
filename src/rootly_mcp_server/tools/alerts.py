@@ -36,9 +36,9 @@ def register_alert_tools(
 
     @mcp.tool(
         annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            openWorldHint=True,
+            read_only_hint=True,
+            destructive_hint=False,
+            open_world_hint=True,
         ),
     )
     async def get_alert_by_short_id(

@@ -111,7 +111,7 @@ def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, An
 
     GET operations are marked read-only; POST/PUT/PATCH are non-destructive writes;
     DELETE operations are marked destructive. All autogen tools interact with
-    external APIs so openWorldHint is True.
+    external APIs so open_world_hint is True.
     """
     _, autogen_provider, autogen_names = _provider_tool_inventory(mcp)
     if autogen_provider is None:
@@ -137,30 +137,30 @@ def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, An
 
         if method == "get":
             tool.annotations = mt.ToolAnnotations(
-                readOnlyHint=True,
-                destructiveHint=False,
-                openWorldHint=True,
+                read_only_hint=True,
+                destructive_hint=False,
+                open_world_hint=True,
             )
         elif method == "delete":
             tool.annotations = mt.ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=True,
-                idempotentHint=True,
-                openWorldHint=True,
+                read_only_hint=False,
+                destructive_hint=True,
+                idempotent_hint=True,
+                open_world_hint=True,
             )
         elif method in {"put", "patch"}:
             tool.annotations = mt.ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=False,
-                idempotentHint=True,
-                openWorldHint=True,
+                read_only_hint=False,
+                destructive_hint=False,
+                idempotent_hint=True,
+                open_world_hint=True,
             )
         else:
             tool.annotations = mt.ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=False,
-                idempotentHint=False,
-                openWorldHint=True,
+                read_only_hint=False,
+                destructive_hint=False,
+                idempotent_hint=False,
+                open_world_hint=True,
             )
         annotated_count += 1
 
@@ -357,9 +357,9 @@ def _format_traceback_excerpt(tb_text: str) -> str:
 
 def _extract_structured_tool_error(result: Any) -> dict[str, Any]:
     """Extract structured tool error metadata from an MCP error result, if present."""
-    structured = getattr(result, "structuredContent", None)
+    structured = getattr(result, "structured_content", None)
     is_structured_tool_error = isinstance(structured, dict) and structured.get("error") is True
-    if not getattr(result, "isError", False) and not is_structured_tool_error:
+    if not getattr(result, "is_error", False) and not is_structured_tool_error:
         return {}
 
     error_event: dict[str, Any] = {"error_type": "ToolError"}
@@ -555,16 +555,16 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
 
 # Tools registered by the telemetry SDK rather than by us, with the annotations
 # they should carry. AgentCat 2.1.0 registers `get_more_tools` with only
-# `{"readOnlyHint": True}` (adapters/community.py), so `destructiveHint` and
-# `openWorldHint` fall back to the spec defaults -- both `true`, describing the
+# `{"readOnlyHint": True}` (adapters/community.py), so `destructive_hint` and
+# `open_world_hint` fall back to the spec defaults -- both `true`, describing the
 # tool as destructive and open-world. It is neither: its handler returns a fixed
 # string and never reaches the API. Reported upstream; remove this once the SDK
 # sets them itself.
 _INJECTED_TOOL_ANNOTATIONS: dict[str, mt.ToolAnnotations] = {
     "get_more_tools": mt.ToolAnnotations(
-        readOnlyHint=True,
-        destructiveHint=False,
-        openWorldHint=False,
+        read_only_hint=True,
+        destructive_hint=False,
+        open_world_hint=False,
     ),
 }
 
@@ -921,9 +921,9 @@ def create_rootly_mcp_server(
 
     @mcp.tool(
         annotations=mt.ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            open_world_hint=False,
         ),
     )
     def list_endpoints() -> list:
@@ -950,9 +950,9 @@ def create_rootly_mcp_server(
 
     @mcp.tool(
         annotations=mt.ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            openWorldHint=False,
+            read_only_hint=True,
+            destructive_hint=False,
+            open_world_hint=False,
         ),
     )
     def get_server_version() -> dict:
@@ -1063,7 +1063,7 @@ def create_rootly_mcp_server(
     # autogen duplicate so only the richer curated implementation is surfaced.
     _remove_autogen_tools_shadowed_by_curated(mcp)
 
-    # Apply MCP tool annotations (readOnlyHint, destructiveHint, etc.) to
+    # Apply MCP tool annotations (read_only_hint, destructive_hint, etc.) to
     # autogen tools based on HTTP method. Curated tools set their own annotations
     # via @mcp.tool(annotations=...) at registration time.
     _apply_annotations_to_autogen_tools(mcp, filtered_spec)

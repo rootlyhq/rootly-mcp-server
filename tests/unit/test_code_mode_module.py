@@ -240,7 +240,10 @@ async def test_execute_normalizes_namespaced_backend_tool_calls():
     transform.sandbox_provider = FakeSandboxProvider()
     execute_tool = cast(FunctionTool, transform._get_execute_tool())  # noqa: SLF001
 
-    backend_tools = [SimpleNamespace(name="getCurrentUser", version=None)]
+    # `meta` is read by the catalog's visibility check. A component without it
+    # is visible, which is what this double has always stood for -- fastmcp 4
+    # just asks the question explicitly now.
+    backend_tools = [SimpleNamespace(name="getCurrentUser", version=None, meta=None)]
     fake_fastmcp = SimpleNamespace(
         list_tools=AsyncMock(return_value=backend_tools),
         call_tool=AsyncMock(
