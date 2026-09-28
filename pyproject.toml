@@ -55,6 +55,7 @@ dependencies = [
     "brotli>=1.2.0",    # For Brotli compression support in httpx
     "scikit-learn>=1.3.0", # For text similarity and ML utilities
     "numpy>=1.24.0",    # For numerical operations
+    "posthog>=7.21",   # PostHog MCP analytics (posthog.mcp, pre-1.0 API; exact version locked in uv.lock)
 ]
 
 [project.urls]
