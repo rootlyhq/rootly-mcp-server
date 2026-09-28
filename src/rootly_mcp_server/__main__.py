@@ -237,9 +237,11 @@ def maybe_enable_posthog_mcp_analytics(server, posthog_client, logger: logging.L
 
         options = MCPAnalyticsOptions(
             # Match the AgentCat configuration: no injected `context`,
-            # `conversation_id` or `get_more_tools`, so tool schemas are unchanged.
+            # `conversation_id`, `llm_model` or `get_more_tools`, so tool
+            # schemas are unchanged and agents are never asked about themselves.
             context=False,
             enable_conversation_id=False,
+            capture_model=False,
             report_missing=False,
             identify=identify,
             before_send=scrub_posthog_mcp_event,
@@ -1019,7 +1021,14 @@ def main():
         # server.run() returns once stdio closes or uvicorn finishes its graceful
         # shutdown on SIGTERM, so this drains queued analytics on every exit path.
         if posthog_client is not None:
-            posthog_client.shutdown()
+            # Optional telemetry must not replace the exit outcome above.
+            try:
+                posthog_client.shutdown()
+            except Exception as error:
+                logger.warning(
+                    "PostHog MCP analytics could not be shut down (%s)",
+                    type(error).__name__,
+                )
 
 
 if __name__ == "__main__":

@@ -285,9 +285,18 @@ def redact_agentcat_telemetry_text(value: str) -> str:
     return _DEFAULT_SCRUBBER.scrub(value)
 
 
-# PostHog MCP properties that carry tool input/output. Everything else on the
-# event is SDK-generated metadata (ids, names, timings) and is left untouched.
-_POSTHOG_MCP_SCRUBBED_PROPERTIES = ("$mcp_parameters", "$mcp_response", "$exception_list")
+# PostHog MCP properties that carry caller-supplied or tool-produced text.
+# Error messages and tool names are included because an unknown tool name is
+# echoed verbatim into both. Everything else is SDK-generated metadata (ids,
+# timings, client info) and is left untouched.
+_POSTHOG_MCP_SCRUBBED_PROPERTIES = (
+    "$mcp_parameters",
+    "$mcp_response",
+    "$mcp_error_message",
+    "$exception_list",
+    "$mcp_tool_name",
+    "$mcp_resource_name",
+)
 
 
 def scrub_posthog_mcp_event(event: Any) -> Any:
