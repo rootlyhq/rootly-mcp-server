@@ -22,10 +22,11 @@ from rootly_mcp_server.__main__ import (
 )
 from rootly_mcp_server.telemetry_scrubber import scrub_posthog_mcp_event
 
-# Values the SDK's own sanitizer lets through, so only our hook removes them.
-BEARER_TOKEN = "abcdefghijklmnopqrstuvwxyz123456"
-# Split so push protection does not mistake the fixture for a live key.
-SECRET = "sk_" + "live_abcdefghijklmnopqrstuvwxyz"
+# Fake credentials, split so secret scanners do not flag the fixtures.
+# The bearer value is one the SDK's own sanitizer lets through, so only our
+# hook removes it.
+FAKE_BEARER = "abcdefghijklm" + "nopqrstuvwxyz123456"
+FAKE_STRIPE = "sk_" + "live_abcdefghijklmnopqrstuvwxyz"
 
 
 def test_build_posthog_client_is_noop_without_token():
@@ -110,11 +111,11 @@ async def _capture_session(calls: list[tuple[str, dict[str, Any]]]) -> list[dict
 
     @server.tool
     def echo(db_conn_password: str, note: str) -> str:
-        return f"note={note} Bearer {BEARER_TOKEN}"
+        return f"note={note} Bearer {FAKE_BEARER}"
 
     @server.tool
     def boom(q: str) -> str:
-        raise ValueError(f"upstream rejected Bearer {BEARER_TOKEN}")
+        raise ValueError(f"upstream rejected Bearer {FAKE_BEARER}")
 
     client = Posthog("phc_test", send=False)
     captured: list[dict[str, Any]] = []
@@ -133,7 +134,7 @@ async def _capture_session(calls: list[tuple[str, dict[str, Any]]]) -> list[dict
     [
         [("echo", {"db_conn_password": "hunter2", "note": "hi"})],
         [("boom", {"q": "x"})],
-        [(f"token={SECRET}", {})],
+        [(f"token={FAKE_STRIPE}", {})],
     ],
     ids=["arguments-and-response", "error-message", "unknown-tool-name"],
 )
@@ -141,7 +142,7 @@ async def test_no_secret_reaches_posthog(calls):
     captured = await _capture_session(calls)
 
     assert captured, "expected events to be captured"
-    for value in ("hunter2", BEARER_TOKEN, SECRET):
+    for value in ("hunter2", FAKE_BEARER, FAKE_STRIPE):
         assert value not in repr(captured)
 
 
