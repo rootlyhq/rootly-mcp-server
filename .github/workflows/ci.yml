@@ -124,6 +124,10 @@ jobs:
       - name: Build Docker image
         run: docker build -t rootly-mcp-server .
 
+      # Configure both telemetry layers as production does, so their
+      # interaction is exercised: AgentCat plus PostHog together broke
+      # tools/list on 2026-09-29 while each alone was fine. Dummy IDs, and
+      # PostHog points at a dead host, so nothing is sent anywhere real.
       - name: Start MCP server container
         env:
           ROOTLY_API_TOKEN: ${{ secrets.ROOTLY_API_TOKEN }}
@@ -132,6 +136,9 @@ jobs:
             --name rootly-mcp-server \
             -p 8000:8000 \
             -e ROOTLY_API_TOKEN="${ROOTLY_API_TOKEN}" \
+            -e ROOTLY_MCPCAT_PROJECT_ID=proj_ci_dummy \
+            -e POSTHOG_PROJECT_TOKEN=phc_ci_dummy \
+            -e POSTHOG_HOST=http://127.0.0.1:9 \
             rootly-mcp-server
 
       - name: Wait for container startup
@@ -142,7 +149,11 @@ jobs:
         env:
           ROOTLY_API_TOKEN: ${{ secrets.ROOTLY_API_TOKEN }}
           MCP_SERVER_URL: "http://localhost:8000"
-        run: uv run pytest tests/integration/remote/test_essential.py -v --timeout=60
+        run: uv run pytest tests/integration/remote/test_essential.py tests/integration/remote/test_mcp_protocol.py -v --timeout=60
+
+      - name: Container logs
+        if: always()
+        run: docker logs rootly-mcp-server 2>&1 | tail -200
 
       - name: Stop container
         if: always()
