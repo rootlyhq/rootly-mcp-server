@@ -18,9 +18,6 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from fastmcp import FastMCP
-from fastmcp.server.middleware import Middleware as MCPMiddleware
-
 from . import __version__, server_defaults
 from .code_mode import (
     code_mode_enabled_from_env,
@@ -29,6 +26,7 @@ from .code_mode import (
     normalize_code_mode_path,
 )
 from .exceptions import RootlyConfigurationError, RootlyMCPError
+from .posthog_analytics import build_posthog_client, maybe_enable_posthog_mcp_analytics
 from .security import validate_api_token
 from .server import create_rootly_mcp_server, get_hosted_auth_middleware
 from .server_defaults import (
@@ -38,7 +36,6 @@ from .server_defaults import (
 from .telemetry_scrubber import (
     redact_agentcat_telemetry_text,
     scrub_event_arguments,
-    scrub_posthog_mcp_event,
 )
 from .transport import get_hosted_authenticated_user
 
@@ -127,8 +124,8 @@ def agentcat_options_supports(options_cls: type[Any], option: str) -> bool:
         return False
 
 
-def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging.Logger) -> None:
-    """Enable AgentCat tracking when configured and available.
+def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging.Logger) -> bool:
+    """Enable AgentCat tracking when configured and available; return whether it is on.
 
     The Python AgentCat package (formerly MCPcat) is currently deployed
     separately from the core server dependency set, so we load it lazily and
@@ -138,12 +135,12 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
     """
     sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
     if not project_id and not sentry_dsn:
-        return
+        return False
     if sentry_dsn and not SENTRY_DSN_PATTERN.fullmatch(sentry_dsn):
         logger.warning("Sentry telemetry is disabled because SENTRY_DSN is invalid")
         sentry_dsn = ""
         if not project_id:
-            return
+            return False
 
     try:
         agentcat = importlib.import_module("agentcat")
@@ -153,7 +150,7 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
             "AgentCat or Sentry telemetry is configured but agentcat is not installed; "
             "skipping telemetry"
         )
-        return
+        return False
 
     try:
         options_kwargs: dict[str, Any] = {
@@ -205,76 +202,8 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
             "AgentCat tracking could not be enabled; skipping (%s)",
             type(error).__name__,
         )
-
-
-def build_posthog_client(logger: logging.Logger) -> Any | None:
-    """Create the process-wide PostHog client when MCP analytics is configured.
-
-    Opt-in via POSTHOG_PROJECT_TOKEN so self-hosted and local runs are unchanged.
-    """
-    token = os.getenv("POSTHOG_PROJECT_TOKEN", "").strip()
-    if not token:
-        return None
-    try:
-        from posthog import Posthog
-
-        return Posthog(token, host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com"))
-    except Exception as error:
-        logger.warning(
-            "PostHog MCP analytics could not be enabled; skipping (%s)",
-            type(error).__name__,
-        )
-        return None
-
-
-def _posthog_incompatible_middleware(server: FastMCP) -> list[str]:
-    """Names of middleware posthog.mcp (<= 7.60.1) fails on.
-
-    It reads dispatch hooks off each middleware's class and raises for anything
-    that is not a fastmcp Middleware subclass, such as AgentCat's, breaking
-    tools/list. Delete once posthog.mcp tolerates such middleware.
-    """
-    return [type(m).__name__ for m in server.middleware if not isinstance(m, MCPMiddleware)]
-
-
-def maybe_enable_posthog_mcp_analytics(
-    server: FastMCP, posthog_client, logger: logging.Logger
-) -> None:
-    """Instrument *server* with PostHog MCP analytics when a client is configured."""
-    if posthog_client is None:
-        return
-    if incompatible := _posthog_incompatible_middleware(server):
-        logger.warning(
-            "PostHog MCP analytics off for %s: incompatible middleware %s",
-            server.name,
-            ", ".join(incompatible),
-        )
-        return
-    try:
-        from posthog.mcp import MCPAnalyticsOptions, UserIdentity, instrument
-
-        def identify(_request: Any, _extra: Any) -> Any:
-            user = get_hosted_authenticated_user()
-            return UserIdentity(distinct_id=str(user["id"])) if user else None
-
-        options = MCPAnalyticsOptions(
-            # Match the AgentCat configuration: no injected `context`,
-            # `conversation_id`, `llm_model` or `get_more_tools`, so tool
-            # schemas are unchanged and agents are never asked about themselves.
-            context=False,
-            enable_conversation_id=False,
-            capture_model=False,
-            report_missing=False,
-            identify=identify,
-            before_send=scrub_posthog_mcp_event,
-            logger=lambda message: logger.debug("PostHog MCP analytics: %s", message),
-        )
-        instrument(server, posthog_client, options)
-    except Exception as error:
-        logger.warning(
-            "PostHog MCP analytics could not be enabled; skipping (%s)",
-            type(error).__name__,
-        )
+        return False
+    return True
 
 
 def build_mcpcat_identify_callback(
@@ -954,27 +883,15 @@ def main():
         elif code_mode_server is not None:
             profiled_code_mode_servers[default_hosted_tool_profile] = code_mode_server
 
-        maybe_enable_mcpcat_tracking(server, mcpcat_project_id, logger)
-        if alternate_server is not None:
-            maybe_enable_mcpcat_tracking(alternate_server, mcpcat_project_id, logger)
-        if code_mode_server is not None:
-            maybe_enable_mcpcat_tracking(code_mode_server, mcpcat_project_id, logger)
-        for _profile, profiled_code_mode_server in profiled_code_mode_servers.items():
-            if profiled_code_mode_server is code_mode_server:
-                continue
-            maybe_enable_mcpcat_tracking(profiled_code_mode_server, mcpcat_project_id, logger)
-
-        posthog_client = build_posthog_client(logger)
-        for instrumented_server in {
-            id(candidate): candidate
-            for candidate in (
-                *profiled_servers.values(),
-                code_mode_server,
-                *profiled_code_mode_servers.values(),
-            )
-            if candidate is not None
-        }.values():
-            maybe_enable_posthog_mcp_analytics(instrumented_server, posthog_client, logger)
+        all_servers = (*profiled_servers.values(), *profiled_code_mode_servers.values())
+        # Track every server first; any() over a generator would stop at the first.
+        agentcat_results = [
+            maybe_enable_mcpcat_tracking(mcp_server, mcpcat_project_id, logger)
+            for mcp_server in all_servers
+        ]
+        posthog_client = build_posthog_client(logger, agentcat_enabled=any(agentcat_results))
+        for mcp_server in all_servers:
+            maybe_enable_posthog_mcp_analytics(mcp_server, posthog_client, logger)
 
         logger.info(f"Running server with transport: {normalized_transport}...")
         direct_streamable_stateless_http = streamable_http_stateless_enabled(

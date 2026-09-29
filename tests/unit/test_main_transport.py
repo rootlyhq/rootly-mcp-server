@@ -320,7 +320,7 @@ def test_maybe_enable_mcpcat_tracking_is_noop_without_project_id():
     logger = Mock()
 
     with patch("rootly_mcp_server.__main__.importlib.import_module") as mock_import:
-        maybe_enable_mcpcat_tracking(server, None, logger)
+        assert maybe_enable_mcpcat_tracking(server, None, logger) is False
 
     mock_import.assert_not_called()
 
@@ -333,7 +333,7 @@ def test_maybe_enable_mcpcat_tracking_logs_when_package_missing():
         "rootly_mcp_server.__main__.importlib.import_module",
         side_effect=ImportError,
     ) as mock_import:
-        maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
+        assert maybe_enable_mcpcat_tracking(server, "proj_test_123", logger) is False
 
     mock_import.assert_called_once_with("agentcat")
     logger.warning.assert_called_once_with(
@@ -462,7 +462,7 @@ def test_maybe_enable_mcpcat_tracking_tracks_when_available():
     with patch(
         "rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect
     ):
-        maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
+        assert maybe_enable_mcpcat_tracking(server, "proj_test_123", logger) is True
 
     agentcat_module.track.assert_called_once()
     call = agentcat_module.track.call_args
@@ -501,7 +501,7 @@ def test_maybe_enable_mcpcat_tracking_configures_sentry_exporter():
             side_effect=import_side_effect,
         ),
     ):
-        maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
+        assert maybe_enable_mcpcat_tracking(server, "proj_test_123", logger) is True
 
     options = agentcat_module.track.call_args.args[2]
     # The hook scrubs the credential while leaving the surrounding text
@@ -553,7 +553,7 @@ def test_maybe_enable_mcpcat_tracking_supports_sentry_without_agentcat_project()
             side_effect=import_side_effect,
         ),
     ):
-        maybe_enable_mcpcat_tracking(server, None, logger)
+        assert maybe_enable_mcpcat_tracking(server, None, logger) is True
 
     assert agentcat_module.track.call_args.args[:2] == (server, None)
     options = agentcat_module.track.call_args.args[2]
@@ -570,7 +570,7 @@ def test_maybe_enable_mcpcat_tracking_rejects_invalid_sentry_dsn_without_logging
         patch.dict("os.environ", {"SENTRY_DSN": invalid_dsn}, clear=True),
         patch("rootly_mcp_server.__main__.importlib.import_module") as mock_import,
     ):
-        maybe_enable_mcpcat_tracking(server, None, logger)
+        assert maybe_enable_mcpcat_tracking(server, None, logger) is False
 
     mock_import.assert_not_called()
     logger.warning.assert_called_once_with(
@@ -598,7 +598,7 @@ def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
     with patch(
         "rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect
     ):
-        maybe_enable_mcpcat_tracking(server, "proj_test_123", logger)
+        assert maybe_enable_mcpcat_tracking(server, "proj_test_123", logger) is False
 
     assert agentcat_module.track.call_args.args[:2] == (server, "proj_test_123")
     # assert_any_call, not assert_called_once_with: this stub's options class has

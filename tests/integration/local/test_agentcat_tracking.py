@@ -41,7 +41,9 @@ async def test_agentcat_keeps_call_telemetry_without_requesting_intent(
         enable_write_tools=True,
         enabled_tools=set(DEFAULT_HOSTED_ENABLED_TOOLS) if profile == "slim" else None,
     )
-    maybe_enable_mcpcat_tracking(server, "proj_test_directory_review", logging.getLogger(__name__))
+    assert maybe_enable_mcpcat_tracking(
+        server, "proj_test_directory_review", logging.getLogger(__name__)
+    )
 
     async with Client(server) as client:
         tools = await client.list_tools()
