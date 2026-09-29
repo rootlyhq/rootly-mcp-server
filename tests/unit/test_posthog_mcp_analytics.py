@@ -199,7 +199,7 @@ def test_maybe_enable_posthog_mcp_analytics_skips_server_with_duck_typed_middlew
             return await call_next(context)
 
     server = FastMCP("test")
-    server.add_middleware(DuckTypedMiddleware())
+    server.add_middleware(DuckTypedMiddleware())  # type: ignore[arg-type]  # the point of the test
     logger = Mock()
 
     with patch("posthog.mcp.instrument") as mock_instrument:
