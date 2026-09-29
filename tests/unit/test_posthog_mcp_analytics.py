@@ -188,3 +188,30 @@ async def test_legacy_context_argument_text_never_reaches_posthog(with_middlewar
     assert result.is_error is (not with_middleware)
     assert captured, "expected events to be captured"
     assert "Acme" not in repr(captured)
+
+
+def test_maybe_enable_posthog_mcp_analytics_skips_server_with_duck_typed_middleware():
+    """AgentCat's middleware does not subclass fastmcp Middleware; posthog.mcp
+    raises AttributeError on it during dispatch, failing every tool call."""
+
+    class DuckTypedMiddleware:
+        async def __call__(self, context, call_next):
+            return await call_next(context)
+
+    server = FastMCP("test")
+    server.add_middleware(DuckTypedMiddleware())
+    logger = Mock()
+
+    with patch("posthog.mcp.instrument") as mock_instrument:
+        maybe_enable_posthog_mcp_analytics(server, Mock(), logger)
+
+    mock_instrument.assert_not_called()
+    logger.warning.assert_called_once()
+    assert "DuckTypedMiddleware" in logger.warning.call_args.args[1]
+
+
+def test_maybe_enable_posthog_mcp_analytics_instruments_server_with_builtin_middleware():
+    with patch("posthog.mcp.instrument") as mock_instrument:
+        maybe_enable_posthog_mcp_analytics(FastMCP("test"), Mock(), Mock())
+
+    mock_instrument.assert_called_once()

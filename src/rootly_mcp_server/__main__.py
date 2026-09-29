@@ -229,6 +229,24 @@ def maybe_enable_posthog_mcp_analytics(server, posthog_client, logger: logging.L
     if posthog_client is None:
         return
     try:
+        from fastmcp.server.middleware import Middleware
+
+        # posthog.mcp reads `on_message`/`on_call_tool`/... off each middleware's
+        # class on the tool dispatch path, assuming a fastmcp Middleware subclass.
+        # AgentCat's middleware is duck-typed, so the lookup raises AttributeError
+        # and every tool call fails. Skip PostHog rather than break the server.
+        foreign = [
+            type(middleware).__name__
+            for middleware in getattr(server, "middleware", ())
+            if not isinstance(middleware, Middleware)
+        ]
+        if foreign:
+            logger.warning(
+                "PostHog MCP analytics skipped: incompatible middleware %s",
+                ", ".join(foreign),
+            )
+            return
+
         from posthog.mcp import MCPAnalyticsOptions, UserIdentity, instrument
 
         def identify(_request: Any, _extra: Any) -> Any:
