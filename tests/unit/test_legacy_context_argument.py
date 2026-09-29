@@ -10,7 +10,10 @@ import pytest
 from fastmcp import Client, FastMCP
 from pydantic import Field
 
-from rootly_mcp_server.server import LegacyContextArgumentMiddleware
+from rootly_mcp_server.server import (
+    RETIRED_INJECTED_PARAMS,
+    LegacyContextArgumentMiddleware,
+)
 
 
 def _server() -> FastMCP:
@@ -83,3 +86,37 @@ async def test_code_mode_server_tolerates_legacy_context(monkeypatch, tool, argu
         )
 
     assert not result.is_error, result.content
+
+
+def test_live_agentcat_parameters_are_not_retired():
+    """`session_id`/`agent_id` must never be listed as retired.
+
+    This middleware is registered by the factory; `agentcat.track()` adds
+    AgentCat's middleware afterwards, so ours runs first. Dropping a parameter
+    AgentCat still injects would remove it before AgentCat reads it --
+    `session_id` is its correlation key, and billing counts sessions.
+    """
+    assert "session_id" not in RETIRED_INJECTED_PARAMS
+    assert "agent_id" not in RETIRED_INJECTED_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_every_retired_parameter_is_dropped(monkeypatch):
+    """The drop generalizes past `context` -- one entry or several."""
+    monkeypatch.setattr("rootly_mcp_server.server.RETIRED_INJECTED_PARAMS", ("context", "intent"))
+    async with Client(_server()) as client:
+        result = await client.call_tool(
+            "list_incidents", {"page_size": 7, "context": "c", "intent": "i"}
+        )
+
+    assert result.data == "page_size=7"
+
+
+@pytest.mark.asyncio
+async def test_retired_parameter_declared_by_a_tool_is_kept(monkeypatch):
+    """A tool that owns the name still receives it."""
+    monkeypatch.setattr("rootly_mcp_server.server.RETIRED_INJECTED_PARAMS", ("context", "intent"))
+    async with Client(_server()) as client:
+        result = await client.call_tool("annotate", {"context": "kept"})
+
+    assert result.data == "context=kept"
