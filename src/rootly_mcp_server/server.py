@@ -553,6 +553,31 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
         return await call_next(context)
 
 
+class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
+    """Drops a stray ``context`` argument that the target tool does not declare.
+
+    Until #223 AgentCat injected an optional ``context`` parameter into every tool
+    schema, and some callers (scripts and agents with cached schemas) still send
+    it. Tools reject undeclared arguments, so the whole call failed -- and the
+    pydantic error echoed the caller's ``context`` text into telemetry. The
+    parameter stays out of the advertised schemas; it is only tolerated.
+    """
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        args = context.message.arguments
+        if args and "context" in args and context.fastmcp_context is not None:
+            tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+            # An unknown tool is left alone so it fails as "unknown tool", and a
+            # tool that declares its own `context` keeps it.
+            if tool is not None and "context" not in tool.parameters.get("properties", {}):
+                args.pop("context")
+        return await call_next(context)
+
+
 # Tools registered by the telemetry SDK rather than by us, with the annotations
 # they should carry. AgentCat 2.1.0 registers `get_more_tools` with only
 # `{"readOnlyHint": True}` (adapters/community.py), so `destructiveHint` and
@@ -801,6 +826,7 @@ def create_rootly_mcp_server(
     # to snake_case before usage logging records the (canonical) tool name.
     mcp.add_middleware(CamelCaseAliasMiddleware(camel_to_snake_aliases))
     mcp.add_middleware(ArgumentNormalizationMiddleware())
+    mcp.add_middleware(LegacyContextArgumentMiddleware())
     mcp.add_middleware(InjectedToolAnnotationMiddleware())
     mcp.add_middleware(ToolUsageLoggingMiddleware())
 

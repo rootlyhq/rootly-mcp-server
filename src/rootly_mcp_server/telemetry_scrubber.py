@@ -134,6 +134,18 @@ def _scrub_scheme_credential(match: re.Match[str]) -> str:
 _KEY = r"([A-Za-z_][A-Za-z0-9_.\[\]-]{0,63}+)"
 
 TELEMETRY_REDACTIONS: tuple[tuple[re.Pattern[str], Any], ...] = (
+    # Pydantic validation errors repeat the rejected argument verbatim:
+    # `[type=unexpected_keyword_argument, input_value='<caller text>', input_type=str]`.
+    # That is caller-supplied content, not a diagnostic -- the type and field
+    # already say what went wrong. Runs first so no later rule redacts only part
+    # of it. Everything to the end of the line goes, keeping only a trailing
+    # `, input_type=<type>]` -- Pydantic always puts that last, and anchoring to
+    # the line end means caller text containing `, input_type=` cannot end the
+    # value early. A truncated message loses the whole tail instead.
+    (
+        re.compile(r"input_value=[^\n]*?(, input_type=[\w.]+\])?$", re.MULTILINE),
+        r"input_value=[redacted]\1",
+    ),
     (
         re.compile(r"\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]+)", re.IGNORECASE),
         _scrub_scheme_credential,
