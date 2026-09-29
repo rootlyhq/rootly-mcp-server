@@ -283,3 +283,46 @@ _DEFAULT_SCRUBBER = TelemetryScrubber()
 def redact_agentcat_telemetry_text(value: str) -> str:
     """AgentCat's `redact_sensitive_information` hook."""
     return _DEFAULT_SCRUBBER.scrub(value)
+
+
+# PostHog MCP properties that carry caller-supplied or tool-produced text.
+# Error messages and tool names are included because an unknown tool name is
+# echoed verbatim into both. Everything else is SDK-generated metadata (ids,
+# timings, client info) and is left untouched.
+_POSTHOG_MCP_SCRUBBED_PROPERTIES = (
+    "$mcp_parameters",
+    "$mcp_response",
+    "$mcp_error_message",
+    "$exception_list",
+    "$mcp_tool_name",
+    "$mcp_resource_name",
+)
+
+
+def scrub_posthog_mcp_event(event: Any) -> Any:
+    """PostHog MCP analytics' `before_send` hook.
+
+    Applies both AgentCat rules in one pass: credential-named keys are
+    replaced, and every remaining string goes through the text scrubber.
+    """
+
+    def walk(node: Any, depth: int) -> Any:
+        if depth > _MAX_ARGUMENT_DEPTH:
+            return REDACTED
+        if isinstance(node, str):
+            return _DEFAULT_SCRUBBER.scrub(node)
+        if isinstance(node, dict):
+            return {
+                key: REDACTED if is_credential_key(str(key)) else walk(value, depth + 1)
+                for key, value in node.items()
+            }
+        if isinstance(node, list | tuple):
+            return [walk(item, depth + 1) for item in node]
+        return node
+
+    properties = event.get("properties")
+    if isinstance(properties, dict):
+        for name in _POSTHOG_MCP_SCRUBBED_PROPERTIES:
+            if name in properties:
+                properties[name] = walk(properties[name], 0)
+    return event

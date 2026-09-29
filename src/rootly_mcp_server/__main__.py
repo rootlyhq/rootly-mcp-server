@@ -32,7 +32,11 @@ from .server_defaults import (
     enabled_tools_from_env,
     resolve_write_tools_enabled,
 )
-from .telemetry_scrubber import redact_agentcat_telemetry_text, scrub_event_arguments
+from .telemetry_scrubber import (
+    redact_agentcat_telemetry_text,
+    scrub_event_arguments,
+    scrub_posthog_mcp_event,
+)
 from .transport import get_hosted_authenticated_user
 
 TransportName = Literal["stdio", "sse", "streamable-http", "both"]
@@ -196,6 +200,57 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
     except Exception as error:
         logger.warning(
             "AgentCat tracking could not be enabled; skipping (%s)",
+            type(error).__name__,
+        )
+
+
+def build_posthog_client(logger: logging.Logger) -> Any | None:
+    """Create the process-wide PostHog client when MCP analytics is configured.
+
+    Opt-in via POSTHOG_PROJECT_TOKEN so self-hosted and local runs are unchanged.
+    """
+    token = os.getenv("POSTHOG_PROJECT_TOKEN", "").strip()
+    if not token:
+        return None
+    try:
+        from posthog import Posthog
+
+        return Posthog(token, host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com"))
+    except Exception as error:
+        logger.warning(
+            "PostHog MCP analytics could not be enabled; skipping (%s)",
+            type(error).__name__,
+        )
+        return None
+
+
+def maybe_enable_posthog_mcp_analytics(server, posthog_client, logger: logging.Logger) -> None:
+    """Instrument *server* with PostHog MCP analytics when a client is configured."""
+    if posthog_client is None:
+        return
+    try:
+        from posthog.mcp import MCPAnalyticsOptions, UserIdentity, instrument
+
+        def identify(_request: Any, _extra: Any) -> Any:
+            user = get_hosted_authenticated_user()
+            return UserIdentity(distinct_id=str(user["id"])) if user else None
+
+        options = MCPAnalyticsOptions(
+            # Match the AgentCat configuration: no injected `context`,
+            # `conversation_id`, `llm_model` or `get_more_tools`, so tool
+            # schemas are unchanged and agents are never asked about themselves.
+            context=False,
+            enable_conversation_id=False,
+            capture_model=False,
+            report_missing=False,
+            identify=identify,
+            before_send=scrub_posthog_mcp_event,
+            logger=lambda message: logger.debug("PostHog MCP analytics: %s", message),
+        )
+        instrument(server, posthog_client, options)
+    except Exception as error:
+        logger.warning(
+            "PostHog MCP analytics could not be enabled; skipping (%s)",
             type(error).__name__,
         )
 
@@ -767,6 +822,7 @@ def main():
     if not hosted_mode:
         check_api_token()
 
+    posthog_client = None
     try:
         # Parse allowed paths from command line argument
         allowed_paths = None
@@ -886,6 +942,18 @@ def main():
                 continue
             maybe_enable_mcpcat_tracking(profiled_code_mode_server, mcpcat_project_id, logger)
 
+        posthog_client = build_posthog_client(logger)
+        for instrumented_server in {
+            id(candidate): candidate
+            for candidate in (
+                *profiled_servers.values(),
+                code_mode_server,
+                *profiled_code_mode_servers.values(),
+            )
+            if candidate is not None
+        }.values():
+            maybe_enable_posthog_mcp_analytics(instrumented_server, posthog_client, logger)
+
         logger.info(f"Running server with transport: {normalized_transport}...")
         direct_streamable_stateless_http = streamable_http_stateless_enabled(
             hosted=hosted_mode,
@@ -949,6 +1017,18 @@ def main():
         logger.error(f"Unexpected error: {e}", exc_info=True)
         print(f"Unexpected Error: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        # server.run() returns once stdio closes or uvicorn finishes its graceful
+        # shutdown on SIGTERM, so this drains queued analytics on every exit path.
+        if posthog_client is not None:
+            # Optional telemetry must not replace the exit outcome above.
+            try:
+                posthog_client.shutdown()
+            except Exception as error:
+                logger.warning(
+                    "PostHog MCP analytics could not be shut down (%s)",
+                    type(error).__name__,
+                )
 
 
 if __name__ == "__main__":

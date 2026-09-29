@@ -14,6 +14,7 @@ from rootly_mcp_server.telemetry_scrubber import (
     is_credential_key,
     redact_agentcat_telemetry_text,
     scrub_event_arguments,
+    scrub_posthog_mcp_event,
 )
 
 
@@ -566,3 +567,40 @@ class TestEventHookHostileInput:
             None: "b",
             ("t",): "c",
         }
+
+
+class TestScrubPostHogMcpEvent:
+    """PostHog's `before_send` hook receives the built capture payload."""
+
+    def test_credential_keys_and_values_are_removed(self):
+        event = {
+            "event": "$mcp_tool_call",
+            "properties": {
+                "$mcp_parameters": {"arguments": {"password": "hunter2", "incident_id": "44"}},
+                "$mcp_response": {"content": [{"text": "Bearer abcdefghijklmnopqrstuvwxyz123456"}]},
+                "$mcp_error_message": "failed with api_key=" + "sk_" + "live_abcdefghijklmnop",
+                "$exception_list": [{"value": "token=ghp_abcdefghijklmnopqrstuvwxyz0123456789"}],
+            },
+        }
+        properties = scrub_posthog_mcp_event(event)["properties"]
+        assert properties["$mcp_parameters"]["arguments"] == {
+            "password": "[redacted]",
+            "incident_id": "44",
+        }
+        assert "abcdefghijklmnopqrstuvwxyz123456" not in repr(properties)
+        assert "abcdefghijklmnop" not in properties["$mcp_error_message"]
+        assert "ghp_" not in repr(properties["$exception_list"])
+
+    def test_metadata_is_left_untouched(self):
+        properties = {
+            "$session_id": "ses_123",
+            "$mcp_tool_name": "list_incidents",
+            "$mcp_duration_ms": 12.5,
+            "$mcp_is_error": False,
+        }
+        event = {"event": "$mcp_tool_call", "properties": dict(properties)}
+        assert scrub_posthog_mcp_event(event)["properties"] == properties
+
+    def test_event_without_properties_is_returned_unchanged(self):
+        event = {"event": "$mcp_initialize"}
+        assert scrub_posthog_mcp_event(event) == {"event": "$mcp_initialize"}
