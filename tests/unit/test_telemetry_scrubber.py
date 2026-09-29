@@ -604,3 +604,46 @@ class TestScrubPostHogMcpEvent:
     def test_event_without_properties_is_returned_unchanged(self):
         event = {"event": "$mcp_initialize"}
         assert scrub_posthog_mcp_event(event) == {"event": "$mcp_initialize"}
+
+
+class TestPydanticInputValue:
+    """Pydantic errors echo the rejected argument, which is caller content."""
+
+    MESSAGE = (
+        "1 validation error for call[list_incidents]\n"
+        "context\n"
+        "  Unexpected keyword argument [type=unexpected_keyword_argument, "
+        "input_value='Checking incidents for Acme, then paging', input_type=str]\n"
+        "    For further information visit https://errors.pydantic.dev/2.13/v/unexpected_keyword_argument"
+    )
+
+    def test_input_value_is_removed_and_diagnostics_kept(self):
+        scrubbed = redact_agentcat_telemetry_text(self.MESSAGE)
+
+        assert "Acme" not in scrubbed
+        assert "input_value=[redacted], input_type=str]" in scrubbed
+        assert "call[list_incidents]" in scrubbed
+        assert "type=unexpected_keyword_argument" in scrubbed
+
+    def test_truncated_message_is_removed_to_end_of_line(self):
+        truncated = self.MESSAGE.split(", input_type=")[0]
+
+        scrubbed = redact_agentcat_telemetry_text(truncated)
+
+        assert "Acme" not in scrubbed
+        assert scrubbed.endswith("input_value=[redacted]")
+
+    def test_posthog_error_message_is_scrubbed(self):
+        event = {"properties": {"$mcp_error_message": self.MESSAGE}}
+
+        scrubbed = scrub_posthog_mcp_event(event)["properties"]["$mcp_error_message"]
+
+        assert "Acme" not in scrubbed
+
+    def test_long_input_does_not_backtrack(self):
+        import time
+
+        hostile = "input_value=" + ", input_typ" * 20_000
+        start = time.perf_counter()
+        redact_agentcat_telemetry_text(hostile * 3)
+        assert time.perf_counter() - start < 1.0

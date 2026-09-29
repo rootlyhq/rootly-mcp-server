@@ -134,6 +134,16 @@ def _scrub_scheme_credential(match: re.Match[str]) -> str:
 _KEY = r"([A-Za-z_][A-Za-z0-9_.\[\]-]{0,63}+)"
 
 TELEMETRY_REDACTIONS: tuple[tuple[re.Pattern[str], Any], ...] = (
+    # Pydantic validation errors repeat the rejected argument verbatim:
+    # `[type=unexpected_keyword_argument, input_value='<caller text>', input_type=str]`.
+    # That is caller-supplied content, not a diagnostic -- the type and field
+    # already say what went wrong. Runs first so no later rule redacts only part
+    # of it. The value runs to `, input_type=` or, when the message was
+    # truncated, to the end of the line.
+    (
+        re.compile(r"input_value=(?:(?!, input_type=)[^\n])*+"),
+        "input_value=[redacted]",
+    ),
     (
         re.compile(r"\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]+)", re.IGNORECASE),
         _scrub_scheme_credential,

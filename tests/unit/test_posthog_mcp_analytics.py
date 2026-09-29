@@ -158,3 +158,33 @@ async def test_tool_schemas_are_unchanged():
         tools = await mcp_client.list_tools()
 
     assert list(tools[0].inputSchema["properties"]) == ["note"]
+
+
+@pytest.mark.parametrize("with_middleware", [True, False], ids=["tolerated", "rejected"])
+async def test_legacy_context_argument_text_never_reaches_posthog(with_middleware):
+    from rootly_mcp_server.server import LegacyContextArgumentMiddleware
+
+    server = FastMCP("test")
+    if with_middleware:
+        server.add_middleware(LegacyContextArgumentMiddleware())
+
+    @server.tool
+    def list_incidents(page_size: int = 10) -> str:
+        return f"page_size={page_size}"
+
+    intent = "Checking incidents for Acme before paging"
+    client = Posthog("phc_test", send=False)
+    captured: list[dict[str, Any]] = []
+    with patch.object(client, "capture", side_effect=lambda event, **kw: captured.append(kw)):
+        maybe_enable_posthog_mcp_analytics(server, client, logging.getLogger(__name__))
+        async with Client(server) as mcp_client:
+            result = await mcp_client.call_tool(
+                "list_incidents", {"page_size": 5, "context": intent}, raise_on_error=False
+            )
+        await asyncio.sleep(0.2)
+
+    # With the middleware the call succeeds; without it the error message would
+    # carry the intent, and the scrubber must still remove it.
+    assert result.is_error is (not with_middleware)
+    assert captured, "expected events to be captured"
+    assert "Acme" not in repr(captured)
