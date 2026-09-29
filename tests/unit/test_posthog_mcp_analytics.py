@@ -211,7 +211,25 @@ def test_maybe_enable_posthog_mcp_analytics_skips_server_with_duck_typed_middlew
 
 
 def test_maybe_enable_posthog_mcp_analytics_instruments_server_with_builtin_middleware():
+    from rootly_mcp_server.server import (
+        ArgumentNormalizationMiddleware,
+        CamelCaseAliasMiddleware,
+        InjectedToolAnnotationMiddleware,
+        LegacyContextArgumentMiddleware,
+        ToolUsageLoggingMiddleware,
+    )
+
+    # The middleware create_rootly_mcp_server registers; none may trip the skip.
+    server = FastMCP("test")
+    server.add_middleware(CamelCaseAliasMiddleware({"listIncidents": "list_incidents"}))
+    server.add_middleware(ArgumentNormalizationMiddleware())
+    server.add_middleware(LegacyContextArgumentMiddleware())
+    server.add_middleware(InjectedToolAnnotationMiddleware())
+    server.add_middleware(ToolUsageLoggingMiddleware())
+    logger = Mock()
+
     with patch("posthog.mcp.instrument") as mock_instrument:
-        maybe_enable_posthog_mcp_analytics(FastMCP("test"), Mock(), Mock())
+        maybe_enable_posthog_mcp_analytics(server, Mock(), logger)
 
     mock_instrument.assert_called_once()
+    logger.warning.assert_not_called()
