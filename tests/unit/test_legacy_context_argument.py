@@ -103,9 +103,7 @@ def test_live_agentcat_parameters_are_not_retired():
 @pytest.mark.asyncio
 async def test_every_retired_parameter_is_dropped(monkeypatch):
     """The drop generalizes past `context` -- one entry or several."""
-    monkeypatch.setattr(
-        "rootly_mcp_server.server.RETIRED_INJECTED_PARAMS", ("context", "intent")
-    )
+    monkeypatch.setattr("rootly_mcp_server.server.RETIRED_INJECTED_PARAMS", ("context", "intent"))
     async with Client(_server()) as client:
         result = await client.call_tool(
             "list_incidents", {"page_size": 7, "context": "c", "intent": "i"}
@@ -117,9 +115,7 @@ async def test_every_retired_parameter_is_dropped(monkeypatch):
 @pytest.mark.asyncio
 async def test_retired_parameter_declared_by_a_tool_is_kept(monkeypatch):
     """A tool that owns the name still receives it."""
-    monkeypatch.setattr(
-        "rootly_mcp_server.server.RETIRED_INJECTED_PARAMS", ("context", "intent")
-    )
+    monkeypatch.setattr("rootly_mcp_server.server.RETIRED_INJECTED_PARAMS", ("context", "intent"))
     async with Client(_server()) as client:
         result = await client.call_tool("annotate", {"context": "kept"})
 

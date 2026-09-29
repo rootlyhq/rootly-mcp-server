@@ -584,8 +584,10 @@ class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
         call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
     ) -> Any:
         args = context.message.arguments
-        present = [name for name in RETIRED_INJECTED_PARAMS if args and name in args]
-        if present and context.fastmcp_context is not None:
+        if args and context.fastmcp_context is not None:
+            present = [name for name in RETIRED_INJECTED_PARAMS if name in args]
+            if not present:
+                return await call_next(context)
             tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
             # An unknown tool is left alone so it fails as "unknown tool", and a
             # tool that declares one of these itself keeps it.
