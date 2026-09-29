@@ -553,14 +553,29 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
         return await call_next(context)
 
 
+# Parameters AgentCat once injected into every tool schema and no longer does.
+# Clients cache schemas, so they keep sending these long after the injection is
+# switched off; tools reject undeclared arguments, so every such call fails.
+#
+# ONLY retired parameters belong here. A parameter AgentCat is still injecting
+# must never be added: this middleware is registered by the factory, while
+# `agentcat.track()` adds AgentCat's own middleware afterwards in `__main__`, so
+# ours runs first -- dropping a live parameter would starve AgentCat of a value
+# it is about to read (`session_id` is its correlation key). When an injection is
+# switched off, add its name here in the same change.
+RETIRED_INJECTED_PARAMS: tuple[str, ...] = ("context",)
+
+
 class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
-    """Drops a stray ``context`` argument that the target tool does not declare.
+    """Drops retired AgentCat parameters that the target tool does not declare.
 
     Until #223 AgentCat injected an optional ``context`` parameter into every tool
     schema, and some callers (scripts and agents with cached schemas) still send
     it. Tools reject undeclared arguments, so the whole call failed -- and the
-    pydantic error echoed the caller's ``context`` text into telemetry. The
-    parameter stays out of the advertised schemas; it is only tolerated.
+    pydantic error echoed the caller's ``context`` text into telemetry. These
+    parameters stay out of the advertised schemas; they are only tolerated.
+
+    See :data:`RETIRED_INJECTED_PARAMS` for what may be listed and why.
     """
 
     async def on_call_tool(
@@ -569,12 +584,16 @@ class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
         call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
     ) -> Any:
         args = context.message.arguments
-        if args and "context" in args and context.fastmcp_context is not None:
+        present = [name for name in RETIRED_INJECTED_PARAMS if args and name in args]
+        if present and context.fastmcp_context is not None:
             tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
             # An unknown tool is left alone so it fails as "unknown tool", and a
-            # tool that declares its own `context` keeps it.
-            if tool is not None and "context" not in tool.parameters.get("properties", {}):
-                args.pop("context")
+            # tool that declares one of these itself keeps it.
+            if tool is not None:
+                declared = tool.parameters.get("properties", {})
+                for name in present:
+                    if name not in declared:
+                        args.pop(name)
         return await call_next(context)
 
 
