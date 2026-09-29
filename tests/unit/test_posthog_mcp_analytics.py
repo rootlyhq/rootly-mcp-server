@@ -20,6 +20,13 @@ from rootly_mcp_server.__main__ import (
     main,
     maybe_enable_posthog_mcp_analytics,
 )
+from rootly_mcp_server.server import (
+    ArgumentNormalizationMiddleware,
+    CamelCaseAliasMiddleware,
+    InjectedToolAnnotationMiddleware,
+    LegacyContextArgumentMiddleware,
+    ToolUsageLoggingMiddleware,
+)
 from rootly_mcp_server.telemetry_scrubber import scrub_posthog_mcp_event
 
 # Fake credentials, split so secret scanners do not flag the fixtures.
@@ -44,13 +51,13 @@ def test_build_posthog_client_uses_env_host():
 
 def test_maybe_enable_posthog_mcp_analytics_is_noop_without_client():
     with patch("posthog.mcp.instrument") as mock_instrument:
-        maybe_enable_posthog_mcp_analytics(object(), None, Mock())
+        maybe_enable_posthog_mcp_analytics(FastMCP("test"), None, Mock())
     mock_instrument.assert_not_called()
 
 
 def test_maybe_enable_posthog_mcp_analytics_disables_schema_injection():
     with patch("posthog.mcp.instrument") as mock_instrument:
-        maybe_enable_posthog_mcp_analytics(object(), Mock(), Mock())
+        maybe_enable_posthog_mcp_analytics(FastMCP("test"), Mock(), Mock())
 
     options = mock_instrument.call_args.args[2]
     assert options.context is False
@@ -63,7 +70,7 @@ def test_maybe_enable_posthog_mcp_analytics_disables_schema_injection():
 def test_maybe_enable_posthog_mcp_analytics_swallows_instrument_errors():
     logger = Mock()
     with patch("posthog.mcp.instrument", side_effect=RuntimeError("boom")):
-        maybe_enable_posthog_mcp_analytics(object(), Mock(), logger)
+        maybe_enable_posthog_mcp_analytics(FastMCP("test"), Mock(), logger)
     logger.warning.assert_called_once()
 
 
@@ -190,46 +197,55 @@ async def test_legacy_context_argument_text_never_reaches_posthog(with_middlewar
     assert "Acme" not in repr(captured)
 
 
-def test_maybe_enable_posthog_mcp_analytics_skips_server_with_duck_typed_middleware():
-    """AgentCat's middleware does not subclass fastmcp Middleware; posthog.mcp
-    raises AttributeError on it during dispatch, failing every tool call."""
+class DuckTypedMiddleware:
+    """Shaped like AgentCat's middleware: callable, not a fastmcp Middleware."""
 
-    class DuckTypedMiddleware:
-        async def __call__(self, context, call_next):
-            return await call_next(context)
+    async def __call__(self, context, call_next):
+        return await call_next(context)
 
+
+def server_with(*middleware) -> FastMCP:
     server = FastMCP("test")
-    server.add_middleware(DuckTypedMiddleware())  # type: ignore[arg-type]  # the point of the test
-    logger = Mock()
+    for item in middleware:
+        server.add_middleware(item)
 
-    with patch("posthog.mcp.instrument") as mock_instrument:
-        maybe_enable_posthog_mcp_analytics(server, Mock(), logger)
+    @server.tool
+    def ping() -> str:
+        return "pong"
 
-    mock_instrument.assert_not_called()
-    logger.warning.assert_called_once()
-    assert "DuckTypedMiddleware" in logger.warning.call_args.args[1]
+    return server
 
 
-def test_maybe_enable_posthog_mcp_analytics_instruments_server_with_builtin_middleware():
-    from rootly_mcp_server.server import (
-        ArgumentNormalizationMiddleware,
-        CamelCaseAliasMiddleware,
-        InjectedToolAnnotationMiddleware,
-        LegacyContextArgumentMiddleware,
-        ToolUsageLoggingMiddleware,
+async def list_tools_and_capture(server: FastMCP) -> tuple[list[str], list[str]]:
+    """List tools through the real PostHog pipeline; return tool and event names."""
+    client = Posthog("phc_test", send=False)
+    events: list[str] = []
+    with patch.object(client, "capture", side_effect=lambda event, **_kw: events.append(event)):
+        maybe_enable_posthog_mcp_analytics(server, client, logging.getLogger(__name__))
+        async with Client(server) as mcp_client:
+            tools = [tool.name for tool in await mcp_client.list_tools()]
+        await asyncio.sleep(0.2)
+    return tools, events
+
+
+async def test_incompatible_middleware_turns_posthog_off_instead_of_breaking_tools(caplog):
+    tools, events = await list_tools_and_capture(server_with(DuckTypedMiddleware()))
+
+    assert tools == ["ping"]
+    assert events == []
+    assert "incompatible middleware DuckTypedMiddleware" in caplog.text
+
+
+async def test_our_middleware_keeps_posthog_on():
+    server = server_with(
+        CamelCaseAliasMiddleware({"listIncidents": "list_incidents"}),
+        ArgumentNormalizationMiddleware(),
+        LegacyContextArgumentMiddleware(),
+        InjectedToolAnnotationMiddleware(),
+        ToolUsageLoggingMiddleware(),
     )
 
-    # The middleware create_rootly_mcp_server registers; none may trip the skip.
-    server = FastMCP("test")
-    server.add_middleware(CamelCaseAliasMiddleware({"listIncidents": "list_incidents"}))
-    server.add_middleware(ArgumentNormalizationMiddleware())
-    server.add_middleware(LegacyContextArgumentMiddleware())
-    server.add_middleware(InjectedToolAnnotationMiddleware())
-    server.add_middleware(ToolUsageLoggingMiddleware())
-    logger = Mock()
+    tools, events = await list_tools_and_capture(server)
 
-    with patch("posthog.mcp.instrument") as mock_instrument:
-        maybe_enable_posthog_mcp_analytics(server, Mock(), logger)
-
-    mock_instrument.assert_called_once()
-    logger.warning.assert_not_called()
+    assert tools == ["ping"]
+    assert "$mcp_tools_list" in events

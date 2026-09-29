@@ -18,6 +18,9 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware as MCPMiddleware
+
 from . import __version__, server_defaults
 from .code_mode import (
     code_mode_enabled_from_env,
@@ -224,29 +227,30 @@ def build_posthog_client(logger: logging.Logger) -> Any | None:
         return None
 
 
-def maybe_enable_posthog_mcp_analytics(server, posthog_client, logger: logging.Logger) -> None:
+def _posthog_incompatible_middleware(server: FastMCP) -> list[str]:
+    """Names of middleware posthog.mcp (<= 7.60.1) fails on.
+
+    It reads dispatch hooks off each middleware's class and raises for anything
+    that is not a fastmcp Middleware subclass, such as AgentCat's, breaking
+    tools/list. Delete once posthog.mcp tolerates such middleware.
+    """
+    return [type(m).__name__ for m in server.middleware if not isinstance(m, MCPMiddleware)]
+
+
+def maybe_enable_posthog_mcp_analytics(
+    server: FastMCP, posthog_client, logger: logging.Logger
+) -> None:
     """Instrument *server* with PostHog MCP analytics when a client is configured."""
     if posthog_client is None:
         return
+    if incompatible := _posthog_incompatible_middleware(server):
+        logger.warning(
+            "PostHog MCP analytics off for %s: incompatible middleware %s",
+            server.name,
+            ", ".join(incompatible),
+        )
+        return
     try:
-        from fastmcp.server.middleware import Middleware
-
-        # posthog.mcp reads `on_message`/`on_call_tool`/... off each middleware's
-        # class on the tool dispatch path, assuming a fastmcp Middleware subclass.
-        # AgentCat's middleware is duck-typed, so the lookup raises AttributeError
-        # and every tool call fails. Skip PostHog rather than break the server.
-        foreign = [
-            type(middleware).__name__
-            for middleware in getattr(server, "middleware", ())
-            if not isinstance(middleware, Middleware)
-        ]
-        if foreign:
-            logger.warning(
-                "PostHog MCP analytics skipped: incompatible middleware %s",
-                ", ".join(foreign),
-            )
-            return
-
         from posthog.mcp import MCPAnalyticsOptions, UserIdentity, instrument
 
         def identify(_request: Any, _extra: Any) -> Any:
