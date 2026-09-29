@@ -1,4 +1,4 @@
-"""Tests for the PostHog MCP analytics wiring in __main__.
+"""Tests for PostHog MCP analytics (posthog_analytics) and its wiring in main().
 
 The end-to-end tests drive a real FastMCP server through the real posthog.mcp
 pipeline with only `capture` intercepted, so a change in the SDK's event shape
@@ -15,10 +15,17 @@ import pytest
 from fastmcp import Client, FastMCP
 from posthog import Posthog
 
-from rootly_mcp_server.__main__ import (
+from rootly_mcp_server.__main__ import main
+from rootly_mcp_server.posthog_analytics import (
     build_posthog_client,
-    main,
     maybe_enable_posthog_mcp_analytics,
+)
+from rootly_mcp_server.server import (
+    ArgumentNormalizationMiddleware,
+    CamelCaseAliasMiddleware,
+    InjectedToolAnnotationMiddleware,
+    LegacyContextArgumentMiddleware,
+    ToolUsageLoggingMiddleware,
 )
 from rootly_mcp_server.telemetry_scrubber import scrub_posthog_mcp_event
 
@@ -31,26 +38,33 @@ FAKE_STRIPE = "sk_" + "live_abcdefghijklmnopqrstuvwxyz"
 
 def test_build_posthog_client_is_noop_without_token():
     with patch.dict("os.environ", {}, clear=True):
-        assert build_posthog_client(Mock()) is None
+        assert build_posthog_client(Mock(), agentcat_enabled=False) is None
 
 
 def test_build_posthog_client_uses_env_host():
     environ = {"POSTHOG_PROJECT_TOKEN": "phc_test", "POSTHOG_HOST": "https://eu.i.posthog.com"}
     with patch.dict("os.environ", environ, clear=True):
-        client = build_posthog_client(Mock())
+        client = build_posthog_client(Mock(), agentcat_enabled=False)
     assert isinstance(client, Posthog)
     assert client.host == "https://eu.i.posthog.com"
 
 
+def test_build_posthog_client_stays_off_while_agentcat_is_active():
+    logger = Mock()
+    with patch.dict("os.environ", {"POSTHOG_PROJECT_TOKEN": "phc_test"}, clear=True):
+        assert build_posthog_client(logger, agentcat_enabled=True) is None
+    logger.info.assert_called_once_with("PostHog MCP analytics off: AgentCat is active")
+
+
 def test_maybe_enable_posthog_mcp_analytics_is_noop_without_client():
-    with patch("posthog.mcp.instrument") as mock_instrument:
-        maybe_enable_posthog_mcp_analytics(object(), None, Mock())
+    with patch("rootly_mcp_server.posthog_analytics.instrument") as mock_instrument:
+        maybe_enable_posthog_mcp_analytics(FastMCP("test"), None, Mock())
     mock_instrument.assert_not_called()
 
 
 def test_maybe_enable_posthog_mcp_analytics_disables_schema_injection():
-    with patch("posthog.mcp.instrument") as mock_instrument:
-        maybe_enable_posthog_mcp_analytics(object(), Mock(), Mock())
+    with patch("rootly_mcp_server.posthog_analytics.instrument") as mock_instrument:
+        maybe_enable_posthog_mcp_analytics(FastMCP("test"), Mock(), Mock())
 
     options = mock_instrument.call_args.args[2]
     assert options.context is False
@@ -62,13 +76,13 @@ def test_maybe_enable_posthog_mcp_analytics_disables_schema_injection():
 
 def test_maybe_enable_posthog_mcp_analytics_swallows_instrument_errors():
     logger = Mock()
-    with patch("posthog.mcp.instrument", side_effect=RuntimeError("boom")):
-        maybe_enable_posthog_mcp_analytics(object(), Mock(), logger)
+    with patch("rootly_mcp_server.posthog_analytics.instrument", side_effect=RuntimeError("boom")):
+        maybe_enable_posthog_mcp_analytics(FastMCP("test"), Mock(), logger)
     logger.warning.assert_called_once()
 
 
-def test_main_shutdown_failure_does_not_mask_exit():
-    args = SimpleNamespace(
+def stdio_args() -> SimpleNamespace:
+    return SimpleNamespace(
         swagger_path=None,
         log_level="ERROR",
         name="Rootly",
@@ -84,12 +98,40 @@ def test_main_shutdown_failure_does_not_mask_exit():
         code_mode_path=None,
         host=False,
     )
+
+
+@pytest.mark.parametrize("agentcat_enabled", [True, False])
+def test_main_builds_posthog_only_without_agentcat(agentcat_enabled):
+    server = SimpleNamespace(run=Mock())
+
+    with patch.dict("os.environ", {"ROOTLY_API_TOKEN": "x" * 40}, clear=True):
+        with patch("rootly_mcp_server.__main__.parse_args", return_value=stdio_args()):
+            with patch("rootly_mcp_server.__main__.setup_logging"):
+                with patch(
+                    "rootly_mcp_server.__main__.create_rootly_mcp_server",
+                    return_value=server,
+                ):
+                    with patch(
+                        "rootly_mcp_server.__main__.maybe_enable_mcpcat_tracking",
+                        return_value=agentcat_enabled,
+                    ):
+                        with patch(
+                            "rootly_mcp_server.__main__.build_posthog_client",
+                            return_value=None,
+                        ) as build:
+                            main()
+
+    build.assert_called_once()
+    assert build.call_args.kwargs == {"agentcat_enabled": agentcat_enabled}
+
+
+def test_main_shutdown_failure_does_not_mask_exit():
     server = SimpleNamespace(run=Mock())
     posthog_client = Mock()
     posthog_client.shutdown.side_effect = RuntimeError("flush failed")
 
     with patch.dict("os.environ", {"ROOTLY_API_TOKEN": "x" * 40}, clear=True):
-        with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
+        with patch("rootly_mcp_server.__main__.parse_args", return_value=stdio_args()):
             with patch("rootly_mcp_server.__main__.setup_logging"):
                 with patch(
                     "rootly_mcp_server.__main__.create_rootly_mcp_server",
@@ -188,3 +230,42 @@ async def test_legacy_context_argument_text_never_reaches_posthog(with_middlewar
     assert result.is_error is (not with_middleware)
     assert captured, "expected events to be captured"
     assert "Acme" not in repr(captured)
+
+
+def server_with(*middleware) -> FastMCP:
+    server = FastMCP("test")
+    for item in middleware:
+        server.add_middleware(item)
+
+    @server.tool
+    def ping() -> str:
+        return "pong"
+
+    return server
+
+
+async def list_tools_and_capture(server: FastMCP) -> tuple[list[str], list[str]]:
+    """List tools through the real PostHog pipeline; return tool and event names."""
+    client = Posthog("phc_test", send=False)
+    events: list[str] = []
+    with patch.object(client, "capture", side_effect=lambda event, **_kw: events.append(event)):
+        maybe_enable_posthog_mcp_analytics(server, client, logging.getLogger(__name__))
+        async with Client(server) as mcp_client:
+            tools = [tool.name for tool in await mcp_client.list_tools()]
+        await asyncio.sleep(0.2)
+    return tools, events
+
+
+async def test_our_middleware_keeps_posthog_on():
+    server = server_with(
+        CamelCaseAliasMiddleware({"listIncidents": "list_incidents"}),
+        ArgumentNormalizationMiddleware(),
+        LegacyContextArgumentMiddleware(),
+        InjectedToolAnnotationMiddleware(),
+        ToolUsageLoggingMiddleware(),
+    )
+
+    tools, events = await list_tools_and_capture(server)
+
+    assert tools == ["ping"]
+    assert "$mcp_tools_list" in events
