@@ -138,11 +138,13 @@ TELEMETRY_REDACTIONS: tuple[tuple[re.Pattern[str], Any], ...] = (
     # `[type=unexpected_keyword_argument, input_value='<caller text>', input_type=str]`.
     # That is caller-supplied content, not a diagnostic -- the type and field
     # already say what went wrong. Runs first so no later rule redacts only part
-    # of it. The value runs to `, input_type=` or, when the message was
-    # truncated, to the end of the line.
+    # of it. Everything to the end of the line goes, keeping only a trailing
+    # `, input_type=<type>]` -- Pydantic always puts that last, and anchoring to
+    # the line end means caller text containing `, input_type=` cannot end the
+    # value early. A truncated message loses the whole tail instead.
     (
-        re.compile(r"input_value=(?:(?!, input_type=)[^\n])*+"),
-        "input_value=[redacted]",
+        re.compile(r"input_value=[^\n]*?(, input_type=[\w.]+\])?$", re.MULTILINE),
+        r"input_value=[redacted]\1",
     ),
     (
         re.compile(r"\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]+)", re.IGNORECASE),

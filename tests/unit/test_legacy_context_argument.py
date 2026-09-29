@@ -60,3 +60,26 @@ async def test_context_stays_out_of_advertised_schemas():
         tools = {tool.name: tool for tool in await client.list_tools()}
 
     assert "context" not in tools["list_incidents"].inputSchema["properties"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [("tool_search", {"query": "incidents"}), ("list_tools", {}), ("tags", {})],
+)
+async def test_code_mode_server_tolerates_legacy_context(monkeypatch, tool, arguments):
+    """The production factory stack plus the Code Mode transform, not a bare server.
+
+    Discovery tools never reach the Rootly API, so no HTTP mocking is needed.
+    """
+    from rootly_mcp_server.code_mode import create_rootly_codemode_server
+
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "test-token")
+    server = create_rootly_codemode_server()
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            tool, {**arguments, "context": "legacy intent"}, raise_on_error=False
+        )
+
+    assert not result.is_error, result.content

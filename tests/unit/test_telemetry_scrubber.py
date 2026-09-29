@@ -633,6 +633,25 @@ class TestPydanticInputValue:
         assert "Acme" not in scrubbed
         assert scrubbed.endswith("input_value=[redacted]")
 
+    @pytest.mark.parametrize(
+        "caller_text",
+        [
+            "Acme, input_type=str] secret tail",
+            "Acme, input_type=str]",
+            "Acme\\n, input_type=str] more",
+        ],
+        ids=["delimiter-mid-value", "delimiter-at-end", "escaped-newline"],
+    )
+    def test_delimiter_inside_caller_text_does_not_end_the_value(self, caller_text):
+        message = self.MESSAGE.replace("Checking incidents for Acme, then paging", caller_text)
+
+        scrubbed = redact_agentcat_telemetry_text(message)
+
+        assert "Acme" not in scrubbed
+        assert "tail" not in scrubbed
+        assert "more" not in scrubbed
+        assert "input_value=[redacted], input_type=str]" in scrubbed
+
     def test_posthog_error_message_is_scrubbed(self):
         event = {"properties": {"$mcp_error_message": self.MESSAGE}}
 
@@ -643,7 +662,7 @@ class TestPydanticInputValue:
     def test_long_input_does_not_backtrack(self):
         import time
 
-        hostile = "input_value=" + ", input_typ" * 20_000
+        hostile = "input_value=" + ", input_type=str" * 20_000
         start = time.perf_counter()
         redact_agentcat_telemetry_text(hostile * 3)
         assert time.perf_counter() - start < 1.0
