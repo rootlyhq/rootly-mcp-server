@@ -2674,7 +2674,10 @@ class TestRetrospectiveContentBound:
                     },
                     {"id": "r2", "attributes": {"content": "short", "incident_id": "i2"}},
                 ],
-                "meta": {"total_count": 2},
+                # More matches than returned, so the pagination note appears
+                # alongside the truncation -- the case where the two could
+                # contradict each other.
+                "meta": {"total_count": 50},
             }
             return response
 
@@ -2689,3 +2692,7 @@ class TestRetrospectiveContentBound:
         assert whole["content"] == "short"
         assert "content_truncated" not in whole
         assert "content_note" in result
+        # The pagination note is present here, and must not call a cut
+        # document a full one.
+        assert "Showing 2 of 50" in result["note"]
+        assert "full" not in result["note"]

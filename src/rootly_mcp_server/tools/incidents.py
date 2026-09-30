@@ -1223,9 +1223,12 @@ def register_incident_tools(
                     "with `get_incident_retrospective` using its `incident_id`."
                 )
             if isinstance(total, int) and total > len(retrospectives):
+                # Not "its full document": above 12,000 characters the content
+                # is cut, and this note would otherwise contradict the record's
+                # own `content_truncated`.
                 result["note"] = (
-                    f"Showing {len(retrospectives)} of {total:,}. Each carries its full "
-                    "document; page through or filter rather than widening the page."
+                    f"Showing {len(retrospectives)} of {total:,}. Documents are long, so "
+                    "page through or filter rather than widening the page."
                 )
             return result
         except Exception as e:
