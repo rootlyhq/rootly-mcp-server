@@ -64,10 +64,22 @@ class MCPError:
         # all to execution_error.
         status_code = getattr(getattr(exception, "response", None), "status_code", None)
         if not isinstance(status_code, int):
-            # Otherwise take the first three-digit number, so "404 not found"
-            # and "HTTP error 500" categorize the same as a response would.
-            match = re.search(r"\b([1-5]\d{2})\b", error_str)
-            status_code = int(match.group(1)) if match else None
+            # Otherwise the number has to identify itself as a status: any
+            # standalone three-digit number swept up "invalid page size 500"
+            # and called it a server error, ahead of the validation branch
+            # below. Matches "404 Not Found", "HTTP error 500", "status: 503".
+            # A number only counts as a status when it says so: named by a
+            # keyword ("HTTP error 500", "status: 503"), leading the message
+            # ("404 not found"), or followed by a reason phrase ("400 Bad
+            # Request"). A bare number mid-sentence -- "invalid page size 500",
+            # "422 things" -- is left to the validation branch below.
+            match = re.search(
+                r"(?i:\b(?:HTTP|status)(?:\s+(?:error|code|status))?)\W{0,3}([1-5]\d{2})\b"
+                r"|^\s*([1-5]\d{2})\b"
+                r"|\b([1-5]\d{2})\s+(?=[A-Z][a-z])",
+                error_str,
+            )
+            status_code = int(next(g for g in match.groups() if g)) if match else None
         if isinstance(status_code, int):
             if 400 <= status_code < 500:
                 return "client_error", f"Client error: {error_str}"

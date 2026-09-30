@@ -1,5 +1,7 @@
 """Focused tests for mcp_error module."""
 
+import pytest
+
 from rootly_mcp_server.mcp_error import MCPError
 
 
@@ -104,3 +106,40 @@ class TestHttpStatusCategorization:
 
     def test_an_unrelated_number_is_not_read_as_a_status(self):
         assert MCPError.categorize_error(Exception("boom"))[0] == "execution_error"
+
+
+class TestStatusFallbackNeedsAStatus:
+    """Without a response object, only text that identifies a status counts.
+
+    The fallback used to take any standalone three-digit number, so a message
+    about a page size or a character count was categorized as an HTTP failure --
+    ahead of the validation branch, which is where those belong.
+    """
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "invalid page size 500",
+            "Asked for 500, capped at 10",
+            "1 validation error for call[list_incident_post_mortems]: 422 things",
+            "Retrospectives average about 7,500 characters",
+        ],
+    )
+    def test_a_bare_number_is_not_a_status(self, message):
+        kind, _ = MCPError.categorize_error(Exception(message))
+        assert kind not in ("client_error", "server_error")
+
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("404 Not Found", "client_error"),
+            ("HTTP error 500: Internal Server Error", "server_error"),
+            ("Client error '400 Bad Request' for url https://api.rootly.com/v1/x", "client_error"),
+            ("status: 503", "server_error"),
+            ("Server error 502 Bad Gateway", "server_error"),
+            ("HTTP 429 Too Many Requests", "client_error"),
+        ],
+    )
+    def test_a_stated_status_still_categorizes(self, message, expected):
+        kind, _ = MCPError.categorize_error(Exception(message))
+        assert kind == expected

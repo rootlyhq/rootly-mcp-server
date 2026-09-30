@@ -11,7 +11,7 @@ Tests cover:
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, Mock, call, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
@@ -20,6 +20,7 @@ from rootly_mcp_server.server import DEFAULT_ALLOWED_PATHS, create_rootly_mcp_se
 from rootly_mcp_server.server_defaults import _generate_recommendation
 from rootly_mcp_server.tools.incidents import (
     INCIDENT_LIST_FIELDS,
+    RETROSPECTIVE_CONTENT_MAX_CHARS,
     _augment_pagination_error,
     _normalize_incident_reference,
     _summarize_incident_record,
@@ -2636,3 +2637,55 @@ class TestRetrospectiveListCap:
         # Comma-joined: a list becomes a repeated key the endpoint ignores.
         assert params["filter[team_ids]"] == "t1,t2"
         assert params["filter[created_at][gte]"] == "2026-08-01"
+
+
+class TestRetrospectiveContentBound:
+    """A page cap bounds how many documents come back, not how large each is.
+
+    Live published retrospectives reach 43,712 characters, so a full page of
+    ten can exceed the budget the page cap exists to protect.
+    """
+
+    @staticmethod
+    def _register(responder):
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp.tools
+
+    @pytest.mark.asyncio
+    async def test_a_long_document_is_cut_and_says_so(self):
+        long_content = "x" * 40_000
+
+        async def responder(method, path, **kwargs):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json.return_value = {
+                "data": [
+                    {
+                        "id": "r1",
+                        "attributes": {"content": long_content, "incident_id": "i1"},
+                    },
+                    {"id": "r2", "attributes": {"content": "short", "incident_id": "i2"}},
+                ],
+                "meta": {"total_count": 2},
+            }
+            return response
+
+        tools = self._register(responder)
+        result = await tools["list_incident_post_mortems"](page_size=2)
+
+        cut, whole = result["retrospectives"]
+        assert len(cut["content"]) == RETROSPECTIVE_CONTENT_MAX_CHARS
+        assert cut["content_truncated"] is True
+        assert cut["content_chars"] == 40_000
+        # The short one is untouched and carries no truncation marker.
+        assert whole["content"] == "short"
+        assert "content_truncated" not in whole
+        assert "content_note" in result

@@ -27,6 +27,13 @@ RETROSPECTIVE_PAGE_SIZE_DEFAULT = 5
 RETROSPECTIVE_PAGE_SIZE_MAX = 10
 # Mean document length across a live page of 100.
 RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500
+# The page cap bounds how many documents come back, not how large each one is,
+# so one long retrospective can still swamp the budget the cap protects. Live
+# published documents run to 43,712 characters (median 11,931), well past the
+# mean above -- a full page of those is about 110k tokens. Each document is
+# truncated to this many characters, with the cut marked on the record; the
+# whole document is one `get_incident_retrospective` call away.
+RETROSPECTIVE_CONTENT_MAX_CHARS = 12_000
 INCIDENT_SEARCH_FIELDS = (
     "id,title,summary,status,created_at,updated_at,url,started_at,retrospective_progress_status"
 )
@@ -1169,21 +1176,27 @@ def register_incident_tools(
             payload = response.json()
 
             retrospectives = []
+            truncated_count = 0
             for record in payload.get("data") or []:
                 attributes = record.get("attributes") or {}
-                retrospectives.append(
-                    {
-                        "id": record.get("id"),
-                        "incident_id": attributes.get("incident_id"),
-                        "title": attributes.get("title"),
-                        "status": attributes.get("status"),
-                        "content": attributes.get("content"),
-                        "url": attributes.get("url"),
-                        "created_at": attributes.get("created_at"),
-                        "published_at": attributes.get("published_at"),
-                        "resolved_at": attributes.get("resolved_at"),
-                    }
-                )
+                content = attributes.get("content")
+                entry: JsonDict = {
+                    "id": record.get("id"),
+                    "incident_id": attributes.get("incident_id"),
+                    "title": attributes.get("title"),
+                    "status": attributes.get("status"),
+                    "content": content,
+                    "url": attributes.get("url"),
+                    "created_at": attributes.get("created_at"),
+                    "published_at": attributes.get("published_at"),
+                    "resolved_at": attributes.get("resolved_at"),
+                }
+                if isinstance(content, str) and len(content) > RETROSPECTIVE_CONTENT_MAX_CHARS:
+                    entry["content"] = content[:RETROSPECTIVE_CONTENT_MAX_CHARS]
+                    entry["content_truncated"] = True
+                    entry["content_chars"] = len(content)
+                    truncated_count += 1
+                retrospectives.append(entry)
 
             total = (payload.get("meta") or {}).get("total_count")
             result: JsonDict = {
@@ -1201,6 +1214,13 @@ def register_incident_tools(
                     "upstream enforces no limit, so an uncapped page can exceed a "
                     "whole context window. Filter by team, service, status or date "
                     "to narrow instead."
+                )
+            if truncated_count:
+                result["content_note"] = (
+                    f"{truncated_count} of {len(retrospectives)} documents were cut at "
+                    f"{RETROSPECTIVE_CONTENT_MAX_CHARS:,} characters and carry "
+                    "`content_truncated` with their full `content_chars`. Fetch one whole "
+                    "with `get_incident_retrospective` using its `incident_id`."
                 )
             if isinstance(total, int) and total > len(retrospectives):
                 result["note"] = (
