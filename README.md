@@ -397,6 +397,21 @@ To override the hosted or self-hosted default profile entirely, set `ROOTLY_MCP_
 
 To expose only a specific subset of MCP tools on a self-hosted deployment, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names, for example `list_incidents,get_incident,get_server_version`.
 
+### PostHog MCP analytics
+
+Setting `POSTHOG_PROJECT_TOKEN` (and optionally `POSTHOG_HOST`, default
+`https://us.i.posthog.com`) sends `$mcp_*` events to PostHog with the same
+privacy settings as AgentCat: no injected `context`, `conversation_id` or
+`llm_model` parameters, credential scrubbing before send, and hosted users
+identified by Rootly user ID only.
+
+While AgentCat is active, PostHog stays off unless
+`POSTHOG_ALONGSIDE_AGENTCAT=true` is also set, so the two can be compared
+before migrating. posthog.mcp (<= 7.60.1) cannot handle AgentCat's middleware
+directly, so the server wraps it in an adapter first. On the stateless hosted
+transport, PostHog sessions are tied together through the `Mcp-Session-Id`
+header minted at `initialize`.
+
 ### OpenAI Apps domain verification
 
 Hosted deployments expose an unauthenticated domain-verification endpoint used by the OpenAI plugin directory:
