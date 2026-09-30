@@ -28,7 +28,11 @@ from .code_mode import (
     normalize_code_mode_path,
 )
 from .exceptions import RootlyConfigurationError, RootlyMCPError
-from .posthog_analytics import build_posthog_client, maybe_enable_posthog_mcp_analytics
+from .posthog_analytics import (
+    build_posthog_client,
+    maybe_enable_posthog_mcp_analytics,
+    posthog_session_middleware,
+)
 from .security import validate_api_token
 from .server import create_rootly_mcp_server, get_hosted_auth_middleware
 from .server_defaults import (
@@ -988,6 +992,11 @@ def main():
         posthog_client = build_posthog_client(logger, agentcat_enabled=any(agentcat_results))
         for mcp_server in all_servers:
             maybe_enable_posthog_mcp_analytics(mcp_server, posthog_client, logger)
+        # Hosted auth first, so unauthenticated requests never get a session token.
+        http_middleware = [
+            *(get_hosted_auth_middleware() or []),
+            *posthog_session_middleware(posthog_client),
+        ]
 
         logger.info(f"Running server with transport: {normalized_transport}...")
         direct_streamable_stateless_http = streamable_http_stateless_enabled(
@@ -999,7 +1008,7 @@ def main():
             run_dual_http_server(
                 server=server,
                 log_level=args.log_level,
-                middleware=get_hosted_auth_middleware(),
+                middleware=http_middleware,
                 code_mode_server=code_mode_server,
                 code_mode_path=code_mode_path if code_mode_server is not None else None,
                 profiled_servers=profiled_servers,
@@ -1017,7 +1026,7 @@ def main():
                 run_profiled_streamable_http_server(
                     server=server,
                     log_level=args.log_level,
-                    middleware=get_hosted_auth_middleware(),
+                    middleware=http_middleware,
                     profiled_servers=profiled_servers,
                     default_tool_profile=default_hosted_tool_profile,
                 )
