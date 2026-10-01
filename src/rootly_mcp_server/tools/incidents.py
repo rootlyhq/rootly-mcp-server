@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from html import unescape
 from typing import Annotated, Any, Literal, cast
 
 from mcp.types import ToolAnnotations
@@ -27,6 +28,48 @@ RETROSPECTIVE_PAGE_SIZE_DEFAULT = 5
 RETROSPECTIVE_PAGE_SIZE_MAX = 10
 # Mean document length across a live page of 100.
 RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500
+# A retrospective's Timeline is a minute-by-minute event log: a median 33% of
+# the document across a live page of 25, and the part an agent browsing a list
+# least needs. Dropping it from list results is both cheaper and safer than
+# cutting the end, which took the Impact, 5 Whys and corrective actions with it
+# -- the conclusions are always last. `get_incident_retrospective` returns the
+# document whole, Timeline included.
+RETROSPECTIVE_TIMELINE_HEADING = "timeline"
+_RETROSPECTIVE_HEADING = re.compile(r"<h[1-3][^>]*>(.*?)</h[1-3]>", re.DOTALL)
+
+
+def _drop_timeline_sections(content: str) -> tuple[str, int]:
+    """Remove any Timeline section, returning the content and chars removed.
+
+    Best effort: a document with no headings, or a template that names the
+    section something else, comes back untouched and the size cap below still
+    applies.
+    """
+    headings = []
+    for match in _RETROSPECTIVE_HEADING.finditer(content):
+        title = re.sub(r"<[^>]*>", "", unescape(match.group(1))).strip()
+        if title:
+            headings.append((match.start(), title))
+    if not headings:
+        return content, 0
+
+    spans = []
+    for index, (start, title) in enumerate(headings):
+        if RETROSPECTIVE_TIMELINE_HEADING in title.lower():
+            end = headings[index + 1][0] if index + 1 < len(headings) else len(content)
+            spans.append((start, end))
+    if not spans:
+        return content, 0
+
+    kept, cursor = [], 0
+    for start, end in spans:
+        kept.append(content[cursor:start])
+        cursor = end
+    kept.append(content[cursor:])
+    trimmed = "".join(kept)
+    return trimmed, len(content) - len(trimmed)
+
+
 # The page cap bounds how many documents come back, not how large each one is,
 # so one long retrospective can still swamp the budget the cap protects. Live
 # published documents run to 43,712 characters (median 11,931), well past the
@@ -1177,6 +1220,7 @@ def register_incident_tools(
 
             retrospectives = []
             truncated_count = 0
+            timeline_count = 0
             for record in payload.get("data") or []:
                 attributes = record.get("attributes") or {}
                 content = attributes.get("content")
@@ -1191,11 +1235,19 @@ def register_incident_tools(
                     "published_at": attributes.get("published_at"),
                     "resolved_at": attributes.get("resolved_at"),
                 }
-                if isinstance(content, str) and len(content) > RETROSPECTIVE_CONTENT_MAX_CHARS:
-                    entry["content"] = content[:RETROSPECTIVE_CONTENT_MAX_CHARS]
-                    entry["content_truncated"] = True
-                    entry["content_chars"] = len(content)
-                    truncated_count += 1
+                if isinstance(content, str):
+                    body, dropped = _drop_timeline_sections(content)
+                    if dropped:
+                        entry["content"] = body
+                        entry["timeline_omitted"] = True
+                        timeline_count += 1
+                    # The cap is now a backstop: with the Timeline gone only a
+                    # couple of documents in a live page of 25 still reach it.
+                    if len(body) > RETROSPECTIVE_CONTENT_MAX_CHARS:
+                        entry["content"] = body[:RETROSPECTIVE_CONTENT_MAX_CHARS]
+                        entry["content_truncated"] = True
+                        entry["content_chars"] = len(content)
+                        truncated_count += 1
                 retrospectives.append(entry)
 
             total = (payload.get("meta") or {}).get("total_count")
@@ -1214,6 +1266,12 @@ def register_incident_tools(
                     "upstream enforces no limit, so an uncapped page can exceed a "
                     "whole context window. Filter by team, service, status or date "
                     "to narrow instead."
+                )
+            if timeline_count:
+                result["timeline_note"] = (
+                    f"{timeline_count} of {len(retrospectives)} documents have their Timeline "
+                    "omitted and carry `timeline_omitted`. The analysis sections are intact; "
+                    "`get_incident_retrospective` returns the document whole."
                 )
             if truncated_count:
                 result["content_note"] = (

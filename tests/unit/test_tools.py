@@ -21,6 +21,7 @@ from rootly_mcp_server.server_defaults import _generate_recommendation
 from rootly_mcp_server.tools.incidents import (
     INCIDENT_LIST_FIELDS,
     RETROSPECTIVE_CONTENT_MAX_CHARS,
+    _drop_timeline_sections,
     _augment_pagination_error,
     _normalize_incident_reference,
     _summarize_incident_record,
@@ -2696,3 +2697,66 @@ class TestRetrospectiveContentBound:
         # document a full one.
         assert "Showing 2 of 50" in result["note"]
         assert "full" not in result["note"]
+
+
+class TestRetrospectiveTimelineOmitted:
+    """The Timeline is dropped from list results, not the end of the document.
+
+    Cutting at a fixed length took the conclusions with it: Impact, the 5 Whys
+    and corrective actions sit last, while the Timeline -- a median third of a
+    live document -- sits near the front and survived. Dropping the Timeline is
+    both cheaper and keeps the analysis.
+    """
+
+    DOC = (
+        "<h2>Summary</h2><p>short</p>"
+        "<h2>Timeline</h2>" + "<p>09:0x minute by minute</p>" * 50 + "<h2>Impact</h2><p>revenue</p>"
+        "<h2>Corrective actions</h2><p>do the thing</p>"
+    )
+
+    def test_the_timeline_goes_and_the_rest_stays(self):
+        body, dropped = _drop_timeline_sections(self.DOC)
+
+        assert dropped > 0
+        assert "minute by minute" not in body
+        for kept in ("Summary", "Impact", "Corrective actions", "revenue", "do the thing"):
+            assert kept in body
+
+    def test_a_document_without_one_is_untouched(self):
+        plain = "<h2>Summary</h2><p>no timeline here</p>"
+        body, dropped = _drop_timeline_sections(plain)
+
+        assert (body, dropped) == (plain, 0)
+
+    def test_a_document_without_headings_is_untouched(self):
+        body, dropped = _drop_timeline_sections("<p>just prose</p>")
+
+        assert (body, dropped) == ("<p>just prose</p>", 0)
+
+    @pytest.mark.asyncio
+    async def test_the_list_marks_what_it_omitted(self):
+        async def responder(method, path, **kwargs):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json.return_value = {
+                "data": [{"id": "r1", "attributes": {"content": self.DOC, "incident_id": "i1"}}],
+                "meta": {"total_count": 1},
+            }
+            return response
+
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        result = await mcp.tools["list_incident_post_mortems"](page_size=1)
+
+        (record,) = result["retrospectives"]
+        assert record["timeline_omitted"] is True
+        assert "Corrective actions" in record["content"]
+        assert "minute by minute" not in record["content"]
+        assert "timeline_note" in result
