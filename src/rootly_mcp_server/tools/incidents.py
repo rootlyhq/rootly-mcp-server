@@ -1155,9 +1155,9 @@ def register_incident_tools(
             Field(
                 description=(
                     f"Retrospectives per page (default {RETROSPECTIVE_PAGE_SIZE_DEFAULT}, "
-                    f"max {RETROSPECTIVE_PAGE_SIZE_MAX}). Each one carries its full "
-                    "document, so a large page is expensive; narrow with the filters "
-                    "instead of raising this."
+                    f"max {RETROSPECTIVE_PAGE_SIZE_MAX}). Each one carries its document "
+                    "minus the Timeline, so a large page is still expensive; narrow with "
+                    "the filters instead of raising this."
                 )
             ),
         ] = RETROSPECTIVE_PAGE_SIZE_DEFAULT,
@@ -1182,7 +1182,10 @@ def register_incident_tools(
 
         Answers "the last five retrospectives", "published ones for this team
         since June", or "how many are still draft". Each result carries the
-        written document, so it is also how a bulk read is done.
+        document's analysis -- summary, causes, impact, actions -- with the
+        Timeline omitted and `timeline_omitted` set, because a minute-by-minute
+        log is a third of a document and rarely what a browse is after. Use
+        `get_incident_retrospective` for one document whole.
 
         Filtering happens upstream for status, severity, team, service and
         dates. Free-text search is not offered here because the API's search
