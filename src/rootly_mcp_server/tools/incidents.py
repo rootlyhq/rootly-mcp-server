@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from html import unescape
 from typing import Annotated, Any, Literal, cast
 
 from mcp.types import ToolAnnotations
@@ -20,6 +21,62 @@ StripHeavyNestedData = Callable[[JsonDict], JsonDict]
 GenerateRecommendation = Callable[[JsonDict], str]
 
 RETROSPECTIVE_PROGRESS_STATUSES = ("not_started", "active", "completed", "skipped")
+# Every retrospective in a list carries its whole document and the API enforces
+# no ceiling: page[size]=1000 returns about 1.1 million tokens. The page size is
+# the only lever, and this is the only place it exists.
+RETROSPECTIVE_PAGE_SIZE_DEFAULT = 5
+RETROSPECTIVE_PAGE_SIZE_MAX = 10
+# Mean document length across a live page of 100.
+RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500
+# A retrospective's Timeline is a minute-by-minute event log: a median 33% of
+# the document across a live page of 25, and the part an agent browsing a list
+# least needs. Dropping it from list results is both cheaper and safer than
+# cutting the end, which took the Impact, 5 Whys and corrective actions with it
+# -- the conclusions are always last. `get_incident_retrospective` returns the
+# document whole, Timeline included.
+RETROSPECTIVE_TIMELINE_HEADING = "timeline"
+_RETROSPECTIVE_HEADING = re.compile(r"<h[1-3][^>]*>(.*?)</h[1-3]>", re.DOTALL)
+
+
+def _drop_timeline_sections(content: str) -> tuple[str, int]:
+    """Remove any Timeline section, returning the content and chars removed.
+
+    Best effort: a document with no headings, or a template that names the
+    section something else, comes back untouched and the size cap below still
+    applies.
+    """
+    headings = []
+    for match in _RETROSPECTIVE_HEADING.finditer(content):
+        title = re.sub(r"<[^>]*>", "", unescape(match.group(1))).strip()
+        if title:
+            headings.append((match.start(), title))
+    if not headings:
+        return content, 0
+
+    spans = []
+    for index, (start, title) in enumerate(headings):
+        if RETROSPECTIVE_TIMELINE_HEADING in title.lower():
+            end = headings[index + 1][0] if index + 1 < len(headings) else len(content)
+            spans.append((start, end))
+    if not spans:
+        return content, 0
+
+    kept, cursor = [], 0
+    for start, end in spans:
+        kept.append(content[cursor:start])
+        cursor = end
+    kept.append(content[cursor:])
+    trimmed = "".join(kept)
+    return trimmed, len(content) - len(trimmed)
+
+
+# The page cap bounds how many documents come back, not how large each one is,
+# so one long retrospective can still swamp the budget the cap protects. Live
+# published documents run to 43,712 characters (median 11,931), well past the
+# mean above -- a full page of those is about 110k tokens. Each document is
+# truncated to this many characters, with the cut marked on the record; the
+# whole document is one `get_incident_retrospective` call away.
+RETROSPECTIVE_CONTENT_MAX_CHARS = 12_000
 INCIDENT_SEARCH_FIELDS = (
     "id,title,summary,status,created_at,updated_at,url,started_at,retrospective_progress_status"
 )
@@ -998,6 +1055,245 @@ def register_incident_tools(
             return cast(JsonDict, response_data)
         except Exception as e:
             return _reference_tool_error("Failed to retrieve incident", e)
+
+    @mcp.tool(
+        name="get_incident_retrospective",
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
+    )
+    async def get_incident_retrospective(
+        incident_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "Incident whose retrospective to fetch. "
+                    "Accepts: UUID, bare sequential number (4460), "
+                    "#4460, or INC-4460."
+                )
+            ),
+        ],
+    ) -> JsonDict:
+        """Fetch the written retrospective for one incident.
+
+        Answers "what did we learn from INC-4460" in a single call. Returns the
+        document's title, content and status alongside the incident it belongs
+        to, and reports the incident's retrospective progress so a blank
+        document is distinguishable from one nobody has started.
+
+        The route exists only in this direction: `/post_mortems` cannot be
+        filtered by incident, and the document carries no reference back to one,
+        so the id has to come from the incident's own relationship. Doing that
+        here keeps a caller from having to know it. Use
+        `list_incident_post_mortems` to search across retrospectives instead.
+        """
+        try:
+            resolved_incident_id = await _resolve_incident_reference_to_uuid(
+                incident_id, make_authenticated_request
+            )
+            incident_response = await make_authenticated_request(
+                "GET", f"/v1/incidents/{resolved_incident_id}"
+            )
+            incident_response.raise_for_status()
+            incident = incident_response.json().get("data") or {}
+            attributes = incident.get("attributes") or {}
+            relationships = incident.get("relationships") or {}
+
+            summary: JsonDict = {
+                "incident_id": resolved_incident_id,
+                "incident_number": attributes.get("sequential_id"),
+                "incident_title": attributes.get("title"),
+                "retrospective_progress_status": attributes.get("retrospective_progress_status"),
+            }
+
+            reference = (relationships.get("incident_post_mortem") or {}).get("data") or {}
+            retrospective_id = reference.get("id")
+            if not retrospective_id:
+                # Not an error: sub-incidents and unstarted retrospectives carry
+                # no relationship, and saying so beats a 404.
+                summary["retrospective"] = None
+                summary["note"] = (
+                    "This incident has no retrospective. The progress status above "
+                    "says how far along it is; retrospectives are created in Rootly."
+                )
+                return summary
+
+            document_response = await make_authenticated_request(
+                "GET", f"/v1/post_mortems/{retrospective_id}"
+            )
+            document_response.raise_for_status()
+            document = document_response.json().get("data") or {}
+            document_attributes = document.get("attributes") or {}
+
+            summary["retrospective"] = {
+                "id": retrospective_id,
+                "title": document_attributes.get("title"),
+                "content": document_attributes.get("content"),
+                "status": document_attributes.get("status"),
+                "url": document_attributes.get("url"),
+                "started_at": document_attributes.get("started_at"),
+                "mitigated_at": document_attributes.get("mitigated_at"),
+                "resolved_at": document_attributes.get("resolved_at"),
+            }
+            return summary
+        except Exception as e:
+            return _reference_tool_error("Failed to retrieve incident retrospective", e)
+
+    @mcp.tool(
+        name="list_incident_post_mortems",
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
+    )
+    async def list_incident_post_mortems(
+        page_size: Annotated[
+            int,
+            Field(
+                description=(
+                    f"Retrospectives per page (default {RETROSPECTIVE_PAGE_SIZE_DEFAULT}, "
+                    f"max {RETROSPECTIVE_PAGE_SIZE_MAX}). Each one carries its document "
+                    "minus the Timeline, so a large page is still expensive; narrow with "
+                    "the filters instead of raising this."
+                )
+            ),
+        ] = RETROSPECTIVE_PAGE_SIZE_DEFAULT,
+        page_number: Annotated[int, Field(description="Page number, 1-indexed")] = 1,
+        status: Annotated[
+            str, Field(description="Filter by status, e.g. 'published' or 'draft'")
+        ] = "",
+        severity: Annotated[str, Field(description="Filter by severity slug")] = "",
+        team_ids: Annotated[str, Field(description="Comma-separated team IDs")] = "",
+        service_ids: Annotated[str, Field(description="Comma-separated service IDs")] = "",
+        created_after: Annotated[
+            str, Field(description="Only retrospectives created at or after this ISO date")
+        ] = "",
+        created_before: Annotated[
+            str, Field(description="Only retrospectives created at or before this ISO date")
+        ] = "",
+        sort: Annotated[
+            str, Field(description="Sort order, e.g. '-created_at' for newest first")
+        ] = "-created_at",
+    ) -> JsonDict:
+        """Browse retrospectives across incidents.
+
+        Answers "the last five retrospectives", "published ones for this team
+        since June", or "how many are still draft". Each result carries the
+        document's analysis -- summary, causes, impact, actions -- with the
+        Timeline omitted and `timeline_omitted` set, because a minute-by-minute
+        log is a third of a document and rarely what a browse is after. Use
+        `get_incident_retrospective` for one document whole.
+
+        Filtering happens upstream for status, severity, team, service and
+        dates. Free-text search is not offered here because the API's search
+        matches titles only, and titles are generated from the incident name --
+        it cannot find a retrospective by what it says. Use
+        `get_incident_retrospective` when the incident is already known.
+        """
+        try:
+            requested_page_size = page_size
+            page_size = max(1, min(page_size, RETROSPECTIVE_PAGE_SIZE_MAX))
+            params: dict[str, Any] = {
+                "page[size]": page_size,
+                "page[number]": max(1, page_number),
+                "sort": sort,
+            }
+            if status:
+                params["filter[status]"] = status
+            if severity:
+                params["filter[severity]"] = severity
+            # Joined, not a list: a list becomes a repeated query key, which
+            # this endpoint matches nothing against. One id worked either way,
+            # which is how it went unnoticed.
+            if team_ids:
+                params["filter[team_ids]"] = ",".join(_split_csv_values(team_ids))
+            if service_ids:
+                params["filter[service_ids]"] = ",".join(_split_csv_values(service_ids))
+            if created_after:
+                params["filter[created_at][gte]"] = created_after
+            if created_before:
+                params["filter[created_at][lte]"] = created_before
+
+            response = await make_authenticated_request("GET", "/v1/post_mortems", params=params)
+            response.raise_for_status()
+            payload = response.json()
+
+            retrospectives = []
+            truncated_count = 0
+            timeline_count = 0
+            for record in payload.get("data") or []:
+                attributes = record.get("attributes") or {}
+                content = attributes.get("content")
+                entry: JsonDict = {
+                    "id": record.get("id"),
+                    "incident_id": attributes.get("incident_id"),
+                    "title": attributes.get("title"),
+                    "status": attributes.get("status"),
+                    "content": content,
+                    "url": attributes.get("url"),
+                    "created_at": attributes.get("created_at"),
+                    "published_at": attributes.get("published_at"),
+                    "resolved_at": attributes.get("resolved_at"),
+                }
+                if isinstance(content, str):
+                    body, dropped = _drop_timeline_sections(content)
+                    if dropped:
+                        entry["content"] = body
+                        entry["timeline_omitted"] = True
+                        timeline_count += 1
+                    # The cap is now a backstop: with the Timeline gone only a
+                    # couple of documents in a live page of 25 still reach it.
+                    if len(body) > RETROSPECTIVE_CONTENT_MAX_CHARS:
+                        entry["content"] = body[:RETROSPECTIVE_CONTENT_MAX_CHARS]
+                        entry["content_truncated"] = True
+                        entry["content_chars"] = len(content)
+                        truncated_count += 1
+                retrospectives.append(entry)
+
+            total = (payload.get("meta") or {}).get("total_count")
+            result: JsonDict = {
+                "retrospectives": retrospectives,
+                "returned": len(retrospectives),
+                "total_matching": total,
+                "page_number": max(1, page_number),
+                "page_size": page_size,
+            }
+            if requested_page_size > RETROSPECTIVE_PAGE_SIZE_MAX:
+                result["page_size_note"] = (
+                    f"Asked for {requested_page_size}, capped at "
+                    f"{RETROSPECTIVE_PAGE_SIZE_MAX}. Retrospectives average about "
+                    f"{RETROSPECTIVE_MEAN_DOCUMENT_CHARS:,} characters each and the "
+                    "upstream enforces no limit, so an uncapped page can exceed a "
+                    "whole context window. Filter by team, service, status or date "
+                    "to narrow instead."
+                )
+            if timeline_count:
+                result["timeline_note"] = (
+                    f"{timeline_count} of {len(retrospectives)} documents have their Timeline "
+                    "omitted and carry `timeline_omitted`. The analysis sections are intact; "
+                    "`get_incident_retrospective` returns the document whole."
+                )
+            if truncated_count:
+                result["content_note"] = (
+                    f"{truncated_count} of {len(retrospectives)} documents were cut at "
+                    f"{RETROSPECTIVE_CONTENT_MAX_CHARS:,} characters and carry "
+                    "`content_truncated` with their full `content_chars`. Fetch one whole "
+                    "with `get_incident_retrospective` using its `incident_id`."
+                )
+            if isinstance(total, int) and total > len(retrospectives):
+                # Not "its full document": above 12,000 characters the content
+                # is cut, and this note would otherwise contradict the record's
+                # own `content_truncated`.
+                result["note"] = (
+                    f"Showing {len(retrospectives)} of {total:,}. Documents are long, so "
+                    "page through or filter rather than widening the page."
+                )
+            return result
+        except Exception as e:
+            return _reference_tool_error("Failed to list retrospectives", e)
 
     @mcp.tool(
         name="list_incident_roles",
