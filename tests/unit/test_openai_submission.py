@@ -38,18 +38,18 @@ class TestCodeModeAnnotations:
             assert name in tools, f"missing discovery tool {name}"
             ann = tools[name].annotations
             assert ann is not None, f"{name} has no annotations"
-            assert ann.readOnlyHint is True
-            assert ann.destructiveHint is False
-            assert ann.idempotentHint is True
-            assert ann.openWorldHint is False
+            assert ann.read_only_hint is True
+            assert ann.destructive_hint is False
+            assert ann.idempotent_hint is True
+            assert ann.open_world_hint is False
 
     def test_execute_has_conservative_gateway_annotations(self):
         ann = self._tools_by_name()["execute"].annotations
         assert ann is not None
-        assert ann.readOnlyHint is False
-        assert ann.destructiveHint is True
-        assert ann.idempotentHint is False
-        assert ann.openWorldHint is True
+        assert ann.read_only_hint is False
+        assert ann.destructive_hint is True
+        assert ann.idempotent_hint is False
+        assert ann.open_world_hint is True
 
     def test_execute_declares_generic_wrapped_output_schema(self):
         schema = self._tools_by_name()["execute"].output_schema
@@ -86,19 +86,19 @@ class TestCodeModeServerExposedAnnotations:
             ann = tools[name].annotations
             assert ann is not None
             assert (
-                ann.readOnlyHint,
-                ann.destructiveHint,
-                ann.idempotentHint,
-                ann.openWorldHint,
+                ann.read_only_hint,
+                ann.destructive_hint,
+                ann.idempotent_hint,
+                ann.open_world_hint,
             ) == (True, False, True, False)
 
         execute = tools["execute"].annotations
         assert execute is not None
         assert (
-            execute.readOnlyHint,
-            execute.destructiveHint,
-            execute.idempotentHint,
-            execute.openWorldHint,
+            execute.read_only_hint,
+            execute.destructive_hint,
+            execute.idempotent_hint,
+            execute.open_world_hint,
         ) == (False, True, False, True)
 
 

@@ -1002,7 +1002,7 @@ class TestToolUsageIdentityHelpers:
     def test_extract_structured_tool_error_from_call_tool_result(self):
         result = mt.CallToolResult(
             content=[],
-            structuredContent={
+            structured_content={
                 "error": True,
                 "error_type": "validation_error",
                 "message": "Bad input at /Users/spencercheng/file.py",
@@ -1013,7 +1013,7 @@ class TestToolUsageIdentityHelpers:
                     "api_token": "secret-token",
                 },
             },
-            isError=True,
+            is_error=True,
         )
 
         error_context = _extract_structured_tool_error(result)
@@ -1029,12 +1029,12 @@ class TestToolUsageIdentityHelpers:
     def test_extract_structured_tool_error_from_structured_content_error_flag(self):
         result = mt.CallToolResult(
             content=[],
-            structuredContent={
+            structured_content={
                 "error": True,
                 "message": "Tool failed",
                 "error_type": "client_error",
             },
-            isError=False,
+            is_error=False,
         )
 
         error_context = _extract_structured_tool_error(result)
@@ -1057,13 +1057,13 @@ class TestToolUsageIdentityHelpers:
         )
         result = mt.CallToolResult(
             content=[],
-            structuredContent={
+            structured_content={
                 "error": True,
                 "error_type": "execution_error",
                 "message": "Failed to fetch alerts",
                 "details": {"status_code": 502, "exception_type": "HTTPStatusError"},
             },
-            isError=True,
+            is_error=True,
         )
 
         async def call_next(context: Any):
@@ -1635,9 +1635,9 @@ class TestApplyAnnotationsToAutogenTools:
         server_module._apply_annotations_to_autogen_tools(mcp, spec)
 
         ann = tools["list_items"].annotations
-        assert ann.readOnlyHint is True
-        assert ann.destructiveHint is False
-        assert ann.openWorldHint is True
+        assert ann.read_only_hint is True
+        assert ann.destructive_hint is False
+        assert ann.open_world_hint is True
 
     def test_post_marked_write_non_idempotent(self):
         mcp, tools = self._make_mock_mcp(["create_item"])
@@ -1646,10 +1646,10 @@ class TestApplyAnnotationsToAutogenTools:
         server_module._apply_annotations_to_autogen_tools(mcp, spec)
 
         ann = tools["create_item"].annotations
-        assert ann.readOnlyHint is False
-        assert ann.destructiveHint is False
-        assert ann.idempotentHint is False
-        assert ann.openWorldHint is True
+        assert ann.read_only_hint is False
+        assert ann.destructive_hint is False
+        assert ann.idempotent_hint is False
+        assert ann.open_world_hint is True
 
     def test_put_marked_idempotent(self):
         mcp, tools = self._make_mock_mcp(["update_item"])
@@ -1658,9 +1658,9 @@ class TestApplyAnnotationsToAutogenTools:
         server_module._apply_annotations_to_autogen_tools(mcp, spec)
 
         ann = tools["update_item"].annotations
-        assert ann.readOnlyHint is False
-        assert ann.destructiveHint is False
-        assert ann.idempotentHint is True
+        assert ann.read_only_hint is False
+        assert ann.destructive_hint is False
+        assert ann.idempotent_hint is True
 
     def test_patch_marked_idempotent(self):
         mcp, tools = self._make_mock_mcp(["patch_item"])
@@ -1669,8 +1669,8 @@ class TestApplyAnnotationsToAutogenTools:
         server_module._apply_annotations_to_autogen_tools(mcp, spec)
 
         ann = tools["patch_item"].annotations
-        assert ann.readOnlyHint is False
-        assert ann.idempotentHint is True
+        assert ann.read_only_hint is False
+        assert ann.idempotent_hint is True
 
     def test_delete_marked_destructive(self):
         mcp, tools = self._make_mock_mcp(["delete_item"])
@@ -1679,10 +1679,10 @@ class TestApplyAnnotationsToAutogenTools:
         server_module._apply_annotations_to_autogen_tools(mcp, spec)
 
         ann = tools["delete_item"].annotations
-        assert ann.readOnlyHint is False
-        assert ann.destructiveHint is True
-        assert ann.idempotentHint is True
-        assert ann.openWorldHint is True
+        assert ann.read_only_hint is False
+        assert ann.destructive_hint is True
+        assert ann.idempotent_hint is True
+        assert ann.open_world_hint is True
 
     def test_unknown_tool_skipped(self):
         mcp, tools = self._make_mock_mcp(["mystery_tool"])
@@ -1712,18 +1712,18 @@ class TestApplyAnnotationsToAutogenTools:
 
         server_module._apply_annotations_to_autogen_tools(mcp, spec)
 
-        assert tools["list_items"].annotations.readOnlyHint is True
-        assert tools["list_items"].annotations.destructiveHint is False
-        assert tools["create_item"].annotations.readOnlyHint is False
-        assert tools["delete_item"].annotations.destructiveHint is True
+        assert tools["list_items"].annotations.read_only_hint is True
+        assert tools["list_items"].annotations.destructive_hint is False
+        assert tools["create_item"].annotations.read_only_hint is False
+        assert tools["delete_item"].annotations.destructive_hint is True
 
 
 @pytest.mark.unit
 class TestInjectedToolAnnotations:
-    """The telemetry SDK registers `get_more_tools` with only readOnlyHint.
+    """The telemetry SDK registers `get_more_tools` with only read_only_hint.
 
-    Unset hints are not "unknown" -- the MCP spec defaults destructiveHint and
-    openWorldHint to true, so the tool advertises itself as destructive and
+    Unset hints are not "unknown" -- the MCP spec defaults destructive_hint and
+    open_world_hint to true, so the tool advertises itself as destructive and
     open-world. It is neither. We cannot annotate a tool we did not register, so
     the listing is completed on the way out.
     """
@@ -1745,27 +1745,27 @@ class TestInjectedToolAnnotations:
     async def test_completes_the_injected_tools_annotations(self):
         injected = SimpleNamespace(
             name="get_more_tools",
-            annotations=mt.ToolAnnotations(readOnlyHint=True),
+            annotations=mt.ToolAnnotations(read_only_hint=True),
         )
 
         result = await self._list_through_middleware([injected])
 
         ann = result[0].annotations
-        assert ann.readOnlyHint is True
-        assert ann.destructiveHint is False
-        assert ann.openWorldHint is False
+        assert ann.read_only_hint is True
+        assert ann.destructive_hint is False
+        assert ann.open_world_hint is False
 
     @pytest.mark.asyncio
     async def test_leaves_our_own_tools_alone(self):
         ours = SimpleNamespace(
             name="list_incidents",
-            annotations=mt.ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+            annotations=mt.ToolAnnotations(read_only_hint=True, open_world_hint=True),
         )
 
         result = await self._list_through_middleware([ours])
 
-        assert result[0].annotations.openWorldHint is True
-        assert result[0].annotations.destructiveHint is None
+        assert result[0].annotations.open_world_hint is True
+        assert result[0].annotations.destructive_hint is None
 
     @pytest.mark.asyncio
     async def test_a_tool_with_no_annotations_is_untouched(self):
@@ -1794,8 +1794,8 @@ class TestInjectedToolAnnotations:
 class TestEveryToolDeclaresItsSafety:
     """No tool may leave a safety hint unset.
 
-    Unset is not "unknown": the MCP spec defaults destructiveHint and
-    openWorldHint to true, so an omission advertises the tool as destructive and
+    Unset is not "unknown": the MCP spec defaults destructive_hint and
+    open_world_hint to true, so an omission advertises the tool as destructive and
     open-world. Annotation scanners flag it, and clients that honour annotations
     may prompt before every call.
 
@@ -1810,10 +1810,10 @@ class TestEveryToolDeclaresItsSafety:
         missing = [
             tool.name
             for tool in await server.list_tools()
-            if tool.annotations is not None and tool.annotations.destructiveHint is None
+            if tool.annotations is not None and tool.annotations.destructive_hint is None
         ]
 
-        assert missing == [], f"tools missing destructiveHint: {sorted(missing)}"
+        assert missing == [], f"tools missing destructive_hint: {sorted(missing)}"
 
     @pytest.mark.asyncio
     async def test_no_tool_omits_open_world_hint(self, mock_environment_token):
@@ -1822,10 +1822,10 @@ class TestEveryToolDeclaresItsSafety:
         missing = [
             tool.name
             for tool in await server.list_tools()
-            if tool.annotations is not None and tool.annotations.openWorldHint is None
+            if tool.annotations is not None and tool.annotations.open_world_hint is None
         ]
 
-        assert missing == [], f"tools missing openWorldHint: {sorted(missing)}"
+        assert missing == [], f"tools missing open_world_hint: {sorted(missing)}"
 
     @pytest.mark.asyncio
     async def test_every_tool_is_annotated_at_all(self, mock_environment_token):
