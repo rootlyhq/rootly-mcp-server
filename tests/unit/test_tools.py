@@ -21,8 +21,8 @@ from rootly_mcp_server.server_defaults import _generate_recommendation
 from rootly_mcp_server.tools.incidents import (
     INCIDENT_LIST_FIELDS,
     RETROSPECTIVE_CONTENT_MAX_CHARS,
-    _drop_timeline_sections,
     _augment_pagination_error,
+    _drop_timeline_sections,
     _normalize_incident_reference,
     _summarize_incident_record,
     register_incident_tools,
