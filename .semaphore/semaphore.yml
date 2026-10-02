@@ -36,6 +36,9 @@ blocks:
             if [ "$ECR_PUSH_ENABLED" = "true" ]; then
               export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
               aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
+              # us-west-2 passive standby (PLA-1145): the same image is published to
+              # us-west-2 ECR so rootly-mcp-server can start there after a failover.
+              aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com
             else
               echo "Skipping AWS/ECR auth for non-deploy branch: $SEMAPHORE_GIT_BRANCH"
             fi
@@ -48,12 +51,17 @@ blocks:
               if [ "$SEMAPHORE_GIT_BRANCH" = "staging" ]; then
                 docker build --push \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
-                  -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:staging .
+                  -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:staging \
+                  -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
+                  -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/rootly/mcp:staging .
               elif [ "$SEMAPHORE_GIT_BRANCH" = "main" ]; then
                 docker build --push \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:latest \
-                  -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:production .
+                  -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:production \
+                  -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
+                  -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/rootly/mcp:latest \
+                  -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/rootly/mcp:production .
               else
                 docker build -t rootly-mcp-server:${SEMAPHORE_GIT_SHA} .
               fi
