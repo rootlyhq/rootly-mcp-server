@@ -42,23 +42,27 @@ RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500
 RETROSPECTIVE_TIMELINE_TITLES = frozenset(
     {"timeline", "incident timeline", "timeline of events", "event timeline"}
 )
-# h1-h6, not h1-h3: a heading this did not recognise could not end a Timeline
-# section, so an `<h4>Impact</h4>` after one was swallowed by the removal.
+# Boundaries come from the opening tag alone. Pairing `<hN>` with `</hN>` made
+# the title's length decide whether a heading counted: unbounded, an unmatched
+# tag rescanned the rest of the document once per tag (4,000 of them took
+# 1.35s); bounded, a heading carrying more than the bound in markup stopped
+# being recognised and the section under it was swallowed by a Timeline above.
+# Matching opens only is linear and sees every heading, whatever it contains.
 #
-# The title is bounded rather than `.*?`. Retrospective content is written by
-# hand, so a document can carry unmatched `<h2>` tags, and an unbounded lazy
-# match rescans the rest of the document for a close tag that never comes --
-# once per opening tag. That is quadratic: 200 unmatched tags took 3.5ms, 1,000
-# took 85ms and 4,000 took 1.35s, and a page holds ten documents. A heading
-# longer than this is not one worth recognising.
+# h1-h6, not h1-h3, so a deeper heading still ends a section. IGNORECASE
+# because HTML tag names are, and pasted content carries `<H2>`.
+_RETROSPECTIVE_HEADING_OPEN = re.compile(r"<h([1-6])\b[^>]*>", re.IGNORECASE)
+# How far past an opening tag to look for the title. Only recognition depends
+# on this -- a heading whose text starts beyond it is still a boundary, it just
+# will not be read as the Timeline.
 RETROSPECTIVE_HEADING_MAX_CHARS = 300
-# IGNORECASE because HTML tag names are case-insensitive and pasted content
-# can carry `<H2>`. It is safe here: the pattern's only letters are the tag
-# names, and the title is lower-cased separately before it is compared.
-_RETROSPECTIVE_HEADING = re.compile(
-    rf"<h([1-6])[^>]*>(.{{0,{RETROSPECTIVE_HEADING_MAX_CHARS}}}?)</h\1>",
-    re.DOTALL | re.IGNORECASE,
-)
+
+
+def _heading_title(content: str, start: int) -> str:
+    """The text of the heading whose opening tag ends at *start*."""
+    window = content[start : start + RETROSPECTIVE_HEADING_MAX_CHARS]
+    window = re.split(r"</h[1-6]\s*>", window, maxsplit=1, flags=re.IGNORECASE)[0]
+    return re.sub(r"<[^>]*>", "", unescape(window)).strip()
 
 
 def _is_timeline_heading(title: str) -> bool:
@@ -74,11 +78,10 @@ def _drop_timeline_sections(content: str) -> tuple[str, int]:
     section something else, comes back untouched and the size cap below still
     applies.
     """
-    headings = []
-    for match in _RETROSPECTIVE_HEADING.finditer(content):
-        title = re.sub(r"<[^>]*>", "", unescape(match.group(2))).strip()
-        if title:
-            headings.append((match.start(), int(match.group(1)), title))
+    headings = [
+        (match.start(), int(match.group(1)), _heading_title(content, match.end()))
+        for match in _RETROSPECTIVE_HEADING_OPEN.finditer(content)
+    ]
     if not headings:
         return content, 0
 

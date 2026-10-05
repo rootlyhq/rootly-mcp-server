@@ -2933,3 +2933,40 @@ class TestTimelineNoteTracksTruncation:
         assert record["timeline_omitted"] is True
         assert "content_truncated" not in record
         assert "intact" in result["timeline_note"]
+
+
+class TestHeadingBoundariesDoNotDependOnTitleLength:
+    """Every heading ends a section, however much markup it carries.
+
+    Boundaries come from the opening tag. Pairing `<hN>` with `</hN>` made the
+    title's length decide whether a heading counted at all: a heading carrying
+    more than the title bound in markup stopped being recognised, and the
+    section under it was swallowed by a Timeline above.
+    """
+
+    def test_a_heading_fat_with_markup_still_ends_the_timeline(self):
+        fat = (
+            '<h2><span style="'
+            + "x" * (RETROSPECTIVE_HEADING_MAX_CHARS + 100)
+            + '">Impact</span></h2>'
+        )
+        doc = "<h2>Timeline</h2><p>events</p>" + fat + "<p>revenue findings</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+        assert "revenue findings" in body
+
+    def test_a_title_beyond_the_window_is_a_boundary_but_not_the_timeline(self):
+        # The word "Timeline" sits past the title window, so it is not read as
+        # the Timeline -- but the heading still ends the section above it.
+        buried = "<h2>" + "<em>x</em>" * 60 + "Timeline</h2><p>events</p>"
+        doc = "<h2>Timeline</h2><p>first</p>" + buried
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "first" not in body
+        # The buried heading was a boundary, so its own content survives.
+        assert "events" in body
