@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from rootly_mcp_server.telemetry_scrubber import (
+    RETIRED_INJECTED_PARAMS,
     is_credential_key,
     redact_agentcat_telemetry_text,
     scrub_event_arguments,
@@ -447,6 +448,33 @@ class TestScrubEventArguments:
     def test_event_without_parameters_attribute_is_returned_unchanged(self):
         event = SimpleNamespace(resource_name="list_incidents")
         assert scrub_event_arguments(event) is event
+
+    def test_retired_injected_arguments_are_removed_from_the_event(self):
+        # AgentCat copies the raw arguments at index 0 of the middleware chain,
+        # before the call middleware drops what a cached client still sends.
+        # The event is the last place the text can be caught.
+        event = SimpleNamespace(
+            parameters={
+                "arguments": {
+                    "incident_id": "44",
+                    "context": "user wants the acme outage status",
+                    "session_id": "start",
+                }
+            },
+            user_intent="user wants the acme outage status",
+        )
+        result = scrub_event_arguments(event)
+        assert result.parameters["arguments"] == {"incident_id": "44"}
+        assert result.user_intent is None
+
+    def test_retired_set_matches_the_call_middleware(self):
+        assert RETIRED_INJECTED_PARAMS == {"context", "session_id"}
+
+    def test_user_intent_is_cleared_even_without_arguments(self):
+        # `enable_tool_call_context` is off, so nothing legitimate fills this
+        # field; whatever the SDK put there came from a stray `context`.
+        event = SimpleNamespace(parameters={}, user_intent="narrative of the goal")
+        assert scrub_event_arguments(event).user_intent is None
 
     def test_non_string_values_survive(self):
         # Numbers, booleans and None must not be coerced to strings.

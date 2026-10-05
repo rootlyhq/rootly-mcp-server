@@ -3,6 +3,7 @@
 import argparse
 import dataclasses
 import logging
+from datetime import UTC, datetime
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -14,7 +15,9 @@ from rootly_mcp_server.__main__ import (
     _get_sorted_tool_names,
     _uvicorn_access_log_enabled,
     agentcat_options_supports,
+    build_agentcat_session_resolver,
     build_mcpcat_identify_callback,
+    derive_agentcat_session_key,
     get_server,
     main,
     maybe_enable_mcpcat_tracking,
@@ -391,6 +394,7 @@ def test_redact_event_is_offered_only_when_the_sdk_accepts_it(supported, monkeyp
         "enable_report_missing": True,
         "identify": None,
         "redact_sensitive_information": None,
+        "resolve_session_id": None,
         "exporters": None,
     }
     if supported:
@@ -431,6 +435,125 @@ def test_redact_event_is_offered_only_when_the_sdk_accepts_it(supported, monkeyp
     # how the SENTRY_DSN gap survived unnoticed.
     warned = any("redact_event" in str(call.args[0]) for call in logger.warning.call_args_list)
     assert warned is (not supported)
+
+
+@pytest.mark.parametrize("supported", [True, False])
+def test_session_resolver_is_offered_only_when_the_sdk_accepts_it(supported, monkeypatch):
+    # Same shape as redact_event: an SDK without hook mode must not be handed
+    # the option (TypeError would switch telemetry off), and must be warned
+    # about, because without the hook every tool grows a required session_id.
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+
+    fields: dict[str, Any] = {
+        "enable_tool_call_context": True,
+        "enable_report_missing": True,
+        "identify": None,
+        "redact_sensitive_information": None,
+        "redact_event": None,
+        "exporters": None,
+    }
+    if supported:
+        fields["resolve_session_id"] = None
+    options_cls = dataclasses.make_dataclass(
+        "AgentCatOptions", [(name, Any, None) for name in fields]
+    )
+    captured: dict[str, Any] = {}
+
+    def make_options(**kwargs):
+        captured.update(kwargs)
+        return options_cls(**kwargs)
+
+    factory = type("Factory", (options_cls,), {"__new__": lambda cls, **kw: make_options(**kw)})
+    agentcat_module = SimpleNamespace(track=Mock())
+    agentcat_types_module = SimpleNamespace(
+        AgentCatOptions=factory,
+        UserIdentity=Mock(side_effect=lambda **kw: SimpleNamespace(**kw)),
+    )
+
+    def fake_import(name):
+        return agentcat_module if name == "agentcat" else agentcat_types_module
+
+    logger = Mock()
+    with patch("rootly_mcp_server.__main__.importlib.import_module", fake_import):
+        maybe_enable_mcpcat_tracking(object(), "proj_test_123", logger)
+
+    assert agentcat_module.track.called
+    assert ("resolve_session_id" in captured) is supported
+    warned = any(
+        "resolve_session_id" in str(call.args[0]) for call in logger.warning.call_args_list
+    )
+    assert warned is (not supported)
+
+
+_HOUR = datetime(2026, 10, 5, 19, 2, tzinfo=UTC)
+
+
+def test_session_key_prefers_the_transport_session_within_the_caller():
+    key = derive_agentcat_session_key(
+        {"mcp-session-id": " abc123 "}, {"id": "user-1"}, "Bearer tok", now=_HOUR
+    )
+    assert key == "user:user-1:transport:abc123"
+
+
+def test_session_key_never_crosses_callers_on_a_shared_transport_session():
+    # Two callers presenting the same Mcp-Session-Id (collision, replay, or a
+    # shared harness) must not be grouped into one AgentCat session.
+    headers = {"mcp-session-id": "abc123"}
+    first = derive_agentcat_session_key(headers, {"id": "user-1"}, "Bearer a", now=_HOUR)
+    second = derive_agentcat_session_key(headers, {"id": "user-2"}, "Bearer b", now=_HOUR)
+    anonymous = derive_agentcat_session_key(headers, None, "Bearer c", now=_HOUR)
+    assert len({first, second, anonymous}) == 3
+
+
+def test_session_key_buckets_the_authenticated_user_by_hour():
+    key = derive_agentcat_session_key({}, {"id": "user-1"}, "Bearer tok", now=_HOUR)
+    assert key == "user:user-1:hour:2026100519"
+    later = derive_agentcat_session_key(
+        {}, {"id": "user-1"}, "Bearer tok", now=_HOUR.replace(hour=20)
+    )
+    assert later != key
+
+
+def test_session_key_falls_back_to_a_token_digest_not_the_token():
+    key = derive_agentcat_session_key({}, None, "Bearer secret-token", now=_HOUR)
+    assert key is not None
+    assert key.startswith("token:")
+    assert key.endswith(":hour:2026100519")
+    assert "secret-token" not in key
+    # Stable for the same token within the hour; different for another token.
+    assert key == derive_agentcat_session_key({}, None, "Bearer secret-token", now=_HOUR)
+    assert key != derive_agentcat_session_key({}, None, "Bearer other-token", now=_HOUR)
+
+
+def test_session_key_is_none_without_any_caller_identity():
+    # A transport session alone is not a caller: with nobody to attribute it
+    # to, the SDK mints a per-call handle rather than grouping strangers.
+    assert derive_agentcat_session_key({}, None, "", now=_HOUR) is None
+    assert derive_agentcat_session_key(None, {}, "  ", now=_HOUR) is None
+    assert derive_agentcat_session_key({"mcp-session-id": "abc"}, None, "", now=_HOUR) is None
+
+
+def test_session_resolver_reads_hosted_request_context(monkeypatch):
+    # No HTTP request is in scope here, so get_http_headers() raises and the
+    # resolver falls through to the ContextVars the auth middleware fills.
+    monkeypatch.setattr(
+        "rootly_mcp_server.__main__.get_hosted_authenticated_user", lambda: {"id": "user-9"}
+    )
+    resolver = build_agentcat_session_resolver()
+    key = resolver(None, None)
+    assert key is not None
+    assert key.startswith("user:user-9:hour:")
+
+
+def test_session_resolver_returns_none_outside_hosted_requests(monkeypatch):
+    import rootly_mcp_server.__main__ as main_module
+
+    monkeypatch.setattr(main_module, "get_hosted_authenticated_user", lambda: None)
+    token = main_module._session_auth_token.set("")
+    try:
+        assert build_agentcat_session_resolver()(None, None) is None
+    finally:
+        main_module._session_auth_token.reset(token)
 
 
 def test_agentcat_options_supports_detects_the_field():
