@@ -52,8 +52,12 @@ RETROSPECTIVE_TIMELINE_TITLES = frozenset(
 # took 85ms and 4,000 took 1.35s, and a page holds ten documents. A heading
 # longer than this is not one worth recognising.
 RETROSPECTIVE_HEADING_MAX_CHARS = 300
+# IGNORECASE because HTML tag names are case-insensitive and pasted content
+# can carry `<H2>`. It is safe here: the pattern's only letters are the tag
+# names, and the title is lower-cased separately before it is compared.
 _RETROSPECTIVE_HEADING = re.compile(
-    rf"<h([1-6])[^>]*>(.{{0,{RETROSPECTIVE_HEADING_MAX_CHARS}}}?)</h\1>", re.DOTALL
+    rf"<h([1-6])[^>]*>(.{{0,{RETROSPECTIVE_HEADING_MAX_CHARS}}}?)</h\1>",
+    re.DOTALL | re.IGNORECASE,
 )
 
 

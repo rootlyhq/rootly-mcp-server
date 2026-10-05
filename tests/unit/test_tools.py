@@ -2780,6 +2780,21 @@ class TestTimelineMatchingIsNarrow:
         assert _is_timeline_heading(title)
 
     @pytest.mark.parametrize(
+        "doc",
+        [
+            "<H2>Timeline</H2><p>events</p><H2>Impact</H2><p>revenue</p>",
+            "<H2>Timeline</h2><p>events</p><h2>Impact</h2><p>revenue</p>",
+        ],
+    )
+    def test_tag_case_does_not_matter(self, doc):
+        """HTML tag names are case-insensitive and pasted content carries `<H2>`."""
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+        assert "revenue" in body
+
+    @pytest.mark.parametrize(
         "title",
         ["Timeline and Impact", "Impact", "Timeline review and corrective actions", "Summary"],
     )
@@ -2864,3 +2879,57 @@ class TestHeadingScanIsBounded:
         # simply not treated as a boundary.
         assert dropped > 0
         assert "events" not in body
+
+
+class TestTimelineNoteTracksTruncation:
+    """The note may only claim the analysis survived when nothing was cut.
+
+    The size cap runs after the Timeline is removed and takes the end of the
+    document, which is where the conclusions are. A note saying the analysis
+    is intact while `content_truncated` is set on the record is the same
+    contradiction the pagination note had.
+    """
+
+    @staticmethod
+    async def _list(doc):
+        async def responder(method, path, **kwargs):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json.return_value = {
+                "data": [{"id": "r1", "attributes": {"content": doc, "incident_id": "i1"}}],
+                "meta": {"total_count": 1},
+            }
+            return response
+
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return await mcp.tools["list_incident_post_mortems"](page_size=1)
+
+    @pytest.mark.asyncio
+    async def test_a_cut_document_is_not_called_intact(self):
+        # Long enough that the cap still fires once the Timeline is gone.
+        doc = "<h2>Timeline</h2><p>event</p>" + "<h2>Impact</h2>" + "<p>analysis</p>" * 2000
+        result = await self._list(doc)
+
+        (record,) = result["retrospectives"]
+        assert record["timeline_omitted"] is True
+        assert record["content_truncated"] is True
+        assert "intact" not in result["timeline_note"]
+        assert "content_truncated" in result["timeline_note"]
+
+    @pytest.mark.asyncio
+    async def test_an_uncut_document_is_called_intact(self):
+        doc = "<h2>Timeline</h2><p>event</p><h2>Impact</h2><p>short</p>"
+        result = await self._list(doc)
+
+        (record,) = result["retrospectives"]
+        assert record["timeline_omitted"] is True
+        assert "content_truncated" not in record
+        assert "intact" in result["timeline_note"]
