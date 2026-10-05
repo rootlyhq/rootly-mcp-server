@@ -34,8 +34,23 @@ RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500
 # cutting the end, which took the Impact, 5 Whys and corrective actions with it
 # -- the conclusions are always last. `get_incident_retrospective` returns the
 # document whole, Timeline included.
-RETROSPECTIVE_TIMELINE_HEADING = "timeline"
-_RETROSPECTIVE_HEADING = re.compile(r"<h[1-3][^>]*>(.*?)</h[1-3]>", re.DOTALL)
+# Only these count as the Timeline. A substring test removed "Timeline and
+# Impact" whole, taking the Impact findings with it -- the opposite of the
+# point. The asymmetry is deliberate: failing to recognise a Timeline costs
+# tokens, removing the wrong section costs the answer, so an unrecognised
+# heading is left in place.
+RETROSPECTIVE_TIMELINE_TITLES = frozenset(
+    {"timeline", "incident timeline", "timeline of events", "event timeline"}
+)
+# h1-h6, not h1-h3: a heading this did not recognise could not end a Timeline
+# section, so an `<h4>Impact</h4>` after one was swallowed by the removal.
+_RETROSPECTIVE_HEADING = re.compile(r"<h([1-6])[^>]*>(.*?)</h\1>", re.DOTALL)
+
+
+def _is_timeline_heading(title: str) -> bool:
+    """Whether a heading names the Timeline, ignoring emoji and punctuation."""
+    normalized = re.sub(r"[^a-z ]", " ", title.lower())
+    return " ".join(normalized.split()) in RETROSPECTIVE_TIMELINE_TITLES
 
 
 def _drop_timeline_sections(content: str) -> tuple[str, int]:
@@ -47,22 +62,38 @@ def _drop_timeline_sections(content: str) -> tuple[str, int]:
     """
     headings = []
     for match in _RETROSPECTIVE_HEADING.finditer(content):
-        title = re.sub(r"<[^>]*>", "", unescape(match.group(1))).strip()
+        title = re.sub(r"<[^>]*>", "", unescape(match.group(2))).strip()
         if title:
-            headings.append((match.start(), title))
+            headings.append((match.start(), int(match.group(1)), title))
     if not headings:
         return content, 0
 
     spans = []
-    for index, (start, title) in enumerate(headings):
-        if RETROSPECTIVE_TIMELINE_HEADING in title.lower():
-            end = headings[index + 1][0] if index + 1 < len(headings) else len(content)
-            spans.append((start, end))
+    for index, (start, level, title) in enumerate(headings):
+        if not _is_timeline_heading(title):
+            continue
+        # A Timeline that heads each event with a deeper heading ends at the
+        # next one at its own level or above, not at its first event.
+        end = len(content)
+        for next_start, next_level, _ in headings[index + 1 :]:
+            if next_level <= level:
+                end = next_start
+                break
+        spans.append((start, end))
     if not spans:
         return content, 0
 
+    # Overlapping spans would double-count; a nested Timeline is already inside
+    # the one above it.
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
     kept, cursor = [], 0
-    for start, end in spans:
+    for start, end in merged:
         kept.append(content[cursor:start])
         cursor = end
     kept.append(content[cursor:])
@@ -1271,9 +1302,17 @@ def register_incident_tools(
                     "to narrow instead."
                 )
             if timeline_count:
+                # Only claim the analysis survived when nothing was also cut:
+                # the size cap runs after the Timeline goes, and it takes the
+                # end of the document, where the conclusions are.
+                intact = (
+                    "The analysis sections are intact; "
+                    if not truncated_count
+                    else "Some were then cut at the size limit -- see `content_truncated`; "
+                )
                 result["timeline_note"] = (
                     f"{timeline_count} of {len(retrospectives)} documents have their Timeline "
-                    "omitted and carry `timeline_omitted`. The analysis sections are intact; "
+                    f"omitted and carry `timeline_omitted`. {intact}"
                     "`get_incident_retrospective` returns the document whole."
                 )
             if truncated_count:

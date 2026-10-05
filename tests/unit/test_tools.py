@@ -23,6 +23,7 @@ from rootly_mcp_server.tools.incidents import (
     RETROSPECTIVE_CONTENT_MAX_CHARS,
     _augment_pagination_error,
     _drop_timeline_sections,
+    _is_timeline_heading,
     _normalize_incident_reference,
     _summarize_incident_record,
     register_incident_tools,
@@ -2760,3 +2761,71 @@ class TestRetrospectiveTimelineOmitted:
         assert "Corrective actions" in record["content"]
         assert "minute by minute" not in record["content"]
         assert "timeline_note" in result
+
+
+class TestTimelineMatchingIsNarrow:
+    """What counts as the Timeline, and where its section ends.
+
+    A substring test removed "Timeline and Impact" whole, and a boundary that
+    accepted any heading ended a Timeline at its first event. Both took
+    analysis out of a list result, which is what dropping the Timeline exists
+    to avoid.
+    """
+
+    @pytest.mark.parametrize(
+        "title", ["Timeline", "timeline", "🕐 Timeline", "Incident Timeline", "Timeline of events"]
+    )
+    def test_recognised(self, title):
+        assert _is_timeline_heading(title)
+
+    @pytest.mark.parametrize(
+        "title",
+        ["Timeline and Impact", "Impact", "Timeline review and corrective actions", "Summary"],
+    )
+    def test_not_recognised(self, title):
+        assert not _is_timeline_heading(title)
+
+    def test_a_compound_heading_keeps_its_analysis(self):
+        doc = "<h2>Timeline and Impact</h2><p>revenue loss</p><h2>Summary</h2><p>s</p>"
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert (body, dropped) == (doc, 0)
+        assert "revenue loss" in body
+
+    def test_events_nested_under_the_timeline_go_with_it(self):
+        doc = (
+            "<h2>Summary</h2><p>s</p>"
+            "<h2>Timeline</h2>"
+            "<h3>09:01</h3><p>alert fired</p>"
+            "<h3>09:12</h3><p>rolled back</p>"
+            "<h2>Impact</h2><p>revenue</p>"
+        )
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        for gone in ("09:01", "alert fired", "09:12", "rolled back"):
+            assert gone not in body
+        assert "Impact" in body and "revenue" in body
+
+    def test_a_deeper_heading_belongs_to_the_timeline(self):
+        """An h4 under an h2 is nested in it, so it goes with the section.
+
+        This is the HTML reading, and it is what makes per-event headings work.
+        A document that heads its analysis deeper than its Timeline would lose
+        it, but that ordering means the analysis is already a subsection of the
+        Timeline, and guessing otherwise would need the headings' meaning
+        rather than their structure.
+        """
+        doc = "<h2>Timeline</h2><p>events</p><h4>Impact</h4><p>revenue</p>"
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+
+    def test_a_sibling_heading_after_the_timeline_survives(self):
+        doc = "<h3>Timeline</h3><p>events</p><h3>Impact</h3><p>revenue</p>"
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+        assert "Impact" in body and "revenue" in body
