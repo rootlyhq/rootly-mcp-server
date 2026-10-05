@@ -247,11 +247,31 @@ def build_mcpcat_identify_callback(
 
 
 MCP_SESSION_ID_HEADER = "mcp-session-id"
-# Sessions derived from caller identity rather than a transport session are
-# bucketed by UTC hour. The hosted transport is stateless, so there is no
-# connection to tie a task to, and one session per caller per hour is a
-# conservative stand-in for "one task".
+# Without a transport session, a caller's calls are grouped by UTC hour. The
+# hosted transport is stateless and runs more than one replica with no shared
+# store, so the only task boundary every replica agrees on is the clock. A
+# fixed bucket therefore trades precision for consistency: two tasks by one
+# caller inside an hour share a session, and a task spanning the top of the
+# hour is split in two. Asking the client to carry a task handle would be the
+# precise alternative, and it is exactly the injected parameter this hook
+# exists to remove. Clients that keep a transport session get task-level
+# boundaries from the header.
 _SESSION_BUCKET_FORMAT = "%Y%m%d%H"
+
+
+def _caller_key(user: Mapping[str, str] | None, auth_header: str) -> str | None:
+    """Identify the caller without exposing the credential.
+
+    Prefers the authenticated Rootly user; falls back to a digest of the
+    bearer token so two tokens never share a key and the token never leaves
+    the process.
+    """
+    if user and user.get("id"):
+        return f"user:{user['id']}"
+    token = auth_header.strip()
+    if token:
+        return f"token:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
+    return None
 
 
 def derive_agentcat_session_key(
@@ -263,25 +283,25 @@ def derive_agentcat_session_key(
 ) -> str | None:
     """Derive a caller-managed session key for AgentCat from request state.
 
-    Preference order: the client's MCP transport session when it sends one,
-    then the authenticated Rootly user, then a digest of the bearer token.
-    ``None`` lets the SDK mint a fresh handle for the call. The value never
-    leaves the process as-is: the SDK folds it into a deterministic KSUID.
+    The key always starts with the caller, so no two callers can share a
+    session: not through a colliding or replayed ``Mcp-Session-Id``, and not
+    through the time bucket. Within one caller the client's MCP transport
+    session is the boundary when it sends one, otherwise the UTC hour.
+    ``None`` (no caller identity at all) lets the SDK mint a fresh handle for
+    the call. The value never leaves the process as-is: the SDK folds it into
+    a deterministic KSUID.
     """
+    caller = _caller_key(user, auth_header)
+    if caller is None:
+        return None
+
     if headers:
         transport_session = headers.get(MCP_SESSION_ID_HEADER, "").strip()
         if transport_session:
-            return f"transport:{transport_session}"
+            return f"{caller}:transport:{transport_session}"
 
     bucket = (now or datetime.now(UTC)).strftime(_SESSION_BUCKET_FORMAT)
-    if user and user.get("id"):
-        return f"user:{user['id']}:{bucket}"
-
-    token = auth_header.strip()
-    if token:
-        digest = hashlib.sha256(token.encode()).hexdigest()[:32]
-        return f"token:{digest}:{bucket}"
-    return None
+    return f"{caller}:hour:{bucket}"
 
 
 def build_agentcat_session_resolver():

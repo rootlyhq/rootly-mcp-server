@@ -390,9 +390,10 @@ subject to the existing redaction hooks.
 
 Telemetry runs on AgentCat v2 (MCP 2026-07-28 spec). Session correlation uses the
 SDK's hook mode (`resolve_session_id`): the server derives the session from the
-request (the client's `Mcp-Session-Id` header when present, otherwise the
-authenticated user bucketed by UTC hour), so no `session_id` parameter or
-session instructions are added to tool schemas. Clients holding a cached tool
+request. The key always starts with the caller (authenticated user, or a digest
+of the token), then the client's `Mcp-Session-Id` when it sends one, otherwise
+the UTC hour. No `session_id` parameter or session instructions are added to
+tool schemas. Clients holding a cached tool
 list that still send `context` or `session_id` are tolerated; the stray
 argument is dropped before validation. `initialize` and `tools/list` events are
 no longer published by the SDK.

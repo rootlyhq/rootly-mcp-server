@@ -488,16 +488,26 @@ def test_session_resolver_is_offered_only_when_the_sdk_accepts_it(supported, mon
 _HOUR = datetime(2026, 10, 5, 19, 2, tzinfo=UTC)
 
 
-def test_session_key_prefers_the_transport_session():
+def test_session_key_prefers_the_transport_session_within_the_caller():
     key = derive_agentcat_session_key(
         {"mcp-session-id": " abc123 "}, {"id": "user-1"}, "Bearer tok", now=_HOUR
     )
-    assert key == "transport:abc123"
+    assert key == "user:user-1:transport:abc123"
+
+
+def test_session_key_never_crosses_callers_on_a_shared_transport_session():
+    # Two callers presenting the same Mcp-Session-Id (collision, replay, or a
+    # shared harness) must not be grouped into one AgentCat session.
+    headers = {"mcp-session-id": "abc123"}
+    first = derive_agentcat_session_key(headers, {"id": "user-1"}, "Bearer a", now=_HOUR)
+    second = derive_agentcat_session_key(headers, {"id": "user-2"}, "Bearer b", now=_HOUR)
+    anonymous = derive_agentcat_session_key(headers, None, "Bearer c", now=_HOUR)
+    assert len({first, second, anonymous}) == 3
 
 
 def test_session_key_buckets_the_authenticated_user_by_hour():
     key = derive_agentcat_session_key({}, {"id": "user-1"}, "Bearer tok", now=_HOUR)
-    assert key == "user:user-1:2026100519"
+    assert key == "user:user-1:hour:2026100519"
     later = derive_agentcat_session_key(
         {}, {"id": "user-1"}, "Bearer tok", now=_HOUR.replace(hour=20)
     )
@@ -508,7 +518,7 @@ def test_session_key_falls_back_to_a_token_digest_not_the_token():
     key = derive_agentcat_session_key({}, None, "Bearer secret-token", now=_HOUR)
     assert key is not None
     assert key.startswith("token:")
-    assert key.endswith(":2026100519")
+    assert key.endswith(":hour:2026100519")
     assert "secret-token" not in key
     # Stable for the same token within the hour; different for another token.
     assert key == derive_agentcat_session_key({}, None, "Bearer secret-token", now=_HOUR)
@@ -516,8 +526,11 @@ def test_session_key_falls_back_to_a_token_digest_not_the_token():
 
 
 def test_session_key_is_none_without_any_caller_identity():
+    # A transport session alone is not a caller: with nobody to attribute it
+    # to, the SDK mints a per-call handle rather than grouping strangers.
     assert derive_agentcat_session_key({}, None, "", now=_HOUR) is None
     assert derive_agentcat_session_key(None, {}, "  ", now=_HOUR) is None
+    assert derive_agentcat_session_key({"mcp-session-id": "abc"}, None, "", now=_HOUR) is None
 
 
 def test_session_resolver_reads_hosted_request_context(monkeypatch):
@@ -529,7 +542,7 @@ def test_session_resolver_reads_hosted_request_context(monkeypatch):
     resolver = build_agentcat_session_resolver()
     key = resolver(None, None)
     assert key is not None
-    assert key.startswith("user:user-9:")
+    assert key.startswith("user:user-9:hour:")
 
 
 def test_session_resolver_returns_none_outside_hosted_requests(monkeypatch):
