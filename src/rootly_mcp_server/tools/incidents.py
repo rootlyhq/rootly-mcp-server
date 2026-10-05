@@ -42,7 +42,7 @@ RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500
 RETROSPECTIVE_TIMELINE_TITLES = frozenset(
     {"timeline", "incident timeline", "timeline of events", "event timeline"}
 )
-# Boundaries come from the opening tag alone. Pairing `<hN>` with `</hN>` made
+# Boundaries come from the opening tag's prefix alone. Pairing `<hN>` with `</hN>` made
 # the title's length decide whether a heading counted: unbounded, an unmatched
 # tag rescanned the rest of the document once per tag (4,000 of them took
 # 1.35s); bounded, a heading carrying more than the bound in markup stopped
@@ -51,7 +51,7 @@ RETROSPECTIVE_TIMELINE_TITLES = frozenset(
 #
 # h1-h6, not h1-h3, so a deeper heading still ends a section. IGNORECASE
 # because HTML tag names are, and pasted content carries `<H2>`.
-_RETROSPECTIVE_HEADING_OPEN = re.compile(r"<h([1-6])\b[^>]*>", re.IGNORECASE)
+_RETROSPECTIVE_HEADING_OPEN = re.compile(r"<h([1-6])\b", re.IGNORECASE)
 # How far past an opening tag to look for the title. Only recognition depends
 # on this -- a heading whose text starts beyond it is still a boundary, it just
 # will not be read as the Timeline.
@@ -59,8 +59,17 @@ RETROSPECTIVE_HEADING_MAX_CHARS = 300
 
 
 def _heading_title(content: str, start: int) -> str:
-    """The text of the heading whose opening tag ends at *start*."""
+    """The text of the heading whose tag begins at *start*.
+
+    Walks past the tag's attributes to the closing `>`, then reads a bounded
+    window of text. Everything here is bounded, so a tag that is never closed
+    costs a fixed amount rather than a scan of the rest of the document.
+    """
     window = content[start : start + RETROSPECTIVE_HEADING_MAX_CHARS]
+    tag_end = window.find(">")
+    if tag_end == -1:
+        return ""
+    window = window[tag_end + 1 :]
     window = re.split(r"</h[1-6]\s*>", window, maxsplit=1, flags=re.IGNORECASE)[0]
     return re.sub(r"<[^>]*>", "", unescape(window)).strip()
 
@@ -71,6 +80,28 @@ def _is_timeline_heading(title: str) -> bool:
     return " ".join(normalized.split()) in RETROSPECTIVE_TIMELINE_TITLES
 
 
+def _comment_spans(content: str) -> list[tuple[int, int]]:
+    """Where HTML comments sit, so a heading inside one is not a boundary.
+
+    A commented-out `<h2>Timeline</h2>` would otherwise start a removal that
+    swallows everything after it.
+
+    Scanned with `find` rather than a regex: `<!--.*?-->` rescans the rest of
+    the document for every unterminated `<!--`, which is the same quadratic
+    shape the heading pattern had. This walks each character once.
+    """
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    while (start := content.find("<!--", cursor)) != -1:
+        end = content.find("-->", start + 4)
+        if end == -1:
+            spans.append((start, len(content)))
+            break
+        spans.append((start, end + 3))
+        cursor = end + 3
+    return spans
+
+
 def _drop_timeline_sections(content: str) -> tuple[str, int]:
     """Remove any Timeline section, returning the content and chars removed.
 
@@ -78,9 +109,11 @@ def _drop_timeline_sections(content: str) -> tuple[str, int]:
     section something else, comes back untouched and the size cap below still
     applies.
     """
+    commented = _comment_spans(content)
     headings = [
-        (match.start(), int(match.group(1)), _heading_title(content, match.end()))
+        (match.start(), int(match.group(1)), _heading_title(content, match.start()))
         for match in _RETROSPECTIVE_HEADING_OPEN.finditer(content)
+        if not any(start <= match.start() < end for start, end in commented)
     ]
     if not headings:
         return content, 0

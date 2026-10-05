@@ -2970,3 +2970,55 @@ class TestHeadingBoundariesDoNotDependOnTitleLength:
         assert "first" not in body
         # The buried heading was a boundary, so its own content survives.
         assert "events" in body
+
+
+class TestHeadingScanStaysLinear:
+    """Every shape of malformed markup must cost time proportional to length.
+
+    Three separate patterns here have been quadratic in turn: the paired
+    heading match rescanned for a close tag that never came, the attribute
+    match rescanned for a `>` that never came, and the comment match rescanned
+    for a `-->` that never came. Each looked fine against the shape the
+    previous fix had been tested on.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "unit"),
+        [
+            ("complete unmatched tags", "<h2>" + "x" * 40),
+            ("tag prefixes with no '>'", "<h2 " + "x" * 40),
+            ("unterminated comments", "<!--" + "x" * 40),
+            ("closed comments", "<!-- x -->" + "y" * 30),
+        ],
+    )
+    def test_malformed_markup_stays_fast(self, label, unit):
+        import time
+
+        doc = unit * 8000
+
+        start = time.perf_counter()
+        _drop_timeline_sections(doc)
+        elapsed = time.perf_counter() - start
+
+        # Each of these has measured in the hundreds of ms or seconds at some
+        # point; generous here so a slow CI box still passes.
+        assert elapsed < 0.5, f"{label} took {elapsed:.2f}s"
+
+
+class TestCommentedHeadingsAreNotBoundaries:
+    def test_a_commented_out_timeline_removes_nothing(self):
+        doc = "<!-- <h2>Timeline</h2> --><p>keep this</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert (body, dropped) == (doc, 0)
+        assert "keep this" in body
+
+    def test_a_comment_elsewhere_does_not_stop_removal(self):
+        doc = "<h2>Timeline</h2><p>events</p><!-- note --><h2>Impact</h2><p>revenue</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+        assert "revenue" in body
