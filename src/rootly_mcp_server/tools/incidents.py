@@ -44,7 +44,17 @@ RETROSPECTIVE_TIMELINE_TITLES = frozenset(
 )
 # h1-h6, not h1-h3: a heading this did not recognise could not end a Timeline
 # section, so an `<h4>Impact</h4>` after one was swallowed by the removal.
-_RETROSPECTIVE_HEADING = re.compile(r"<h([1-6])[^>]*>(.*?)</h\1>", re.DOTALL)
+#
+# The title is bounded rather than `.*?`. Retrospective content is written by
+# hand, so a document can carry unmatched `<h2>` tags, and an unbounded lazy
+# match rescans the rest of the document for a close tag that never comes --
+# once per opening tag. That is quadratic: 200 unmatched tags took 3.5ms, 1,000
+# took 85ms and 4,000 took 1.35s, and a page holds ten documents. A heading
+# longer than this is not one worth recognising.
+RETROSPECTIVE_HEADING_MAX_CHARS = 300
+_RETROSPECTIVE_HEADING = re.compile(
+    rf"<h([1-6])[^>]*>(.{{0,{RETROSPECTIVE_HEADING_MAX_CHARS}}}?)</h\1>", re.DOTALL
+)
 
 
 def _is_timeline_heading(title: str) -> bool:

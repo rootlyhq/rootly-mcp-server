@@ -21,6 +21,7 @@ from rootly_mcp_server.server_defaults import _generate_recommendation
 from rootly_mcp_server.tools.incidents import (
     INCIDENT_LIST_FIELDS,
     RETROSPECTIVE_CONTENT_MAX_CHARS,
+    RETROSPECTIVE_HEADING_MAX_CHARS,
     _augment_pagination_error,
     _drop_timeline_sections,
     _is_timeline_heading,
@@ -2829,3 +2830,37 @@ class TestTimelineMatchingIsNarrow:
         assert dropped > 0
         assert "events" not in body
         assert "Impact" in body and "revenue" in body
+
+
+class TestHeadingScanIsBounded:
+    """A malformed document must not make the scan quadratic.
+
+    Retrospective content is written by hand, so unmatched `<h2>` tags happen.
+    An unbounded lazy title rescanned the rest of the document for a close tag
+    that never came, once per opening tag: 4,000 of them took 1.35s, and a page
+    holds ten documents.
+    """
+
+    def test_unmatched_headings_stay_fast(self):
+        import time
+
+        doc = ("<h2>" + "x" * 40) * 4000
+
+        start = time.perf_counter()
+        body, dropped = _drop_timeline_sections(doc)
+        elapsed = time.perf_counter() - start
+
+        assert (body, dropped) == (doc, 0)
+        # Was ~1.35s unbounded; generous here so a slow CI box still passes.
+        assert elapsed < 0.5, f"heading scan took {elapsed:.2f}s"
+
+    def test_a_title_longer_than_the_bound_is_not_a_heading(self):
+        long_title = "x" * (RETROSPECTIVE_HEADING_MAX_CHARS + 1)
+        doc = f"<h2>{long_title}</h2><h2>Timeline</h2><p>events</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        # The Timeline is still found and removed; the overlong heading is
+        # simply not treated as a boundary.
+        assert dropped > 0
+        assert "events" not in body
