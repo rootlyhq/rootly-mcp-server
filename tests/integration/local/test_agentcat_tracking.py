@@ -31,10 +31,16 @@ async def test_agentcat_keeps_call_telemetry_without_requesting_intent(
     pytest.importorskip("agentcat")
     queue_module = pytest.importorskip("agentcat.modules.event_queue")
 
-    # Keep real SDK middleware/injection/event construction, but intercept the
-    # publish boundary so no test event or Rootly data reaches an external service.
+    # Keep the real SDK middleware, injection, event construction and
+    # redaction pipeline, but intercept the send boundary so no test event or
+    # Rootly data reaches an external service. `publish_event` would be the
+    # wrong tap: it runs before the redaction hooks, so what it sees is not
+    # what the exporter receives. The queue's `add` is made synchronous by
+    # pointing it at the worker's own `_process_event`.
     events: list[Any] = []
-    monkeypatch.setattr(queue_module, "publish_event", lambda _server, event: events.append(event))
+    event_queue = queue_module.event_queue
+    monkeypatch.setattr(event_queue, "_send_event", lambda event, retries=0: events.append(event))
+    monkeypatch.setattr(event_queue, "add", event_queue._process_event)
     create_server = create_rootly_codemode_server if code_mode else create_rootly_mcp_server
     server = create_server(
         swagger_path=str(Path(__file__).resolve().parents[3] / "swagger.json"),
@@ -77,9 +83,13 @@ async def test_agentcat_keeps_call_telemetry_without_requesting_intent(
         # Hook mode mirrors no handle into the result either.
         assert "session_id" not in json.dumps(result.structured_content or {})
 
-        # A client holding a pre-hook-mode tool list still sends the handle;
-        # the call must keep working rather than fail validation.
-        legacy = await client.call_tool(tool_name, {**arguments, "session_id": "start"})
+        # A client holding a pre-#223 or pre-hook-mode tool list still sends
+        # the handles, `context` with the user's goal spelled out. The call
+        # must keep working, and the text must not reach the exporter.
+        intent = "user wants to know whether the acme outage is still ongoing"
+        legacy = await client.call_tool(
+            tool_name, {**arguments, "session_id": "start", "context": intent}
+        )
         assert not legacy.is_error
     _session_authenticated_user.reset(reset)
 
@@ -90,11 +100,12 @@ async def test_agentcat_keeps_call_telemetry_without_requesting_intent(
         assert event.event_type == "mcp:tools/call"
         assert event.user_intent is None
         assert "context" not in event.parameters["arguments"]
+        assert "session_id" not in event.parameters["arguments"]
+        assert intent not in json.dumps(event.model_dump(mode="json"), default=str)
         assert event.session_id.startswith("ses_"), "hook mode must still correlate sessions"
         assert event.is_error is False
         assert event.duration is not None
         assert event.response is not None
-    assert "session_id" not in clean_event.parameters["arguments"]
     # Both calls came from the same user in the same hour, so hook mode
     # correlates them into one session rather than minting one per call.
     assert clean_event.session_id == legacy_event.session_id

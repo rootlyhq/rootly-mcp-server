@@ -71,8 +71,19 @@ CREDENTIAL_KEY_SUBSTRINGS = (
 # "token" inside "tokens". These count only as a whole key.
 CREDENTIAL_KEYS_EXACT = frozenset({"auth", "token", "session"})
 
-# `session_id` contains a credential word but is AgentCat's correlation key.
+# `session_id` contains a credential word but is not a credential: it was
+# AgentCat's correlation handle, and is now a retired argument (see below).
 NON_CREDENTIAL_KEYS = frozenset({"session_id"})
+
+# Parameters AgentCat used to inject into every tool schema and no longer does.
+# `context` went with #223 (intent capture off); `session_id` went when session
+# correlation moved to the SDK's hook mode (`resolve_session_id`). Clients
+# holding a cached tool list still send both. Two places act on this set: the
+# call middleware in `server.py` drops them before the tool validates its
+# arguments, and `scrub_event_arguments` below removes them from the published
+# event, because AgentCat records the raw arguments before any of our
+# middleware runs.
+RETIRED_INJECTED_PARAMS: frozenset[str] = frozenset({"context", "session_id"})
 
 
 def is_credential_key(key: str) -> bool:
@@ -246,8 +257,16 @@ def scrub_event_arguments(event: Any) -> Any:
     walks the argument dict and hands the string hook bare values, so `hunter2`
     arrives with nothing to say it came from a field called `password`.
 
-    Only `parameters` is touched. `response` and `error` are free text with no
-    keys to read, so they stay with the string scrubber.
+    Also removes what a cached client still sends from the retired injected
+    parameters, and clears `user_intent`. AgentCat sits at index 0 of the
+    middleware chain and copies the raw arguments before our call middleware
+    strips them, and it fills `user_intent` from a `context` argument whenever
+    one is present, even with `enable_tool_call_context` off. Intent capture
+    is off on purpose (#223): a narrative of the user's goal is not something
+    this server collects, so neither field may reach the exporter.
+
+    Beyond that only `parameters` is touched. `response` and `error` are free
+    text with no keys to read, so they stay with the string scrubber.
     """
 
     def walk(node: Any, depth: int) -> Any:
@@ -273,7 +292,14 @@ def scrub_event_arguments(event: Any) -> Any:
 
     parameters = getattr(event, "parameters", None)
     if parameters:
-        event.parameters = walk(parameters, 0)
+        scrubbed = walk(parameters, 0)
+        arguments = scrubbed.get("arguments") if isinstance(scrubbed, dict) else None
+        if isinstance(arguments, dict):
+            for name in RETIRED_INJECTED_PARAMS:
+                arguments.pop(name, None)
+        event.parameters = scrubbed
+    if getattr(event, "user_intent", None) is not None:
+        event.user_intent = None
     return event
 
 

@@ -23,6 +23,7 @@ from . import audit, legacy_server, payload_stripping, server_defaults, spec_tra
 from .exceptions import RootlyAuthenticationError
 from .mcp_error import MCPError
 from .security import mask_sensitive_data, sanitize_error_message
+from .telemetry_scrubber import RETIRED_INJECTED_PARAMS
 from .tools.alerts import register_alert_tools
 from .tools.audits import register_audit_tools
 from .tools.incidents import register_incident_tools
@@ -553,18 +554,6 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
         return await call_next(context)
 
 
-# Parameters AgentCat used to inject into every tool schema and no longer does.
-# `context` went with #223 (intent capture off); `session_id` went when session
-# correlation moved to the SDK's hook mode (`resolve_session_id`), where the
-# server derives the session and the schemas carry no handle. Clients holding
-# a cached tool list still send both. AgentCat inserts its own middleware at
-# index 0 of the chain (outermost), so it has already read and recorded the
-# raw arguments before this runs; this middleware only guarantees that whatever
-# the SDK leaves behind -- or everything, when the SDK is not installed -- is
-# gone before the tool validates its arguments.
-RETIRED_INJECTED_PARAMS: frozenset[str] = frozenset({"context", "session_id"})
-
-
 class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
     """Drops retired telemetry arguments that the target tool does not declare.
 
@@ -574,6 +563,12 @@ class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
     Tools reject undeclared arguments, so the whole call failed -- and the
     pydantic error echoed the caller's text into telemetry. The parameters stay
     out of the advertised schemas; they are only tolerated.
+
+    AgentCat inserts its own middleware at index 0 of the chain (outermost), so
+    it has already copied the raw arguments before this runs; the event-level
+    scrubber removes them again there. This middleware guarantees that whatever
+    the SDK leaves behind -- or everything, when the SDK is not installed -- is
+    gone before the tool validates its arguments.
     """
 
     async def on_call_tool(
