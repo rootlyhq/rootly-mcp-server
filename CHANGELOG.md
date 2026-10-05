@@ -5,6 +5,12 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **No `session_id` parameter in hosted tool schemas**: AgentCat session correlation now runs in the SDK's hook mode (`resolve_session_id`). The server derives the session from the request (the client's `Mcp-Session-Id` header when present, otherwise the authenticated user bucketed by UTC hour), so the SDK no longer injects a required `session_id` parameter, its instruction text, or an `mcp_session` mirror into every tool. Tool schemas now describe only what each tool needs. Clients holding a cached tool list that still send `session_id` (or the earlier `context`) keep working: the stray argument is dropped before validation. The `rootly://workflow-guide` resource no longer mentions session IDs.
+
 ## [2.3.20] - Released 2026-09-14
 
 ### Added

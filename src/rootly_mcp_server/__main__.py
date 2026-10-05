@@ -8,6 +8,7 @@ This module provides the main entry point for the Rootly MCP Server.
 import argparse
 import asyncio
 import dataclasses
+import hashlib
 import importlib
 import logging
 import os
@@ -15,6 +16,7 @@ import re
 import sys
 from collections.abc import Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -37,7 +39,7 @@ from .telemetry_scrubber import (
     redact_agentcat_telemetry_text,
     scrub_event_arguments,
 )
-from .transport import get_hosted_authenticated_user
+from .transport import _session_auth_token, get_hosted_authenticated_user
 
 TransportName = Literal["stdio", "sse", "streamable-http", "both"]
 TRANSPORT_ALIASES: dict[str, TransportName] = {
@@ -182,6 +184,19 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
                 "AgentCat does not support redact_event; credential-named tool "
                 "arguments will not be scrubbed. Upgrade to 2.0.2 or later."
             )
+        # Session correlation runs in the SDK's hook mode: the server derives
+        # the session from the request, so the SDK injects no `session_id`
+        # parameter and no instruction text into the tool schemas. Without
+        # the hook, every tool carries a required parameter the tool does not
+        # need to run, described by directives aimed at the model.
+        if agentcat_options_supports(agentcat_types.AgentCatOptions, "resolve_session_id"):
+            options_kwargs["resolve_session_id"] = build_agentcat_session_resolver()
+        else:
+            logger.warning(
+                "AgentCat does not support resolve_session_id; a required "
+                "session_id parameter will be injected into every tool schema. "
+                "Upgrade to 2.1.0 or later."
+            )
         if sentry_dsn:
             options_kwargs["exporters"] = {
                 "sentry": {
@@ -229,6 +244,67 @@ def build_mcpcat_identify_callback(
         )
 
     return identify
+
+
+MCP_SESSION_ID_HEADER = "mcp-session-id"
+# Sessions derived from caller identity rather than a transport session are
+# bucketed by UTC hour. The hosted transport is stateless, so there is no
+# connection to tie a task to, and one session per caller per hour is a
+# conservative stand-in for "one task".
+_SESSION_BUCKET_FORMAT = "%Y%m%d%H"
+
+
+def derive_agentcat_session_key(
+    headers: Mapping[str, str] | None,
+    user: Mapping[str, str] | None,
+    auth_header: str,
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Derive a caller-managed session key for AgentCat from request state.
+
+    Preference order: the client's MCP transport session when it sends one,
+    then the authenticated Rootly user, then a digest of the bearer token.
+    ``None`` lets the SDK mint a fresh handle for the call. The value never
+    leaves the process as-is: the SDK folds it into a deterministic KSUID.
+    """
+    if headers:
+        transport_session = headers.get(MCP_SESSION_ID_HEADER, "").strip()
+        if transport_session:
+            return f"transport:{transport_session}"
+
+    bucket = (now or datetime.now(UTC)).strftime(_SESSION_BUCKET_FORMAT)
+    if user and user.get("id"):
+        return f"user:{user['id']}:{bucket}"
+
+    token = auth_header.strip()
+    if token:
+        digest = hashlib.sha256(token.encode()).hexdigest()[:32]
+        return f"token:{digest}:{bucket}"
+    return None
+
+
+def build_agentcat_session_resolver():
+    """Build the AgentCat ``resolve_session_id`` hook from hosted request context.
+
+    The SDK calls the hook per tool call with its own ``(request, extra)``
+    pair; both are ignored in favor of the ContextVars the hosted auth
+    middleware already fills, which is also where ``identify`` reads from.
+    """
+
+    def resolve_session_id(_request: Any, _extra: Any) -> str | None:
+        headers: dict[str, str] = {}
+        try:
+            from fastmcp.server.dependencies import get_http_headers
+
+            headers = {str(k).lower(): str(v) for k, v in get_http_headers().items()}
+        except Exception:  # nosec B110 - no HTTP request in scope (stdio, tests)
+            pass
+        return derive_agentcat_session_key(
+            headers, get_hosted_authenticated_user(), _session_auth_token.get("")
+        )
+
+    return resolve_session_id
 
 
 def parse_args():

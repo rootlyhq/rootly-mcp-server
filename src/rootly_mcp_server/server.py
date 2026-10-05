@@ -553,14 +553,27 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
         return await call_next(context)
 
 
-class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
-    """Drops a stray ``context`` argument that the target tool does not declare.
+# Parameters AgentCat used to inject into every tool schema and no longer does.
+# `context` went with #223 (intent capture off); `session_id` went when session
+# correlation moved to the SDK's hook mode (`resolve_session_id`), where the
+# server derives the session and the schemas carry no handle. Clients holding
+# a cached tool list still send both. AgentCat inserts its own middleware at
+# index 0 of the chain (outermost), so it has already read and recorded the
+# raw arguments before this runs; this middleware only guarantees that whatever
+# the SDK leaves behind -- or everything, when the SDK is not installed -- is
+# gone before the tool validates its arguments.
+RETIRED_INJECTED_PARAMS: frozenset[str] = frozenset({"context", "session_id"})
 
-    Until #223 AgentCat injected an optional ``context`` parameter into every tool
-    schema, and some callers (scripts and agents with cached schemas) still send
-    it. Tools reject undeclared arguments, so the whole call failed -- and the
-    pydantic error echoed the caller's ``context`` text into telemetry. The
-    parameter stays out of the advertised schemas; it is only tolerated.
+
+class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
+    """Drops retired telemetry arguments that the target tool does not declare.
+
+    Until #223 AgentCat injected a ``context`` parameter into every tool schema,
+    and until session hook mode it injected ``session_id``. Callers with cached
+    schemas (scripts, agents, directory reviewers' harnesses) still send them.
+    Tools reject undeclared arguments, so the whole call failed -- and the
+    pydantic error echoed the caller's text into telemetry. The parameters stay
+    out of the advertised schemas; they are only tolerated.
     """
 
     async def on_call_tool(
@@ -569,12 +582,16 @@ class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
         call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
     ) -> Any:
         args = context.message.arguments
-        if args and "context" in args and context.fastmcp_context is not None:
-            tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
-            # An unknown tool is left alone so it fails as "unknown tool", and a
-            # tool that declares its own `context` keeps it.
-            if tool is not None and "context" not in tool.parameters.get("properties", {}):
-                args.pop("context")
+        if args and context.fastmcp_context is not None:
+            stray = RETIRED_INJECTED_PARAMS.intersection(args)
+            if stray:
+                tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)
+                # An unknown tool is left alone so it fails as "unknown tool", and
+                # a tool that declares the name as its own parameter keeps it.
+                if tool is not None:
+                    declared = tool.parameters.get("properties", {})
+                    for name in stray - set(declared):
+                        args.pop(name)
         return await call_next(context)
 
 

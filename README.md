@@ -388,10 +388,14 @@ disabled. The SDK does not add an analytics `context` parameter or the
 arguments, responses, timing, errors, and configured identity information,
 subject to the existing redaction hooks.
 
-Telemetry runs on AgentCat v2 (MCP 2026-07-28 spec). Sessions are correlated via
-a session_id carried in the tool list rather than stateful connections, which
-suits our stateless hosted transport; `initialize` and `tools/list` events are no
-longer published by the SDK.
+Telemetry runs on AgentCat v2 (MCP 2026-07-28 spec). Session correlation uses the
+SDK's hook mode (`resolve_session_id`): the server derives the session from the
+request (the client's `Mcp-Session-Id` header when present, otherwise the
+authenticated user bucketed by UTC hour), so no `session_id` parameter or
+session instructions are added to tool schemas. Clients holding a cached tool
+list that still send `context` or `session_id` are tolerated; the stray
+argument is dropped before validation. `initialize` and `tools/list` events are
+no longer published by the SDK.
 
 To override the hosted or self-hosted default profile entirely, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names. When that variable is set, it fully replaces the default selection.
 
