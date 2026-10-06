@@ -98,7 +98,10 @@ def _comment_spans(content: str) -> list[tuple[int, int]]:
             spans.append((start, len(content)))
             break
         spans.append((start, end + 3))
-        cursor = end + 3
+        # Past the opener either way: an edit that let `end` sit behind `start`
+        # would otherwise rescan the same comment forever on a document a
+        # caller controls.
+        cursor = max(end + 3, start + 4)
     return spans
 
 
@@ -140,8 +143,12 @@ def _drop_timeline_sections(content: str) -> tuple[str, int]:
     if not spans:
         return content, 0
 
-    # Overlapping spans would double-count; a nested Timeline is already inside
-    # the one above it.
+    # Overlapping spans would double-count. In practice they are always nested
+    # rather than partial -- a Timeline starting inside another span must be
+    # deeper than it, so whatever ends the outer span ends the inner one too --
+    # which means no input can tell this branch apart from leaving it out. It
+    # stays because the slicing below walks forward and would duplicate content
+    # if that ever stopped holding, and no test can cover it.
     merged: list[tuple[int, int]] = []
     for start, end in sorted(spans):
         if merged and start <= merged[-1][1]:
@@ -1244,8 +1251,8 @@ def register_incident_tools(
                 description=(
                     f"Retrospectives per page (default {RETROSPECTIVE_PAGE_SIZE_DEFAULT}, "
                     f"max {RETROSPECTIVE_PAGE_SIZE_MAX}). Each one carries its document "
-                    "minus the Timeline, so a large page is still expensive; narrow with "
-                    "the filters instead of raising this."
+                    "minus any Timeline, cut at a size limit if still long, so a large "
+                    "page is expensive; narrow with the filters instead of raising this."
                 )
             ),
         ] = RETROSPECTIVE_PAGE_SIZE_DEFAULT,
@@ -1270,10 +1277,13 @@ def register_incident_tools(
 
         Answers "the last five retrospectives", "published ones for this team
         since June", or "how many are still draft". Each result carries the
-        document's analysis -- summary, causes, impact, actions -- with the
-        Timeline omitted and `timeline_omitted` set, because a minute-by-minute
-        log is a third of a document and rarely what a browse is after. Use
-        `get_incident_retrospective` for one document whole.
+        document's analysis -- summary, causes, impact, actions. A recognised
+        Timeline is dropped and the record says so with `timeline_omitted`,
+        because a minute-by-minute log is a third of a document and rarely what
+        a browse is after. What remains is still capped, and a record cut that
+        way carries `content_truncated` with its real `content_chars`. Use
+        `get_incident_retrospective` for one document whole, Timeline included
+        and nothing cut.
 
         Filtering happens upstream for status, severity, team, service and
         dates. Free-text search is not offered here because the API's search

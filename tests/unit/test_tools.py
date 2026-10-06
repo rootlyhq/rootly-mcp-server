@@ -3023,3 +3023,69 @@ class TestCommentedHeadingsAreNotBoundaries:
         assert dropped > 0
         assert "events" not in body
         assert "revenue" in body
+
+
+class TestRetrospectiveListUncoveredPaths:
+    """Paths the suite reached only by accident, found by a coverage audit."""
+
+    @staticmethod
+    def _tools(responder):
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp.tools
+
+    def test_a_timeline_nested_in_a_timeline_merges_into_one_span(self):
+        # Two overlapping removals; the inner one is already inside the outer.
+        doc = "<h2>Timeline</h2><p>a</p><h3>Timeline</h3><p>b</p><h2>Impact</h2><p>revenue</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "a" not in body.replace("Impact", "").replace("revenue", "")
+        assert "revenue" in body
+        # One merged removal, so the content is not cut twice.
+        assert body.count("<h2>Impact</h2>") == 1
+
+    @pytest.mark.asyncio
+    async def test_every_filter_reaches_the_request(self):
+        seen = {}
+
+        async def responder(method, path, **kwargs):
+            seen.update(kwargs.get("params") or {})
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json.return_value = {"data": [], "meta": {"total_count": 0}}
+            return response
+
+        await self._tools(responder)["list_incident_post_mortems"](
+            status="published",
+            severity="sev1",
+            team_ids="t1,t2",
+            service_ids="s1,s2",
+            created_after="2026-09-01",
+            created_before="2026-09-30",
+        )
+
+        assert seen["filter[status]"] == "published"
+        assert seen["filter[severity]"] == "sev1"
+        assert seen["filter[team_ids]"] == "t1,t2"
+        assert seen["filter[service_ids]"] == "s1,s2"
+        assert seen["filter[created_at][gte]"] == "2026-09-01"
+        assert seen["filter[created_at][lte]"] == "2026-09-30"
+
+    @pytest.mark.asyncio
+    async def test_an_upstream_failure_is_reported_not_raised(self):
+        async def responder(method, path, **kwargs):
+            raise RuntimeError("HTTP error 500: upstream exploded")
+
+        result = await self._tools(responder)["list_incident_post_mortems"](page_size=1)
+
+        assert result.get("error") is True
+        assert "retrospectives" not in result
