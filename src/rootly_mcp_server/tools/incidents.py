@@ -109,12 +109,19 @@ def _drop_timeline_sections(content: str) -> tuple[str, int]:
     section something else, comes back untouched and the size cap below still
     applies.
     """
+    # Both sequences run left to right, so one walk over each decides which
+    # headings sit inside a comment. Testing every span per heading was
+    # headings x comments: 8,000 of each took 1.7s.
     commented = _comment_spans(content)
-    headings = [
-        (match.start(), int(match.group(1)), _heading_title(content, match.start()))
-        for match in _RETROSPECTIVE_HEADING_OPEN.finditer(content)
-        if not any(start <= match.start() < end for start, end in commented)
-    ]
+    span_index = 0
+    headings: list[tuple[int, int, str]] = []
+    for match in _RETROSPECTIVE_HEADING_OPEN.finditer(content):
+        position = match.start()
+        while span_index < len(commented) and commented[span_index][1] <= position:
+            span_index += 1
+        if span_index < len(commented) and commented[span_index][0] <= position:
+            continue
+        headings.append((position, int(match.group(1)), _heading_title(content, position)))
     if not headings:
         return content, 0
 

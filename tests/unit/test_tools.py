@@ -2989,6 +2989,7 @@ class TestHeadingScanStaysLinear:
             ("tag prefixes with no '>'", "<h2 " + "x" * 40),
             ("unterminated comments", "<!--" + "x" * 40),
             ("closed comments", "<!-- x -->" + "y" * 30),
+            ("headings and comments together", "<h2>S</h2><p>x</p><!-- c -->"),
         ],
     )
     def test_malformed_markup_stays_fast(self, label, unit):
