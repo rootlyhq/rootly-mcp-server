@@ -11,7 +11,7 @@ Tests cover:
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, Mock, call, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
@@ -20,7 +20,11 @@ from rootly_mcp_server.server import DEFAULT_ALLOWED_PATHS, create_rootly_mcp_se
 from rootly_mcp_server.server_defaults import _generate_recommendation
 from rootly_mcp_server.tools.incidents import (
     INCIDENT_LIST_FIELDS,
+    RETROSPECTIVE_CONTENT_MAX_CHARS,
+    RETROSPECTIVE_HEADING_MAX_CHARS,
     _augment_pagination_error,
+    _drop_timeline_sections,
+    _is_timeline_heading,
     _normalize_incident_reference,
     _summarize_incident_record,
     register_incident_tools,
@@ -2400,3 +2404,688 @@ class TestTranscriptPaginationFindsSpokenRecordings:
         # The first page satisfied the request, so the failure never happens.
         assert result["returned_recordings"] == 3
         assert result.get("error") is None
+
+
+class TestIncidentRetrospectiveTool:
+    """`get_incident_retrospective` collapses a hop a caller should not have to know.
+
+    `/post_mortems` cannot be filtered by incident and the document carries no
+    reference back to one, so the only route is the incident's own
+    `incident_post_mortem` relationship.
+    """
+
+    RETRO_ID = "5e29876e-1c95-4528-8851-d7ea176cd5de"
+    INCIDENT_ID = "ca50b12e-59a8-41d7-93c4-01a9eaf9617c"
+
+    def _register(self, responder):
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+        return mcp.tools
+
+    @staticmethod
+    def _ok(payload):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = payload
+        response.raise_for_status = Mock()
+        return response
+
+    def _responder(self, *, has_retrospective: bool):
+        incident = {
+            "id": self.INCIDENT_ID,
+            "attributes": {
+                # Matches the number each test asks for; the resolver only
+                # accepts an exact sequential_id match.
+                "sequential_id": 5184 if has_retrospective else 5185,
+                "title": "Elasticsearch mapping explosion",
+                "retrospective_progress_status": "active" if has_retrospective else "not_started",
+            },
+            "relationships": (
+                {"incident_post_mortem": {"data": {"id": self.RETRO_ID}}}
+                if has_retrospective
+                else {"causes": {"data": []}}
+            ),
+        }
+        seen: list[str] = []
+
+        async def responder(method, path, params=None, **kwargs):
+            seen.append(path)
+            if path == "/v1/incidents":
+                return self._ok({"data": [incident]})
+            if path.startswith("/v1/incidents/"):
+                return self._ok({"data": incident})
+            if path == f"/v1/post_mortems/{self.RETRO_ID}":
+                return self._ok(
+                    {
+                        "data": {
+                            "id": self.RETRO_ID,
+                            "attributes": {
+                                "title": "Retrospective: Elasticsearch mapping explosion",
+                                "content": "## Learnings\nEnforce strict mapping.",
+                                "status": "published",
+                                "url": "https://rootly.com/retro/5184",
+                            },
+                        }
+                    }
+                )
+            raise AssertionError(f"unexpected path {path}")
+
+        return responder, seen
+
+    @pytest.mark.asyncio
+    async def test_it_is_registered(self):
+        responder, _ = self._responder(has_retrospective=True)
+        assert "get_incident_retrospective" in self._register(responder)
+
+    @pytest.mark.asyncio
+    async def test_it_returns_the_document_for_an_incident(self):
+        responder, seen = self._responder(has_retrospective=True)
+        tools = self._register(responder)
+
+        result = await tools["get_incident_retrospective"](incident_id="5184")
+
+        assert result["incident_number"] == 5184
+        assert result["retrospective"]["content"] == "## Learnings\nEnforce strict mapping."
+        assert result["retrospective"]["id"] == self.RETRO_ID
+        # The document is reached through the incident, never guessed at.
+        assert f"/v1/post_mortems/{self.RETRO_ID}" in seen
+
+    @pytest.mark.asyncio
+    async def test_it_names_the_incident_alongside_the_document(self):
+        # The document carries no incident reference, so a caller reading the
+        # result would otherwise not know which incident it describes.
+        responder, _ = self._responder(has_retrospective=True)
+        tools = self._register(responder)
+
+        result = await tools["get_incident_retrospective"](incident_id="5184")
+
+        assert result["incident_title"] == "Elasticsearch mapping explosion"
+        assert result["incident_id"] == self.INCIDENT_ID
+
+    @pytest.mark.asyncio
+    async def test_no_retrospective_is_reported_not_raised(self):
+        # A sub-incident, or one nobody has started a retrospective for, has no
+        # relationship. That is an answer, not a failure.
+        responder, seen = self._responder(has_retrospective=False)
+        tools = self._register(responder)
+
+        result = await tools["get_incident_retrospective"](incident_id="5185")
+
+        assert result.get("error") is None
+        assert result["retrospective"] is None
+        assert result["retrospective_progress_status"] == "not_started"
+        assert "no retrospective" in result["note"]
+        # No point asking for a document whose id we do not have.
+        assert not any("post_mortems" in path for path in seen)
+
+    @pytest.mark.asyncio
+    async def test_an_upstream_failure_is_an_error(self):
+        async def responder(method, path, params=None, **kwargs):
+            raise RuntimeError("upstream exploded")
+
+        tools = self._register(responder)
+        result = await tools["get_incident_retrospective"](incident_id="5184")
+
+        assert result["error"] is True
+
+
+class TestRetrospectiveListCap:
+    """A page of retrospectives is unbounded upstream.
+
+    Every record carries its whole document and the API enforces no ceiling:
+    measured live, page[size]=1000 returns about 1.1 million tokens. The cap
+    here is the only thing between a caller and that.
+    """
+
+    def _register(self, responder):
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=True,
+        )
+        return mcp.tools
+
+    def _responder(self, total=5087):
+        seen: list[dict[str, Any]] = []
+
+        async def responder(method, path, params=None, **kwargs):
+            seen.append(dict(params or {}))
+            size = int((params or {}).get("page[size]", 5))
+            response = Mock()
+            response.status_code = 200
+            response.raise_for_status = Mock()
+            response.json.return_value = {
+                "data": [
+                    {
+                        "id": f"pm-{i}",
+                        "attributes": {
+                            "incident_id": f"inc-{i}",
+                            "title": f"Retrospective {i}",
+                            "status": "published",
+                            "content": "<h2>Summary</h2>",
+                        },
+                    }
+                    for i in range(size)
+                ],
+                "meta": {"total_count": total},
+            }
+            return response
+
+        return responder, seen
+
+    @pytest.mark.asyncio
+    async def test_the_default_page_is_small(self):
+        responder, seen = self._responder()
+        tools = self._register(responder)
+
+        result = await tools["list_incident_post_mortems"]()
+
+        assert result["returned"] == 5
+        assert seen[0]["page[size]"] == 5
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_page_is_capped(self):
+        responder, seen = self._responder()
+        tools = self._register(responder)
+
+        result = await tools["list_incident_post_mortems"](page_size=1000)
+
+        assert result["page_size"] == 10
+        assert seen[0]["page[size]"] == 10
+        # Silently returning 10 would read as "there were only 10".
+        assert "capped at 10" in result["page_size_note"]
+
+    @pytest.mark.asyncio
+    async def test_the_total_is_reported_so_a_page_is_not_read_as_everything(self):
+        responder, _ = self._responder(total=5087)
+        tools = self._register(responder)
+
+        result = await tools["list_incident_post_mortems"]()
+
+        assert result["total_matching"] == 5087
+        assert "5 of 5,087" in result["note"]
+
+    @pytest.mark.asyncio
+    async def test_no_note_when_the_page_holds_everything(self):
+        responder, _ = self._responder(total=3)
+        tools = self._register(responder)
+
+        result = await tools["list_incident_post_mortems"](page_size=5)
+
+        assert "note" not in result
+
+    @pytest.mark.asyncio
+    async def test_filters_reach_upstream(self):
+        responder, seen = self._responder()
+        tools = self._register(responder)
+
+        await tools["list_incident_post_mortems"](
+            status="published", severity="sev-1", team_ids="t1,t2", created_after="2026-08-01"
+        )
+
+        params = seen[0]
+        assert params["filter[status]"] == "published"
+        assert params["filter[severity]"] == "sev-1"
+        # Comma-joined: a list becomes a repeated key the endpoint ignores.
+        assert params["filter[team_ids]"] == "t1,t2"
+        assert params["filter[created_at][gte]"] == "2026-08-01"
+
+
+class TestRetrospectiveContentBound:
+    """A page cap bounds how many documents come back, not how large each is.
+
+    Live published retrospectives reach 43,712 characters, so a full page of
+    ten can exceed the budget the page cap exists to protect.
+    """
+
+    @staticmethod
+    def _register(responder):
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp.tools
+
+    @pytest.mark.asyncio
+    async def test_a_long_document_is_cut_and_says_so(self):
+        long_content = "x" * 40_000
+
+        async def responder(method, path, **kwargs):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json.return_value = {
+                "data": [
+                    {
+                        "id": "r1",
+                        "attributes": {"content": long_content, "incident_id": "i1"},
+                    },
+                    {"id": "r2", "attributes": {"content": "short", "incident_id": "i2"}},
+                ],
+                # More matches than returned, so the pagination note appears
+                # alongside the truncation -- the case where the two could
+                # contradict each other.
+                "meta": {"total_count": 50},
+            }
+            return response
+
+        tools = self._register(responder)
+        result = await tools["list_incident_post_mortems"](page_size=2)
+
+        cut, whole = result["retrospectives"]
+        assert len(cut["content"]) == RETROSPECTIVE_CONTENT_MAX_CHARS
+        assert cut["content_truncated"] is True
+        assert cut["content_chars"] == 40_000
+        # The short one is untouched and carries no truncation marker.
+        assert whole["content"] == "short"
+        assert "content_truncated" not in whole
+        assert "content_note" in result
+        # The pagination note is present here, and must not call a cut
+        # document a full one.
+        assert "Showing 2 of 50" in result["note"]
+        assert "full" not in result["note"]
+
+
+class TestRetrospectiveTimelineOmitted:
+    """The Timeline is dropped from list results, not the end of the document.
+
+    Cutting at a fixed length took the conclusions with it: Impact, the 5 Whys
+    and corrective actions sit last, while the Timeline -- a median third of a
+    live document -- sits near the front and survived. Dropping the Timeline is
+    both cheaper and keeps the analysis.
+    """
+
+    DOC = (
+        "<h2>Summary</h2><p>short</p>"
+        "<h2>Timeline</h2>" + "<p>09:0x minute by minute</p>" * 50 + "<h2>Impact</h2><p>revenue</p>"
+        "<h2>Corrective actions</h2><p>do the thing</p>"
+    )
+
+    def test_the_timeline_goes_and_the_rest_stays(self):
+        body, dropped = _drop_timeline_sections(self.DOC)
+
+        assert dropped > 0
+        assert "minute by minute" not in body
+        for kept in ("Summary", "Impact", "Corrective actions", "revenue", "do the thing"):
+            assert kept in body
+
+    def test_a_document_without_one_is_untouched(self):
+        plain = "<h2>Summary</h2><p>no timeline here</p>"
+        body, dropped = _drop_timeline_sections(plain)
+
+        assert (body, dropped) == (plain, 0)
+
+    def test_a_document_without_headings_is_untouched(self):
+        body, dropped = _drop_timeline_sections("<p>just prose</p>")
+
+        assert (body, dropped) == ("<p>just prose</p>", 0)
+
+    @pytest.mark.asyncio
+    async def test_the_list_marks_what_it_omitted(self):
+        async def responder(method, path, **kwargs):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json.return_value = {
+                "data": [{"id": "r1", "attributes": {"content": self.DOC, "incident_id": "i1"}}],
+                "meta": {"total_count": 1},
+            }
+            return response
+
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        result = await mcp.tools["list_incident_post_mortems"](page_size=1)
+
+        (record,) = result["retrospectives"]
+        assert record["timeline_omitted"] is True
+        assert "Corrective actions" in record["content"]
+        assert "minute by minute" not in record["content"]
+        assert "timeline_note" in result
+
+
+class TestTimelineMatchingIsNarrow:
+    """What counts as the Timeline, and where its section ends.
+
+    A substring test removed "Timeline and Impact" whole, and a boundary that
+    accepted any heading ended a Timeline at its first event. Both took
+    analysis out of a list result, which is what dropping the Timeline exists
+    to avoid.
+    """
+
+    @pytest.mark.parametrize(
+        "title", ["Timeline", "timeline", "🕐 Timeline", "Incident Timeline", "Timeline of events"]
+    )
+    def test_recognised(self, title):
+        assert _is_timeline_heading(title)
+
+    @pytest.mark.parametrize(
+        "doc",
+        [
+            "<H2>Timeline</H2><p>events</p><H2>Impact</H2><p>revenue</p>",
+            "<H2>Timeline</h2><p>events</p><h2>Impact</h2><p>revenue</p>",
+        ],
+    )
+    def test_tag_case_does_not_matter(self, doc):
+        """HTML tag names are case-insensitive and pasted content carries `<H2>`."""
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+        assert "revenue" in body
+
+    @pytest.mark.parametrize(
+        "title",
+        ["Timeline and Impact", "Impact", "Timeline review and corrective actions", "Summary"],
+    )
+    def test_not_recognised(self, title):
+        assert not _is_timeline_heading(title)
+
+    def test_a_compound_heading_keeps_its_analysis(self):
+        doc = "<h2>Timeline and Impact</h2><p>revenue loss</p><h2>Summary</h2><p>s</p>"
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert (body, dropped) == (doc, 0)
+        assert "revenue loss" in body
+
+    def test_events_nested_under_the_timeline_go_with_it(self):
+        doc = (
+            "<h2>Summary</h2><p>s</p>"
+            "<h2>Timeline</h2>"
+            "<h3>09:01</h3><p>alert fired</p>"
+            "<h3>09:12</h3><p>rolled back</p>"
+            "<h2>Impact</h2><p>revenue</p>"
+        )
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        for gone in ("09:01", "alert fired", "09:12", "rolled back"):
+            assert gone not in body
+        assert "Impact" in body and "revenue" in body
+
+    def test_a_deeper_heading_belongs_to_the_timeline(self):
+        """An h4 under an h2 is nested in it, so it goes with the section.
+
+        This is the HTML reading, and it is what makes per-event headings work.
+        A document that heads its analysis deeper than its Timeline would lose
+        it, but that ordering means the analysis is already a subsection of the
+        Timeline, and guessing otherwise would need the headings' meaning
+        rather than their structure.
+        """
+        doc = "<h2>Timeline</h2><p>events</p><h4>Impact</h4><p>revenue</p>"
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+
+    def test_a_sibling_heading_after_the_timeline_survives(self):
+        doc = "<h3>Timeline</h3><p>events</p><h3>Impact</h3><p>revenue</p>"
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+        assert "Impact" in body and "revenue" in body
+
+
+class TestHeadingScanIsBounded:
+    """A malformed document must not make the scan quadratic.
+
+    Retrospective content is written by hand, so unmatched `<h2>` tags happen.
+    An unbounded lazy title rescanned the rest of the document for a close tag
+    that never came, once per opening tag: 4,000 of them took 1.35s, and a page
+    holds ten documents.
+    """
+
+    def test_unmatched_headings_stay_fast(self):
+        import time
+
+        doc = ("<h2>" + "x" * 40) * 4000
+
+        start = time.perf_counter()
+        body, dropped = _drop_timeline_sections(doc)
+        elapsed = time.perf_counter() - start
+
+        assert (body, dropped) == (doc, 0)
+        # Was ~1.35s unbounded; generous here so a slow CI box still passes.
+        assert elapsed < 0.5, f"heading scan took {elapsed:.2f}s"
+
+    def test_a_title_longer_than_the_bound_is_not_a_heading(self):
+        long_title = "x" * (RETROSPECTIVE_HEADING_MAX_CHARS + 1)
+        doc = f"<h2>{long_title}</h2><h2>Timeline</h2><p>events</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        # The Timeline is still found and removed; the overlong heading is
+        # simply not treated as a boundary.
+        assert dropped > 0
+        assert "events" not in body
+
+
+class TestTimelineNoteTracksTruncation:
+    """The note may only claim the analysis survived when nothing was cut.
+
+    The size cap runs after the Timeline is removed and takes the end of the
+    document, which is where the conclusions are. A note saying the analysis
+    is intact while `content_truncated` is set on the record is the same
+    contradiction the pagination note had.
+    """
+
+    @staticmethod
+    async def _list(doc):
+        async def responder(method, path, **kwargs):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json.return_value = {
+                "data": [{"id": "r1", "attributes": {"content": doc, "incident_id": "i1"}}],
+                "meta": {"total_count": 1},
+            }
+            return response
+
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return await mcp.tools["list_incident_post_mortems"](page_size=1)
+
+    @pytest.mark.asyncio
+    async def test_a_cut_document_is_not_called_intact(self):
+        # Long enough that the cap still fires once the Timeline is gone.
+        doc = "<h2>Timeline</h2><p>event</p>" + "<h2>Impact</h2>" + "<p>analysis</p>" * 2000
+        result = await self._list(doc)
+
+        (record,) = result["retrospectives"]
+        assert record["timeline_omitted"] is True
+        assert record["content_truncated"] is True
+        assert "intact" not in result["timeline_note"]
+        assert "content_truncated" in result["timeline_note"]
+
+    @pytest.mark.asyncio
+    async def test_an_uncut_document_is_called_intact(self):
+        doc = "<h2>Timeline</h2><p>event</p><h2>Impact</h2><p>short</p>"
+        result = await self._list(doc)
+
+        (record,) = result["retrospectives"]
+        assert record["timeline_omitted"] is True
+        assert "content_truncated" not in record
+        assert "intact" in result["timeline_note"]
+
+
+class TestHeadingBoundariesDoNotDependOnTitleLength:
+    """Every heading ends a section, however much markup it carries.
+
+    Boundaries come from the opening tag. Pairing `<hN>` with `</hN>` made the
+    title's length decide whether a heading counted at all: a heading carrying
+    more than the title bound in markup stopped being recognised, and the
+    section under it was swallowed by a Timeline above.
+    """
+
+    def test_a_heading_fat_with_markup_still_ends_the_timeline(self):
+        fat = (
+            '<h2><span style="'
+            + "x" * (RETROSPECTIVE_HEADING_MAX_CHARS + 100)
+            + '">Impact</span></h2>'
+        )
+        doc = "<h2>Timeline</h2><p>events</p>" + fat + "<p>revenue findings</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+        assert "revenue findings" in body
+
+    def test_a_title_beyond_the_window_is_a_boundary_but_not_the_timeline(self):
+        # The word "Timeline" sits past the title window, so it is not read as
+        # the Timeline -- but the heading still ends the section above it.
+        buried = "<h2>" + "<em>x</em>" * 60 + "Timeline</h2><p>events</p>"
+        doc = "<h2>Timeline</h2><p>first</p>" + buried
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "first" not in body
+        # The buried heading was a boundary, so its own content survives.
+        assert "events" in body
+
+
+class TestHeadingScanStaysLinear:
+    """Every shape of malformed markup must cost time proportional to length.
+
+    Three separate patterns here have been quadratic in turn: the paired
+    heading match rescanned for a close tag that never came, the attribute
+    match rescanned for a `>` that never came, and the comment match rescanned
+    for a `-->` that never came. Each looked fine against the shape the
+    previous fix had been tested on.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "unit"),
+        [
+            ("complete unmatched tags", "<h2>" + "x" * 40),
+            ("tag prefixes with no '>'", "<h2 " + "x" * 40),
+            ("unterminated comments", "<!--" + "x" * 40),
+            ("closed comments", "<!-- x -->" + "y" * 30),
+            ("headings and comments together", "<h2>S</h2><p>x</p><!-- c -->"),
+        ],
+    )
+    def test_malformed_markup_stays_fast(self, label, unit):
+        import time
+
+        doc = unit * 8000
+
+        start = time.perf_counter()
+        _drop_timeline_sections(doc)
+        elapsed = time.perf_counter() - start
+
+        # Each of these has measured in the hundreds of ms or seconds at some
+        # point; generous here so a slow CI box still passes.
+        assert elapsed < 0.5, f"{label} took {elapsed:.2f}s"
+
+
+class TestCommentedHeadingsAreNotBoundaries:
+    def test_a_commented_out_timeline_removes_nothing(self):
+        doc = "<!-- <h2>Timeline</h2> --><p>keep this</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert (body, dropped) == (doc, 0)
+        assert "keep this" in body
+
+    def test_a_comment_elsewhere_does_not_stop_removal(self):
+        doc = "<h2>Timeline</h2><p>events</p><!-- note --><h2>Impact</h2><p>revenue</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "events" not in body
+        assert "revenue" in body
+
+
+class TestRetrospectiveListUncoveredPaths:
+    """Paths the suite reached only by accident, found by a coverage audit."""
+
+    @staticmethod
+    def _tools(responder):
+        mcp = FakeMCP()
+        register_incident_tools(
+            mcp=mcp,
+            make_authenticated_request=AsyncMock(side_effect=responder),
+            strip_heavy_nested_data=lambda data: data,
+            mcp_error=FakeMCPError(),
+            generate_recommendation=_generate_recommendation,
+            enable_write_tools=False,
+        )
+        return mcp.tools
+
+    def test_a_timeline_nested_in_a_timeline_merges_into_one_span(self):
+        # Two overlapping removals; the inner one is already inside the outer.
+        doc = "<h2>Timeline</h2><p>a</p><h3>Timeline</h3><p>b</p><h2>Impact</h2><p>revenue</p>"
+
+        body, dropped = _drop_timeline_sections(doc)
+
+        assert dropped > 0
+        assert "a" not in body.replace("Impact", "").replace("revenue", "")
+        assert "revenue" in body
+        # One merged removal, so the content is not cut twice.
+        assert body.count("<h2>Impact</h2>") == 1
+
+    @pytest.mark.asyncio
+    async def test_every_filter_reaches_the_request(self):
+        seen = {}
+
+        async def responder(method, path, **kwargs):
+            seen.update(kwargs.get("params") or {})
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.json.return_value = {"data": [], "meta": {"total_count": 0}}
+            return response
+
+        await self._tools(responder)["list_incident_post_mortems"](
+            status="published",
+            severity="sev1",
+            team_ids="t1,t2",
+            service_ids="s1,s2",
+            created_after="2026-09-01",
+            created_before="2026-09-30",
+        )
+
+        assert seen["filter[status]"] == "published"
+        assert seen["filter[severity]"] == "sev1"
+        assert seen["filter[team_ids]"] == "t1,t2"
+        assert seen["filter[service_ids]"] == "s1,s2"
+        assert seen["filter[created_at][gte]"] == "2026-09-01"
+        assert seen["filter[created_at][lte]"] == "2026-09-30"
+
+    @pytest.mark.asyncio
+    async def test_an_upstream_failure_is_reported_not_raised(self):
+        async def responder(method, path, **kwargs):
+            raise RuntimeError("HTTP error 500: upstream exploded")
+
+        result = await self._tools(responder)["list_incident_post_mortems"](page_size=1)
+
+        assert result.get("error") is True
+        assert "retrospectives" not in result

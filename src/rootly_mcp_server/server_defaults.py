@@ -396,18 +396,18 @@ DEFAULT_ALLOWED_PATHS = [
     "/playbooks/{id}",
     "/playbook_tasks",
     "/playbook_tasks/{id}",
-    # Post-incident reviews and retrospectives
-    "/post_incident_reviews",
-    "/post_incident_reviews/{id}",
+    # Retrospectives. The document lives behind `/post_mortems`; it went
+    # unexposed because the list asked for it as `postmortem_templates` and
+    # `incident_postmortems/{id}`, neither of them API paths.
+    #
+    # Only the collection is exposed. `get_incident_retrospective` calls
+    # `/post_mortems/{id}` directly, so listing it would add a second tool for
+    # the same document under a name that reads as a list.
+    "/post_mortems",
     "/retrospective_processes",
     "/retrospective_processes/{id}",
-    "/retrospective_process_groups",
     "/retrospective_process_groups/{id}",
-    "/retrospective_steps",
     "/retrospective_steps/{id}",
-    # Postmortem templates
-    "/postmortem_templates",
-    "/postmortem_templates/{id}",
     # Heartbeat monitoring
     "/heartbeats",
     "/heartbeats/{id}",
@@ -429,9 +429,8 @@ DEFAULT_ALLOWED_PATHS = [
     "/incident_events/{id}",
     "/incidents/{incident_id}/custom_field_selections",
     "/incident_custom_field_selections/{id}",
-    "/incidents/{incident_id}/postmortems",
-    "/incident_postmortems/{id}",
-    "/incidents/{incident_id}/retrospective_steps",
+    # No incident-scoped route exists for a retrospective or its steps; the id
+    # comes from the incident's `incident_post_mortem` relationship.
     "/incident_retrospective_steps/{id}",
     "/incidents/{incident_id}/status_pages",
     "/incident_status_pages/{id}",
@@ -591,17 +590,13 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/pulses/{id}",
     "/live_call_routers",
     "/live_call_routers/{id}",
-    # Post-incident and retrospectives - create + update
-    "/post_incident_reviews",
-    "/post_incident_reviews/{id}",
+    # Retrospectives - create + update. A write entry only takes effect once the
+    # path is readable, so nothing newly readable is listed here: doing so would
+    # turn this change into four new write tools.
     "/retrospective_processes",
     "/retrospective_processes/{id}",
-    "/retrospective_processes/{retrospective_process_id}/groups",
     "/retrospective_process_groups/{id}",
-    "/retrospective_processes/{retrospective_process_id}/retrospective_steps",
     "/retrospective_steps/{id}",
-    "/postmortem_templates",
-    "/postmortem_templates/{id}",
     # Status page templates
     "/status-pages/{status_page_id}/templates",
     "/templates/{id}",
@@ -636,7 +631,8 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     # Extended incident management
     "/incident_events/{id}",
     "/incident_custom_field_selections/{id}",
-    "/incident_postmortems/{id}",
+    # `/post_mortems/{id}` is absent deliberately: the read is exposed, the
+    # write is not.
     "/incident_retrospective_steps/{id}",
     "/incident_status_pages/{id}",
     # Form and field management - create + update

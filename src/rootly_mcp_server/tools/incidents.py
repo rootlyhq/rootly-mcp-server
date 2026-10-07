@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from html import unescape
 from typing import Annotated, Any, Literal, cast
 
 from mcp.types import ToolAnnotations
@@ -20,6 +21,157 @@ StripHeavyNestedData = Callable[[JsonDict], JsonDict]
 GenerateRecommendation = Callable[[JsonDict], str]
 
 RETROSPECTIVE_PROGRESS_STATUSES = ("not_started", "active", "completed", "skipped")
+# Every retrospective in a list carries its whole document and the API enforces
+# no ceiling: page[size]=1000 returns about 1.1 million tokens. The page size is
+# the only lever, and this is the only place it exists.
+RETROSPECTIVE_PAGE_SIZE_DEFAULT = 5
+RETROSPECTIVE_PAGE_SIZE_MAX = 10
+# Mean document length across a live page of 100.
+RETROSPECTIVE_MEAN_DOCUMENT_CHARS = 7_500
+# A retrospective's Timeline is a minute-by-minute event log: a median 33% of
+# the document across a live page of 25, and the part an agent browsing a list
+# least needs. Dropping it from list results is both cheaper and safer than
+# cutting the end, which took the Impact, 5 Whys and corrective actions with it
+# -- the conclusions are always last. `get_incident_retrospective` returns the
+# document whole, Timeline included.
+# Only these count as the Timeline. A substring test removed "Timeline and
+# Impact" whole, taking the Impact findings with it -- the opposite of the
+# point. The asymmetry is deliberate: failing to recognise a Timeline costs
+# tokens, removing the wrong section costs the answer, so an unrecognised
+# heading is left in place.
+RETROSPECTIVE_TIMELINE_TITLES = frozenset(
+    {"timeline", "incident timeline", "timeline of events", "event timeline"}
+)
+# Boundaries come from the opening tag's prefix alone. Pairing `<hN>` with `</hN>` made
+# the title's length decide whether a heading counted: unbounded, an unmatched
+# tag rescanned the rest of the document once per tag (4,000 of them took
+# 1.35s); bounded, a heading carrying more than the bound in markup stopped
+# being recognised and the section under it was swallowed by a Timeline above.
+# Matching opens only is linear and sees every heading, whatever it contains.
+#
+# h1-h6, not h1-h3, so a deeper heading still ends a section. IGNORECASE
+# because HTML tag names are, and pasted content carries `<H2>`.
+_RETROSPECTIVE_HEADING_OPEN = re.compile(r"<h([1-6])\b", re.IGNORECASE)
+# How far past an opening tag to look for the title. Only recognition depends
+# on this -- a heading whose text starts beyond it is still a boundary, it just
+# will not be read as the Timeline.
+RETROSPECTIVE_HEADING_MAX_CHARS = 300
+
+
+def _heading_title(content: str, start: int) -> str:
+    """The text of the heading whose tag begins at *start*.
+
+    Walks past the tag's attributes to the closing `>`, then reads a bounded
+    window of text. Everything here is bounded, so a tag that is never closed
+    costs a fixed amount rather than a scan of the rest of the document.
+    """
+    window = content[start : start + RETROSPECTIVE_HEADING_MAX_CHARS]
+    tag_end = window.find(">")
+    if tag_end == -1:
+        return ""
+    window = window[tag_end + 1 :]
+    window = re.split(r"</h[1-6]\s*>", window, maxsplit=1, flags=re.IGNORECASE)[0]
+    return re.sub(r"<[^>]*>", "", unescape(window)).strip()
+
+
+def _is_timeline_heading(title: str) -> bool:
+    """Whether a heading names the Timeline, ignoring emoji and punctuation."""
+    normalized = re.sub(r"[^a-z ]", " ", title.lower())
+    return " ".join(normalized.split()) in RETROSPECTIVE_TIMELINE_TITLES
+
+
+def _comment_spans(content: str) -> list[tuple[int, int]]:
+    """Where HTML comments sit, so a heading inside one is not a boundary.
+
+    A commented-out `<h2>Timeline</h2>` would otherwise start a removal that
+    swallows everything after it.
+
+    Scanned with `find` rather than a regex: `<!--.*?-->` rescans the rest of
+    the document for every unterminated `<!--`, which is the same quadratic
+    shape the heading pattern had. This walks each character once.
+    """
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    while (start := content.find("<!--", cursor)) != -1:
+        end = content.find("-->", start + 4)
+        if end == -1:
+            spans.append((start, len(content)))
+            break
+        spans.append((start, end + 3))
+        # Past the opener either way: an edit that let `end` sit behind `start`
+        # would otherwise rescan the same comment forever on a document a
+        # caller controls.
+        cursor = max(end + 3, start + 4)
+    return spans
+
+
+def _drop_timeline_sections(content: str) -> tuple[str, int]:
+    """Remove any Timeline section, returning the content and chars removed.
+
+    Best effort: a document with no headings, or a template that names the
+    section something else, comes back untouched and the size cap below still
+    applies.
+    """
+    # Both sequences run left to right, so one walk over each decides which
+    # headings sit inside a comment. Testing every span per heading was
+    # headings x comments: 8,000 of each took 1.7s.
+    commented = _comment_spans(content)
+    span_index = 0
+    headings: list[tuple[int, int, str]] = []
+    for match in _RETROSPECTIVE_HEADING_OPEN.finditer(content):
+        position = match.start()
+        while span_index < len(commented) and commented[span_index][1] <= position:
+            span_index += 1
+        if span_index < len(commented) and commented[span_index][0] <= position:
+            continue
+        headings.append((position, int(match.group(1)), _heading_title(content, position)))
+    if not headings:
+        return content, 0
+
+    spans = []
+    for index, (start, level, title) in enumerate(headings):
+        if not _is_timeline_heading(title):
+            continue
+        # A Timeline that heads each event with a deeper heading ends at the
+        # next one at its own level or above, not at its first event.
+        end = len(content)
+        for next_start, next_level, _ in headings[index + 1 :]:
+            if next_level <= level:
+                end = next_start
+                break
+        spans.append((start, end))
+    if not spans:
+        return content, 0
+
+    # Overlapping spans would double-count. In practice they are always nested
+    # rather than partial -- a Timeline starting inside another span must be
+    # deeper than it, so whatever ends the outer span ends the inner one too --
+    # which means no input can tell this branch apart from leaving it out. It
+    # stays because the slicing below walks forward and would duplicate content
+    # if that ever stopped holding, and no test can cover it.
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    kept, cursor = [], 0
+    for start, end in merged:
+        kept.append(content[cursor:start])
+        cursor = end
+    kept.append(content[cursor:])
+    trimmed = "".join(kept)
+    return trimmed, len(content) - len(trimmed)
+
+
+# The page cap bounds how many documents come back, not how large each one is,
+# so one long retrospective can still swamp the budget the cap protects. Live
+# published documents run to 43,712 characters (median 11,931), well past the
+# mean above -- a full page of those is about 110k tokens. Each document is
+# truncated to this many characters, with the cut marked on the record; the
+# whole document is one `get_incident_retrospective` call away.
+RETROSPECTIVE_CONTENT_MAX_CHARS = 12_000
 INCIDENT_SEARCH_FIELDS = (
     "id,title,summary,status,created_at,updated_at,url,started_at,retrospective_progress_status"
 )
@@ -998,6 +1150,256 @@ def register_incident_tools(
             return cast(JsonDict, response_data)
         except Exception as e:
             return _reference_tool_error("Failed to retrieve incident", e)
+
+    @mcp.tool(
+        name="get_incident_retrospective",
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
+    )
+    async def get_incident_retrospective(
+        incident_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "Incident whose retrospective to fetch. "
+                    "Accepts: UUID, bare sequential number (4460), "
+                    "#4460, or INC-4460."
+                )
+            ),
+        ],
+    ) -> JsonDict:
+        """Fetch the written retrospective for one incident.
+
+        Answers "what did we learn from INC-4460" in a single call. Returns the
+        document's title, content and status alongside the incident it belongs
+        to, and reports the incident's retrospective progress so a blank
+        document is distinguishable from one nobody has started.
+
+        The route exists only in this direction: `/post_mortems` cannot be
+        filtered by incident, and the document carries no reference back to one,
+        so the id has to come from the incident's own relationship. Doing that
+        here keeps a caller from having to know it. Use
+        `list_incident_post_mortems` to search across retrospectives instead.
+        """
+        try:
+            resolved_incident_id = await _resolve_incident_reference_to_uuid(
+                incident_id, make_authenticated_request
+            )
+            incident_response = await make_authenticated_request(
+                "GET", f"/v1/incidents/{resolved_incident_id}"
+            )
+            incident_response.raise_for_status()
+            incident = incident_response.json().get("data") or {}
+            attributes = incident.get("attributes") or {}
+            relationships = incident.get("relationships") or {}
+
+            summary: JsonDict = {
+                "incident_id": resolved_incident_id,
+                "incident_number": attributes.get("sequential_id"),
+                "incident_title": attributes.get("title"),
+                "retrospective_progress_status": attributes.get("retrospective_progress_status"),
+            }
+
+            reference = (relationships.get("incident_post_mortem") or {}).get("data") or {}
+            retrospective_id = reference.get("id")
+            if not retrospective_id:
+                # Not an error: sub-incidents and unstarted retrospectives carry
+                # no relationship, and saying so beats a 404.
+                summary["retrospective"] = None
+                summary["note"] = (
+                    "This incident has no retrospective. The progress status above "
+                    "says how far along it is; retrospectives are created in Rootly."
+                )
+                return summary
+
+            document_response = await make_authenticated_request(
+                "GET", f"/v1/post_mortems/{retrospective_id}"
+            )
+            document_response.raise_for_status()
+            document = document_response.json().get("data") or {}
+            document_attributes = document.get("attributes") or {}
+
+            summary["retrospective"] = {
+                "id": retrospective_id,
+                "title": document_attributes.get("title"),
+                "content": document_attributes.get("content"),
+                "status": document_attributes.get("status"),
+                "url": document_attributes.get("url"),
+                "started_at": document_attributes.get("started_at"),
+                "mitigated_at": document_attributes.get("mitigated_at"),
+                "resolved_at": document_attributes.get("resolved_at"),
+            }
+            return summary
+        except Exception as e:
+            return _reference_tool_error("Failed to retrieve incident retrospective", e)
+
+    @mcp.tool(
+        name="list_incident_post_mortems",
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            openWorldHint=True,
+        ),
+    )
+    async def list_incident_post_mortems(
+        page_size: Annotated[
+            int,
+            Field(
+                description=(
+                    f"Retrospectives per page (default {RETROSPECTIVE_PAGE_SIZE_DEFAULT}, "
+                    f"max {RETROSPECTIVE_PAGE_SIZE_MAX}). Each one carries its document "
+                    "minus any Timeline, cut at a size limit if still long, so a large "
+                    "page is expensive; narrow with the filters instead of raising this."
+                )
+            ),
+        ] = RETROSPECTIVE_PAGE_SIZE_DEFAULT,
+        page_number: Annotated[int, Field(description="Page number, 1-indexed")] = 1,
+        status: Annotated[
+            str, Field(description="Filter by status, e.g. 'published' or 'draft'")
+        ] = "",
+        severity: Annotated[str, Field(description="Filter by severity slug")] = "",
+        team_ids: Annotated[str, Field(description="Comma-separated team IDs")] = "",
+        service_ids: Annotated[str, Field(description="Comma-separated service IDs")] = "",
+        created_after: Annotated[
+            str, Field(description="Only retrospectives created at or after this ISO date")
+        ] = "",
+        created_before: Annotated[
+            str, Field(description="Only retrospectives created at or before this ISO date")
+        ] = "",
+        sort: Annotated[
+            str, Field(description="Sort order, e.g. '-created_at' for newest first")
+        ] = "-created_at",
+    ) -> JsonDict:
+        """Browse retrospectives across incidents.
+
+        Answers "the last five retrospectives", "published ones for this team
+        since June", or "how many are still draft". Each result carries the
+        document's analysis -- summary, causes, impact, actions. A recognised
+        Timeline is dropped and the record says so with `timeline_omitted`,
+        because a minute-by-minute log is a third of a document and rarely what
+        a browse is after. What remains is still capped, and a record cut that
+        way carries `content_truncated` with its real `content_chars`. Use
+        `get_incident_retrospective` for one document whole, Timeline included
+        and nothing cut.
+
+        Filtering happens upstream for status, severity, team, service and
+        dates. Free-text search is not offered here because the API's search
+        matches titles only, and titles are generated from the incident name --
+        it cannot find a retrospective by what it says. Use
+        `get_incident_retrospective` when the incident is already known.
+        """
+        try:
+            requested_page_size = page_size
+            page_size = max(1, min(page_size, RETROSPECTIVE_PAGE_SIZE_MAX))
+            params: dict[str, Any] = {
+                "page[size]": page_size,
+                "page[number]": max(1, page_number),
+                "sort": sort,
+            }
+            if status:
+                params["filter[status]"] = status
+            if severity:
+                params["filter[severity]"] = severity
+            # Joined, not a list: a list becomes a repeated query key, which
+            # this endpoint matches nothing against. One id worked either way,
+            # which is how it went unnoticed.
+            if team_ids:
+                params["filter[team_ids]"] = ",".join(_split_csv_values(team_ids))
+            if service_ids:
+                params["filter[service_ids]"] = ",".join(_split_csv_values(service_ids))
+            if created_after:
+                params["filter[created_at][gte]"] = created_after
+            if created_before:
+                params["filter[created_at][lte]"] = created_before
+
+            response = await make_authenticated_request("GET", "/v1/post_mortems", params=params)
+            response.raise_for_status()
+            payload = response.json()
+
+            retrospectives = []
+            truncated_count = 0
+            timeline_count = 0
+            for record in payload.get("data") or []:
+                attributes = record.get("attributes") or {}
+                content = attributes.get("content")
+                entry: JsonDict = {
+                    "id": record.get("id"),
+                    "incident_id": attributes.get("incident_id"),
+                    "title": attributes.get("title"),
+                    "status": attributes.get("status"),
+                    "content": content,
+                    "url": attributes.get("url"),
+                    "created_at": attributes.get("created_at"),
+                    "published_at": attributes.get("published_at"),
+                    "resolved_at": attributes.get("resolved_at"),
+                }
+                if isinstance(content, str):
+                    body, dropped = _drop_timeline_sections(content)
+                    if dropped:
+                        entry["content"] = body
+                        entry["timeline_omitted"] = True
+                        timeline_count += 1
+                    # The cap is now a backstop: with the Timeline gone only a
+                    # couple of documents in a live page of 25 still reach it.
+                    if len(body) > RETROSPECTIVE_CONTENT_MAX_CHARS:
+                        entry["content"] = body[:RETROSPECTIVE_CONTENT_MAX_CHARS]
+                        entry["content_truncated"] = True
+                        entry["content_chars"] = len(content)
+                        truncated_count += 1
+                retrospectives.append(entry)
+
+            total = (payload.get("meta") or {}).get("total_count")
+            result: JsonDict = {
+                "retrospectives": retrospectives,
+                "returned": len(retrospectives),
+                "total_matching": total,
+                "page_number": max(1, page_number),
+                "page_size": page_size,
+            }
+            if requested_page_size > RETROSPECTIVE_PAGE_SIZE_MAX:
+                result["page_size_note"] = (
+                    f"Asked for {requested_page_size}, capped at "
+                    f"{RETROSPECTIVE_PAGE_SIZE_MAX}. Retrospectives average about "
+                    f"{RETROSPECTIVE_MEAN_DOCUMENT_CHARS:,} characters each and the "
+                    "upstream enforces no limit, so an uncapped page can exceed a "
+                    "whole context window. Filter by team, service, status or date "
+                    "to narrow instead."
+                )
+            if timeline_count:
+                # Only claim the analysis survived when nothing was also cut:
+                # the size cap runs after the Timeline goes, and it takes the
+                # end of the document, where the conclusions are.
+                intact = (
+                    "The analysis sections are intact; "
+                    if not truncated_count
+                    else "Some were then cut at the size limit -- see `content_truncated`; "
+                )
+                result["timeline_note"] = (
+                    f"{timeline_count} of {len(retrospectives)} documents have their Timeline "
+                    f"omitted and carry `timeline_omitted`. {intact}"
+                    "`get_incident_retrospective` returns the document whole."
+                )
+            if truncated_count:
+                result["content_note"] = (
+                    f"{truncated_count} of {len(retrospectives)} documents were cut at "
+                    f"{RETROSPECTIVE_CONTENT_MAX_CHARS:,} characters and carry "
+                    "`content_truncated` with their full `content_chars`. Fetch one whole "
+                    "with `get_incident_retrospective` using its `incident_id`."
+                )
+            if isinstance(total, int) and total > len(retrospectives):
+                # Not "its full document": above 12,000 characters the content
+                # is cut, and this note would otherwise contradict the record's
+                # own `content_truncated`.
+                result["note"] = (
+                    f"Showing {len(retrospectives)} of {total:,}. Documents are long, so "
+                    "page through or filter rather than widening the page."
+                )
+            return result
+        except Exception as e:
+            return _reference_tool_error("Failed to list retrospectives", e)
 
     @mcp.tool(
         name="list_incident_roles",
