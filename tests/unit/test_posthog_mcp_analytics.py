@@ -11,14 +11,20 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
+import httpx
 import pytest
 from fastmcp import Client, FastMCP
 from posthog import Posthog
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from rootly_mcp_server.__main__ import main
 from rootly_mcp_server.posthog_analytics import (
+    CallableMiddlewareAdapter,
     build_posthog_client,
     maybe_enable_posthog_mcp_analytics,
+    posthog_session_middleware,
 )
 from rootly_mcp_server.server import (
     ArgumentNormalizationMiddleware,
@@ -54,6 +60,14 @@ def test_build_posthog_client_stays_off_while_agentcat_is_active():
     with patch.dict("os.environ", {"POSTHOG_PROJECT_TOKEN": "phc_test"}, clear=True):
         assert build_posthog_client(logger, agentcat_enabled=True) is None
     logger.info.assert_called_once_with("PostHog MCP analytics off: AgentCat is active")
+
+
+def test_build_posthog_client_runs_alongside_agentcat_when_allowed():
+    logger = Mock()
+    environ = {"POSTHOG_PROJECT_TOKEN": "phc_test", "POSTHOG_ALONGSIDE_AGENTCAT": "true"}
+    with patch.dict("os.environ", environ, clear=True):
+        assert isinstance(build_posthog_client(logger, agentcat_enabled=True), Posthog)
+    logger.info.assert_called_once_with("PostHog MCP analytics on alongside AgentCat")
 
 
 def test_maybe_enable_posthog_mcp_analytics_is_noop_without_client():
@@ -100,11 +114,20 @@ def stdio_args() -> SimpleNamespace:
     )
 
 
-@pytest.mark.parametrize("agentcat_enabled", [True, False])
-def test_main_builds_posthog_only_without_agentcat(agentcat_enabled):
+@pytest.mark.parametrize(
+    ("agentcat_enabled", "alongside", "expect_posthog"),
+    [(True, "", False), (True, "true", True), (False, "", True)],
+    ids=["agentcat-only", "both-with-opt-in", "posthog-only"],
+)
+def test_main_decides_which_analytics_run(agentcat_enabled, alongside, expect_posthog):
     server = SimpleNamespace(run=Mock())
+    environ = {
+        "ROOTLY_API_TOKEN": "x" * 40,
+        "POSTHOG_PROJECT_TOKEN": "phc_test",
+        "POSTHOG_ALONGSIDE_AGENTCAT": alongside,
+    }
 
-    with patch.dict("os.environ", {"ROOTLY_API_TOKEN": "x" * 40}, clear=True):
+    with patch.dict("os.environ", environ, clear=True):
         with patch("rootly_mcp_server.__main__.parse_args", return_value=stdio_args()):
             with patch("rootly_mcp_server.__main__.setup_logging"):
                 with patch(
@@ -115,14 +138,14 @@ def test_main_builds_posthog_only_without_agentcat(agentcat_enabled):
                         "rootly_mcp_server.__main__.maybe_enable_mcpcat_tracking",
                         return_value=agentcat_enabled,
                     ):
-                        with patch(
-                            "rootly_mcp_server.__main__.build_posthog_client",
-                            return_value=None,
-                        ) as build:
-                            main()
+                        with patch("rootly_mcp_server.posthog_analytics.Posthog"):
+                            with patch(
+                                "rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"
+                            ) as enable:
+                                main()
 
-    build.assert_called_once()
-    assert build.call_args.kwargs == {"agentcat_enabled": agentcat_enabled}
+    posthog_client = enable.call_args.args[1]
+    assert (posthog_client is not None) is expect_posthog
 
 
 def test_main_shutdown_failure_does_not_mask_exit():
@@ -269,3 +292,66 @@ async def test_our_middleware_keeps_posthog_on():
 
     assert tools == ["ping"]
     assert "$mcp_tools_list" in events
+
+
+class DuckTypedMiddleware:
+    """Shaped like AgentCat's middleware: callable, not a fastmcp Middleware."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    async def __call__(self, context, call_next):
+        self.seen.append(context.method)
+        return await call_next(context)
+
+
+async def test_callable_middleware_is_adapted_and_keeps_running():
+    duck = DuckTypedMiddleware()
+    server = server_with(duck)
+    position = next(i for i, m in enumerate(server.middleware) if m is duck)
+
+    tools, events = await list_tools_and_capture(server)
+
+    adapted = server.middleware[position]
+    assert isinstance(adapted, CallableMiddlewareAdapter)
+    assert adapted.inner is duck
+    assert tools == ["ping"]
+    assert "tools/list" in duck.seen
+    assert "$mcp_tools_list" in events
+
+
+def test_session_middleware_only_with_a_client():
+    assert posthog_session_middleware(None) == []
+    assert len(posthog_session_middleware(Mock())) == 1
+
+
+async def test_session_middleware_mints_and_keeps_the_session_header():
+    async def mcp(_request):
+        return JSONResponse({"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    app = Starlette(
+        routes=[Route("/mcp", mcp, methods=["POST"])],
+        middleware=posthog_session_middleware(Mock()),
+    )
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "claude-code", "version": "2.0.0"},
+        },
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        minted = (await client.post("/mcp", json=initialize)).headers.get("mcp-session-id")
+        replayed = await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            headers={"Mcp-Session-Id": minted or ""},
+        )
+
+    assert minted, "initialize did not mint a session id"
+    assert replayed.headers.get("mcp-session-id") in (None, minted)
