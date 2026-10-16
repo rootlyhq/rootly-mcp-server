@@ -19,6 +19,22 @@ JsonDict = dict[str, Any]
 MakeAuthenticatedRequest = Callable[..., Awaitable[Any]]
 StripHeavyNestedData = Callable[[JsonDict], JsonDict]
 GenerateRecommendation = Callable[[JsonDict], str]
+IDEMPOTENCY_KEY_MAX_LENGTH = 255
+
+
+def _validate_idempotency_key(value: str) -> str:
+    """Validate a caller-supplied HTTP header value without discarding unsafe bytes."""
+    if not value.isascii():
+        raise ValueError("idempotency_key must contain only ASCII characters")
+    if any(character < " " or character == "\x7f" for character in value):
+        raise ValueError("idempotency_key must not contain control characters")
+    key = value.strip()
+    if not key:
+        raise ValueError("idempotency_key was provided but is empty")
+    if len(key) > IDEMPOTENCY_KEY_MAX_LENGTH:
+        raise ValueError(f"idempotency_key must be at most {IDEMPOTENCY_KEY_MAX_LENGTH} characters")
+    return key
+
 
 # Every retrospective in a list carries its whole document and the API enforces
 # no ceiling: page[size]=1000 returns about 1.1 million tokens. The page size is
@@ -1723,6 +1739,19 @@ def register_incident_tools(
                 str | None,
                 Field(description="Comma-separated incident type IDs to attach to the incident."),
             ] = None,
+            idempotency_key: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Optional key sent as the Idempotency-Key HTTP header. Reuse the "
+                        "same key for retries of one declaration within 24 hours; Rootly "
+                        "returns the existing incident. Keys are scoped to your Rootly "
+                        "account and expire after 24 hours. Use a new key for each new "
+                        "incident. Max 255 printable ASCII characters; surrounding spaces "
+                        "are trimmed. Blank keys are rejected."
+                    )
+                ),
+            ] = None,
         ) -> JsonDict:
             """Create an incident with a scoped set of fields for agent-driven workflows."""
             normalized_title = _normalize_optional_text(title)
@@ -1768,8 +1797,18 @@ def register_incident_tools(
                 }
             }
 
+            request_kwargs: dict[str, Any] = {"json": payload}
+            if idempotency_key is not None:
+                try:
+                    key = _validate_idempotency_key(idempotency_key)
+                except ValueError as exc:
+                    return cast(JsonDict, mcp_error.tool_error(str(exc), "validation_error"))
+                request_kwargs["headers"] = {"Idempotency-Key": key}
+
             try:
-                response = await make_authenticated_request("POST", "/v1/incidents", json=payload)
+                response = await make_authenticated_request(
+                    "POST", "/v1/incidents", **request_kwargs
+                )
                 response.raise_for_status()
 
                 response_data = response.json()

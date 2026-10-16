@@ -5,6 +5,12 @@ All notable changes to the Rootly MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `create_incident` accepts an optional `idempotency_key` and forwards it as the `Idempotency-Key` header. Reusing a key within Rootly's 24-hour retention window returns the existing incident. Blank or invalid header values are rejected before contacting the API; calls without a key keep their existing behavior.
+
 ## [2.3.21] - Released 2026-10-05
 
 ### Changed

@@ -582,7 +582,7 @@ The default tool surface depends on deployment profile:
 - `check_oncall_health_risk` - self-hosted only
 - `check_responder_availability`
 - `collect_incidents`
-- `create_incident` - create a new incident with a scoped set of fields for agent workflows
+- `create_incident` - create a new incident with a scoped set of fields for agent workflows. Optional `idempotency_key` is sent as the `Idempotency-Key` HTTP header: reuse one key when retrying a declaration within 24 hours, and use a new key for each new incident. Rootly scopes keys to the account and expires them after 24 hours; this does not provide deduplication beyond that window. Keys accept up to 255 printable ASCII characters, with surrounding spaces trimmed; blank keys are rejected. Omitting the argument sends no idempotency header.
 - `create_override_recommendation`
 - `find_related_incidents`
 - `get_incident` - retrieve a single incident for direct verification, including PIR-related fields
