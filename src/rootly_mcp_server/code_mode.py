@@ -32,18 +32,18 @@ if TYPE_CHECKING:
 # Discovery tools (list_tools, tool_search, get_schema, tags) only read the tool
 # catalog — safe, idempotent, no external side effects.
 _DISCOVERY_TOOL_ANNOTATIONS = ToolAnnotations(
-    readOnlyHint=True,
-    destructiveHint=False,
-    idempotentHint=True,
-    openWorldHint=False,
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 # execute is a gateway that can invoke ANY Rootly tool, including writes and
 # destructive actions, so it gets the most conservative annotations.
 _EXECUTE_TOOL_ANNOTATIONS = ToolAnnotations(
-    readOnlyHint=False,
-    destructiveHint=True,
-    idempotentHint=False,
-    openWorldHint=True,
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=False,
+    open_world_hint=True,
 )
 _EXECUTE_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
