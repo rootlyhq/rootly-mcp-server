@@ -354,9 +354,6 @@ async def test_call_shape_values_stay_data_in_the_sandbox():
 @pytest.mark.parametrize(
     ("code", "expected"),
     [
-        ("a = {'x': 1}\nb = {'y': 2}\nreturn a | b", "`{**a, **b}`"),
-        ("import datetime\nreturn datetime.datetime.now()", "has no clock"),
-        ("import datetime\nreturn datetime.date.today()", "has no clock"),
         ("return datetime.now()", "Add `import datetime` first"),
         ("return dir()", "Introspection builtins"),
         ("return globals()", "Use tool_search / get_schema"),
@@ -374,6 +371,7 @@ async def test_call_shape_values_stay_data_in_the_sandbox():
         ("a = 1\\nreturn a", "literal backslash-n"),
         ("return {'ok': true}", "write True, not the JSON/JavaScript literal true"),
         ("return [null]", "write None"),
+        ("import requests\nreturn 1", "no third-party packages, network or filesystem"),
     ],
 )
 async def test_sandbox_errors_carry_an_actionable_hint(client: Client, code: str, expected: str):
@@ -383,10 +381,49 @@ async def test_sandbox_errors_carry_an_actionable_hint(client: Client, code: str
 
 
 @pytest.mark.parametrize(
+    "code",
+    [
+        "a = {'x': 1}\nb = {'y': 2}\nreturn a | b",
+        "import datetime\nreturn datetime.datetime.now(datetime.timezone.utc).isoformat()",
+        "import datetime\nreturn datetime.date.today().isoformat()",
+        "import json\nreturn json.loads('{\"a\": 1}')",
+    ],
+)
+async def test_monty_supports_what_the_guidance_recommends(client: Client, code: str):
+    # Monty 1.1+ (fastmcp 4.1) added dict `|`, a clock and json; the execute
+    # description and hints point at them, so they must work.
+    is_error, text = await _execute(client, {"code": code})
+
+    assert not is_error, text
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("return open('/etc/passwd').read()", "PermissionError"),
+        ("import os\nreturn os.listdir('/')", "PermissionError"),
+        ("import os\nreturn os.path.exists('/etc/passwd')", "PermissionError"),
+        ("from pathlib import Path\nreturn Path('/etc/hosts').read_text()", "PermissionError"),
+        ("import os\nreturn os.getenv('ROOTLY_API_TOKEN')", "not supported"),
+        ("import os\nreturn dict(os.environ)", "not supported"),
+        ("import subprocess\nreturn 1", "No module named 'subprocess'"),
+    ],
+)
+async def test_sandbox_has_no_host_filesystem_or_environment(
+    client: Client, code: str, expected: str
+):
+    # Monty 1.2 added os.path, pathlib scans and open() options; with no OS
+    # access granted they must all still be denied.
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert expected in text
+
+
+@pytest.mark.parametrize(
     "message",
     [
         # Shapes observed in Sentry from earlier Monty releases.
-        "NotImplementedError: OS function 'datetime.now' not implemented",
         "TypeError: '<' not supported between instances of 'list' and 'list'",
         "KeyError: value",
         "TypeError: list indices must be integers or slices, not str",

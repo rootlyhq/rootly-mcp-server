@@ -126,6 +126,34 @@ class TestGetAlertCalls:
         assert url.params.get("include") == "notified_users"
 
 
+class TestPathArgumentDotSegments:
+    """fastmcp 4.1 rejects `.`/`..` path segments (PrefectHQ/fastmcp#5457).
+
+    Rootly path IDs are UUIDs or slugs matching ^[a-z0-9_-]+$, so no real ID is
+    a dot segment; a traversal attempt must fail readably and send nothing.
+    """
+
+    @pytest.mark.parametrize("alert_id", ["9f1c2d3e-4b5a-6c7d-8e9f-0a1b2c3d4e5f", "my-alert_1"])
+    async def test_real_ids_still_fill_the_path(self, server, sent_requests, alert_id):
+        async with Client(server) as client:
+            result = await client.call_tool("get_alert", {"id": alert_id}, raise_on_error=False)
+
+        assert not result.is_error, result
+        assert [request.url.path for request in sent_requests] == [f"/v1/alerts/{alert_id}"]
+
+    @pytest.mark.parametrize("alert_id", ["..", ".", "../users", "%2E%2E", "%252e%252e"])
+    async def test_dot_segments_are_rejected_before_any_request(
+        self, server, sent_requests, alert_id
+    ):
+        async with Client(server) as client:
+            result = await client.call_tool("get_alert", {"id": alert_id}, raise_on_error=False)
+
+        text = _error_text(result)
+        assert "GET /v1/alerts/{id}" in text
+        assert "Path parameter 'id' cannot contain dot segments" in text
+        assert sent_requests == []
+
+
 @pytest.mark.parametrize(
     "tool_name,arguments,path",
     [

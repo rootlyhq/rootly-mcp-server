@@ -686,9 +686,10 @@ class PathArgumentValidationMiddleware(fastmcp_middleware.Middleware):
 
     FastMCP's OpenAPI tools do not validate arguments against the advertised
     schema: an unknown argument is silently dropped and a missing path
-    argument leaves the `{param}` template in the URL. The transport guard then
-    fails with a message that names neither the tool nor the argument to pass,
-    so the model retries with the same wrong name. Production telemetry for
+    argument leaves the `{param}` template in the URL (fastmcp >= 4.1 raises
+    "Missing required path parameters" instead). Neither message names the
+    argument the model should have passed, so it retries with the same wrong
+    name. Dot-segment values (`..`) are left to fastmcp, which rejects them. Production telemetry for
     ROOTLY-MCP-7S shows `get_alert(alert_id=...)`, `get_team(team_id=...)`,
     `get_cause(cause_id=...)` etc. against `/v1/<resource>/{id}` templates.
 
