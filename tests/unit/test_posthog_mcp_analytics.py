@@ -44,30 +44,22 @@ FAKE_STRIPE = "sk_" + "live_abcdefghijklmnopqrstuvwxyz"
 
 def test_build_posthog_client_is_noop_without_token():
     with patch.dict("os.environ", {}, clear=True):
-        assert build_posthog_client(Mock(), agentcat_enabled=False) is None
+        assert build_posthog_client(Mock()) is None
 
 
 def test_build_posthog_client_uses_env_host():
     environ = {"POSTHOG_PROJECT_TOKEN": "phc_test", "POSTHOG_HOST": "https://eu.i.posthog.com"}
     with patch.dict("os.environ", environ, clear=True):
-        client = build_posthog_client(Mock(), agentcat_enabled=False)
+        client = build_posthog_client(Mock())
     assert isinstance(client, Posthog)
     assert client.host == "https://eu.i.posthog.com"
 
 
-def test_build_posthog_client_stays_off_while_agentcat_is_active():
+def test_build_posthog_client_logs_that_analytics_is_on():
     logger = Mock()
     with patch.dict("os.environ", {"POSTHOG_PROJECT_TOKEN": "phc_test"}, clear=True):
-        assert build_posthog_client(logger, agentcat_enabled=True) is None
-    logger.info.assert_called_once_with("PostHog MCP analytics off: AgentCat is active")
-
-
-def test_build_posthog_client_runs_alongside_agentcat_when_allowed():
-    logger = Mock()
-    environ = {"POSTHOG_PROJECT_TOKEN": "phc_test", "POSTHOG_ALONGSIDE_AGENTCAT": "true"}
-    with patch.dict("os.environ", environ, clear=True):
-        assert isinstance(build_posthog_client(logger, agentcat_enabled=True), Posthog)
-    logger.info.assert_called_once_with("PostHog MCP analytics on alongside AgentCat")
+        assert isinstance(build_posthog_client(logger), Posthog)
+    logger.info.assert_called_once_with("PostHog MCP analytics on")
 
 
 def test_maybe_enable_posthog_mcp_analytics_is_noop_without_client():
@@ -115,17 +107,14 @@ def stdio_args() -> SimpleNamespace:
 
 
 @pytest.mark.parametrize(
-    ("agentcat_enabled", "alongside", "expect_posthog"),
-    [(True, "", False), (True, "true", True), (False, "", True)],
-    ids=["agentcat-only", "both-with-opt-in", "posthog-only"],
+    ("agentcat_enabled", "posthog_token", "expect_posthog"),
+    [(True, "", False), (True, "phc_test", True), (False, "phc_test", True)],
+    ids=["agentcat-only", "both", "posthog-only"],
 )
-def test_main_decides_which_analytics_run(agentcat_enabled, alongside, expect_posthog):
+def test_main_decides_which_analytics_run(agentcat_enabled, posthog_token, expect_posthog):
+    # The PostHog token alone decides; AgentCat no longer turns PostHog off.
     server = SimpleNamespace(run=Mock())
-    environ = {
-        "ROOTLY_API_TOKEN": "x" * 40,
-        "POSTHOG_PROJECT_TOKEN": "phc_test",
-        "POSTHOG_ALONGSIDE_AGENTCAT": alongside,
-    }
+    environ = {"ROOTLY_API_TOKEN": "x" * 40, "POSTHOG_PROJECT_TOKEN": posthog_token}
 
     with patch.dict("os.environ", environ, clear=True):
         with patch("rootly_mcp_server.__main__.parse_args", return_value=stdio_args()):

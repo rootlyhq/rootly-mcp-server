@@ -1,7 +1,7 @@
 """PostHog MCP analytics for the hosted server.
 
 Opt-in via POSTHOG_PROJECT_TOKEN, so self-hosted and local runs are unchanged.
-While AgentCat is active, PostHog also needs POSTHOG_ALONGSIDE_AGENTCAT=true.
+It runs alongside AgentCat when both are configured.
 """
 
 import functools
@@ -23,25 +23,16 @@ from starlette.middleware import Middleware as ASGIMiddleware
 from .telemetry_scrubber import scrub_posthog_mcp_event
 from .transport import get_hosted_authenticated_user
 
-ALONGSIDE_AGENTCAT_ENV = "POSTHOG_ALONGSIDE_AGENTCAT"
 
-
-def build_posthog_client(logger: logging.Logger, *, agentcat_enabled: bool) -> Posthog | None:
-    """Create the process-wide PostHog client, or None when analytics stays off.
-
-    While AgentCat is active, PostHog runs only when explicitly allowed with
-    POSTHOG_ALONGSIDE_AGENTCAT, so both can be compared before migrating.
-    """
+def build_posthog_client(logger: logging.Logger) -> Posthog | None:
+    """Create the process-wide PostHog client, or None when analytics stays off."""
     token = os.getenv("POSTHOG_PROJECT_TOKEN", "").strip()
     if not token:
         return None
-    if agentcat_enabled:
-        if os.getenv(ALONGSIDE_AGENTCAT_ENV, "").strip().lower() not in {"1", "true", "yes"}:
-            logger.info("PostHog MCP analytics off: AgentCat is active")
-            return None
-        logger.info("PostHog MCP analytics on alongside AgentCat")
     try:
-        return Posthog(token, host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com"))
+        client = Posthog(token, host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com"))
+        logger.info("PostHog MCP analytics on")
+        return client
     except Exception as error:
         logger.warning(
             "PostHog MCP analytics could not be enabled; skipping (%s)",

@@ -440,15 +440,13 @@ privacy settings as AgentCat: no injected `context`, `conversation_id` or
 `llm_model` parameters, credential scrubbing before send, and hosted users
 identified by Rootly user ID only.
 
-While AgentCat is active, PostHog stays off unless
-`POSTHOG_ALONGSIDE_AGENTCAT=true` is also set, so the two can be compared
-before migrating. posthog.mcp's MCP SDK 1.x code path cannot handle AgentCat's
-middleware directly, so the server wraps it in an adapter first. On the
-stateless hosted transport, PostHog sessions are tied together through the
-`Mcp-Session-Id` header minted at `initialize`. AgentCat's session resolver
-also reads that header (scoped to the authenticated caller), so with the
-opt-in on, AgentCat groups those clients' calls per connection instead of per
-hour.
+When AgentCat is also configured, both run side by side. posthog.mcp's MCP SDK
+1.x code path cannot handle AgentCat's middleware directly, so the server wraps
+it in an adapter first. On the stateless hosted transport, PostHog sessions are
+tied together through the `Mcp-Session-Id` header minted at `initialize`.
+AgentCat's session resolver also reads that header (scoped to the
+authenticated caller), so with PostHog on, AgentCat groups those clients'
+calls per connection instead of per hour.
 
 ### OpenAI Apps domain verification
 

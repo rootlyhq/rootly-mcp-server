@@ -28,7 +28,6 @@ async def test_agentcat_and_posthog_both_capture_without_breaking_tools(
 ) -> None:
     monkeypatch.setenv("DISABLE_DIAGNOSTICS", "true")
     monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
-    monkeypatch.setenv("POSTHOG_ALONGSIDE_AGENTCAT", "true")
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     monkeypatch.delenv("ROOTLY_MCP_ENABLED_TOOLS", raising=False)
     pytest.importorskip("agentcat")
@@ -45,7 +44,7 @@ async def test_agentcat_and_posthog_both_capture_without_breaking_tools(
     )
 
     agentcat_enabled = maybe_enable_mcpcat_tracking(server, "proj_test_parallel", logger)
-    posthog_client = build_posthog_client(logger, agentcat_enabled=agentcat_enabled)
+    posthog_client = build_posthog_client(logger)
     assert agentcat_enabled
     assert posthog_client is not None
 

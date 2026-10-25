@@ -1064,12 +1064,9 @@ def main():
             profiled_code_mode_servers[default_hosted_tool_profile] = code_mode_server
 
         all_servers = (*profiled_servers.values(), *profiled_code_mode_servers.values())
-        # Track every server first; any() over a generator would stop at the first.
-        agentcat_results = [
+        for mcp_server in all_servers:
             maybe_enable_mcpcat_tracking(mcp_server, mcpcat_project_id, logger)
-            for mcp_server in all_servers
-        ]
-        posthog_client = build_posthog_client(logger, agentcat_enabled=any(agentcat_results))
+        posthog_client = build_posthog_client(logger)
         for mcp_server in all_servers:
             maybe_enable_posthog_mcp_analytics(mcp_server, posthog_client, logger)
         # Hosted auth first, so unauthenticated requests never get a session token.
