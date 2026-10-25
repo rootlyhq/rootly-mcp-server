@@ -28,6 +28,7 @@ from .code_mode import (
     normalize_code_mode_path,
 )
 from .exceptions import RootlyConfigurationError, RootlyMCPError
+from .landing_page import McpEndpoints
 from .posthog_analytics import (
     build_posthog_client,
     maybe_enable_posthog_mcp_analytics,
@@ -758,6 +759,12 @@ def build_dual_http_app(
         [path for path in (sse_path, streamable_path, code_mode_path) if path]
     )
     app.state.transport_type = "both"
+    # What the setup page at GET / lists: Code Mode only when it is mounted.
+    app.state.mcp_endpoints = McpEndpoints(
+        code_mode=code_mode_path if profiled_code_mode_servers and code_mode_path else None,
+        streamable=streamable_path,
+        sse=sse_path,
+    )
     return app
 
 
@@ -919,6 +926,7 @@ def run_profiled_streamable_http_server(
     app.state.fastmcp_server = server
     app.state.path = streamable_path
     app.state.transport_type = "streamable-http"
+    app.state.mcp_endpoints = McpEndpoints(streamable=streamable_path)
 
     config = uvicorn.Config(
         app,

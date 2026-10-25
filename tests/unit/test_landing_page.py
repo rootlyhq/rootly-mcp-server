@@ -10,13 +10,19 @@ import re
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
+import fastmcp
 import httpx2 as httpx
 import pytest
 from starlette.middleware import Middleware
 from starlette.testclient import TestClient
 
 from rootly_mcp_server.__main__ import build_dual_http_app
-from rootly_mcp_server.landing_page import CONTENT_SECURITY_POLICY, render_landing_page
+from rootly_mcp_server.landing_page import (
+    CONTENT_SECURITY_POLICY,
+    HOSTED_ENDPOINTS,
+    McpEndpoints,
+    render_landing_page,
+)
 from rootly_mcp_server.server import create_rootly_mcp_server
 from rootly_mcp_server.transport import AuthCaptureMiddleware
 
@@ -36,8 +42,20 @@ def _get_root(server, **kwargs):
         return client.get("/", **kwargs)
 
 
-def test_hosted_root_serves_the_setup_page(hosted_server):
-    response = _get_root(hosted_server)
+def _get_dual_root(server, code_mode_path: str | None = "/mcp-codemode"):
+    """GET / on the hosted dual-transport app, with Code Mode mounted at ``code_mode_path``."""
+    code_mode = create_rootly_mcp_server(swagger_path=SWAGGER_PATH, hosted=True, name="cm")
+    app = build_dual_http_app(
+        server,
+        code_mode_server=code_mode if code_mode_path else None,
+        code_mode_path=code_mode_path,
+    )
+    with TestClient(app) as client:
+        return client.get("/")
+
+
+def test_hosted_dual_app_lists_every_mounted_endpoint(hosted_server):
+    response = _get_dual_root(hosted_server)
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
@@ -46,6 +64,7 @@ def test_hosted_root_serves_the_setup_page(hosted_server):
     assert "claude mcp add --transport http rootly http://testserver/mcp-codemode" in response.text
     assert "<code>http://testserver/mcp</code>" in response.text
     assert "http://testserver/sse" in response.text
+    assert "not both" in response.text
     assert "front door" not in response.text
     assert response.headers["x-content-type-options"] == "nosniff"
     assert 'href="https://docs.rootly.com/integrations/mcp-server"' in response.text
@@ -87,6 +106,24 @@ def test_non_web_forwarded_scheme_is_replaced(hosted_server):
     assert "https://testserver/mcp" in response.text
 
 
+def test_streamable_only_app_points_setup_at_mcp(hosted_server):
+    """Greptile P1: no Code Mode mounted, so nothing may point at it."""
+    page = _get_root(hosted_server).text
+
+    assert "claude mcp add --transport http rootly http://testserver/mcp" in page
+    assert "mcp-codemode" not in page
+    assert "/sse" not in page
+    assert "not both" not in page
+
+
+def test_dual_app_without_code_mode_hides_it(hosted_server):
+    page = _get_dual_root(hosted_server, code_mode_path=None).text
+
+    assert "mcp-codemode" not in page
+    assert "claude mcp add --transport http rootly http://testserver/mcp</span>" in page
+    assert '<code>http://testserver/mcp</code><span class="tag">Recommended</span>' in page
+
+
 def test_configured_public_url_is_used_and_cacheable(hosted_server):
     with patch("rootly_mcp_server.utils._MCP_SERVER_URL", "https://mcp.example.com"):
         response = _get_root(hosted_server)
@@ -96,14 +133,46 @@ def test_configured_public_url_is_used_and_cacheable(hosted_server):
     assert response.headers["cache-control"] == "public, max-age=300"
 
 
-def test_custom_code_mode_path_is_shown(hosted_server, monkeypatch):
-    monkeypatch.setenv("ROOTLY_CODE_MODE_PATH", "codemode/")
+def test_mounted_paths_are_used(hosted_server, monkeypatch):
+    """--code-mode-path and fastmcp's streamable path are what the page shows."""
+    monkeypatch.setattr(fastmcp.settings, "streamable_http_path", "/custom-mcp")
+    page = _get_dual_root(hosted_server, code_mode_path="/custom-code").text
 
-    assert "http://testserver/codemode" in _get_root(hosted_server).text
+    assert "claude mcp add --transport http rootly http://testserver/custom-code" in page
+    assert "<code>http://testserver/custom-mcp</code>" in page
+    assert "testserver/mcp-codemode" not in page
+
+
+def test_sse_only_server_has_no_setup_tabs():
+    page = render_landing_page("https://x.example", McpEndpoints(sse="/sse"))
+
+    assert "only serves the deprecated SSE transport" in page
+    assert "claude mcp add" not in page
+    assert "https://x.example/sse" in page
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ({"mcp_endpoints": HOSTED_ENDPOINTS}, HOSTED_ENDPOINTS),
+        ({"path": "/mcp", "transport_type": "streamable-http"}, McpEndpoints(streamable="/mcp")),
+        ({"path": "/sse", "transport_type": "sse"}, McpEndpoints(sse="/sse")),
+        ({}, McpEndpoints()),
+    ],
+)
+def test_endpoints_come_from_app_state(state, expected):
+    class State:
+        pass
+
+    app_state = State()
+    for key, value in state.items():
+        setattr(app_state, key, value)
+
+    assert McpEndpoints.from_app_state(app_state) == expected
 
 
 def test_render_escapes_every_interpolated_url():
-    page = render_landing_page('https://x"<b>', "/mcp-codemode")
+    page = render_landing_page('https://x"<b>', HOSTED_ENDPOINTS)
 
     assert '"<b>' not in page
 
@@ -126,7 +195,7 @@ async def test_page_needs_no_token_while_mcp_still_does(hosted_server):
 
 
 def test_every_documented_client_has_a_tab():
-    page = render_landing_page("https://mcp.example.com", "/mcp-codemode")
+    page = render_landing_page("https://mcp.example.com", HOSTED_ENDPOINTS)
 
     for label in ("Claude Code", "Cursor", "Codex", "Claude Desktop", "Gemini CLI"):
         assert f">{label}</label>" in page
@@ -140,7 +209,7 @@ def test_every_documented_client_has_a_tab():
 
 
 def test_oauth_comes_first_and_tokens_are_collapsed():
-    page = render_landing_page("https://mcp.example.com", "/mcp-codemode")
+    page = render_landing_page("https://mcp.example.com", HOSTED_ENDPOINTS)
     url = "https://mcp.example.com/mcp-codemode"
 
     assert f"codex mcp add rootly --url {url}\ncodex mcp login rootly" in page
@@ -158,7 +227,7 @@ def test_oauth_comes_first_and_tokens_are_collapsed():
 
 
 def test_cursor_install_link_carries_the_code_mode_url():
-    page = render_landing_page("https://mcp.example.com", "/mcp-codemode")
+    page = render_landing_page("https://mcp.example.com", HOSTED_ENDPOINTS)
 
     link = re.search(r'href="(cursor://anysphere\.cursor-deeplink/mcp/install\?[^"]+)"', page)
     assert link

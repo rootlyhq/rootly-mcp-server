@@ -11,7 +11,8 @@ import base64
 import hashlib
 import html
 import json
-import os
+from dataclasses import dataclass
+from typing import Any
 from urllib.parse import quote
 
 from starlette.requests import Request
@@ -312,14 +313,123 @@ def _client_tabs(clients: list[tuple[str, str, str]]) -> tuple[str, str]:
     return markup, rules
 
 
-def render_landing_page(base_url: str, code_mode_path: str) -> str:
-    """Render the page for a server reachable at ``base_url``."""
-    mcp_url = f"{base_url}/mcp"
-    code_mode_url = f"{base_url}{code_mode_path}"
-    # Code Mode is the endpoint docs.rootly.com recommends.
-    add_command = f"claude mcp add --transport http rootly {code_mode_url}"
-    tabs, tab_rules = _client_tabs(_clients(code_mode_url))
+@dataclass(frozen=True)
+class McpEndpoints:
+    """The MCP endpoints a running app actually serves, as paths (None when absent)."""
+
+    code_mode: str | None = None
+    streamable: str | None = None
+    sse: str | None = None
+
+    @classmethod
+    def from_app_state(cls, state: Any) -> McpEndpoints:
+        """Read what the serving app mounted.
+
+        The hosted app builders in ``__main__`` record ``mcp_endpoints``. Any other
+        app (fastmcp's own) records a single ``path`` and its ``transport_type``.
+        """
+        recorded = getattr(state, "mcp_endpoints", None)
+        if isinstance(recorded, McpEndpoints):
+            return recorded
+        path = getattr(state, "path", None)
+        if not isinstance(path, str) or not path:
+            return cls()
+        if getattr(state, "transport_type", "") == "sse":
+            return cls(sse=path)
+        return cls(streamable=path)
+
+
+# The hosted production layout, for rendering the page outside a running app.
+HOSTED_ENDPOINTS = McpEndpoints(code_mode="/mcp-codemode", streamable="/mcp", sse="/sse")
+
+
+def _endpoint(url: str, tag: str, description: str, *, old: bool = False) -> str:
+    tag_class = "tag old" if old else "tag"
+    return (
+        '<div class="endpoint"><div class="endpoint-head">'
+        f'<code>{html.escape(url)}</code><span class="{tag_class}">{tag}</span></div>'
+        f"<p>{description}</p></div>"
+    )
+
+
+def render_landing_page(base_url: str, endpoints: McpEndpoints) -> str:
+    """Render the page for a server at ``base_url`` serving ``endpoints``.
+
+    Only endpoints the server mounts are shown, and setup points at the best one
+    it has: Code Mode (what docs.rootly.com recommends), else streamable HTTP.
+    """
+    code_mode_url = f"{base_url}{endpoints.code_mode}" if endpoints.code_mode else None
+    streamable_url = f"{base_url}{endpoints.streamable}" if endpoints.streamable else None
+    setup_url = code_mode_url or streamable_url
     esc = html.escape
+
+    rows = []
+    if code_mode_url:
+        rows.append(
+            _endpoint(
+                code_mode_url,
+                "Recommended",
+                "Code Mode. Your assistant gets five meta-tools instead of 200+ schemas, finds the"
+                " tools it needs, and chains them in one short Python block. Fewer tokens, fewer"
+                " round trips.",
+            )
+        )
+    if streamable_url:
+        rows.append(
+            _endpoint(
+                streamable_url,
+                "Classic" if code_mode_url else "Recommended",
+                "Streamable HTTP with every tool registered directly. Add"
+                " <code>?tool_profile=slim</code> for about 70 of them.",
+            )
+        )
+    if endpoints.sse:
+        rows.append(
+            _endpoint(
+                f"{base_url}{endpoints.sse}",
+                "Deprecated",
+                "Removed after 2026-11-20."
+                + (
+                    " Switch to the endpoint above; usually only the URL changes."
+                    if setup_url
+                    else ""
+                ),
+                old=True,
+            )
+        )
+    both_note = (
+        "<p>Connect Code Mode or Classic, not both. With both, assistants tend to call the"
+        " classic tools directly and the full tool list loads anyway.</p>"
+        if code_mode_url and streamable_url
+        else ""
+    )
+
+    if setup_url:
+        add_command = f"claude mcp add --transport http rootly {setup_url}"
+        tabs, tab_rules = _client_tabs(_clients(setup_url))
+        terminal = (
+            '<div class="terminal" aria-hidden="true"><div class="terminal-head"><i></i><i></i><i></i></div>'
+            '<div class="terminal-body"><span class="muted">$ </span>'
+            f'<span class="typed" style="--chars: {len(add_command)}">{esc(add_command)}</span></div></div>'
+        )
+        connect = (
+            f"<h2>Connect your client</h2>{tabs}"
+            "<p>Each option signs you in with OAuth, so there's no key to store or rotate. If you"
+            " use an API token instead, generate it under <strong>Account › Manage API keys</strong>"
+            " and prefer a global key: on-call tools such as the handoff summary need"
+            " organization-wide visibility.</p>"
+        )
+    else:
+        tab_rules = terminal = ""
+        connect = (
+            "<h2>Connect your client</h2><p>This server only serves the deprecated SSE"
+            " transport. Point your client at the SSE endpoint below, and plan to move to"
+            " streamable HTTP before 2026-11-20.</p>"
+        )
+    endpoints_section = (
+        f'<h2>Endpoints</h2><div class="card">{"".join(rows)}</div>{both_note}' if rows else ""
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -343,38 +453,11 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
   Protocol (MCP) client at it to search incidents, check who's on-call, find similar past
   incidents and act on them without leaving your editor.</p>
 
-  <div class="terminal" aria-hidden="true">
-    <div class="terminal-head"><i></i><i></i><i></i></div>
-    <div class="terminal-body">
-      <span class="muted">$ </span><span class="typed" style="--chars: {len(add_command)}">{esc(add_command)}</span>
-    </div>
-  </div>
+  {terminal}
 
-  <h2>Connect your client</h2>
-  {tabs}
-  <p>Each option signs you in with OAuth, so there's no key to store or rotate. If you use an
-  API token instead, generate it under <strong>Account › Manage API keys</strong> and prefer a
-  global key: on-call tools such as the handoff summary need organization-wide visibility.</p>
+  {connect}
 
-  <h2>Endpoints</h2>
-  <div class="card">
-    <div class="endpoint">
-      <div class="endpoint-head"><code>{esc(code_mode_url)}</code><span class="tag">Recommended</span></div>
-      <p>Code Mode. Your assistant gets five meta-tools instead of 200+ schemas, finds the tools
-      it needs, and chains them in one short Python block. Fewer tokens, fewer round trips.</p>
-    </div>
-    <div class="endpoint">
-      <div class="endpoint-head"><code>{esc(mcp_url)}</code><span class="tag">Classic</span></div>
-      <p>Streamable HTTP with every tool registered directly. Add <code>?tool_profile=slim</code>
-      for about 70 of them.</p>
-    </div>
-    <div class="endpoint">
-      <div class="endpoint-head"><code>{esc(base_url)}/sse</code><span class="tag old">Deprecated</span></div>
-      <p>Removed after 2026-11-20. Switch to Code Mode or Classic; usually only the URL changes.</p>
-    </div>
-  </div>
-  <p>Connect Code Mode or Classic, not both. With both, assistants tend to call the classic
-  tools directly and the full tool list loads anyway.</p>
+  {endpoints_section}
 
   <h2>Pair it with the docs</h2>
   <p>The <a href="https://docs.rootly.com/integrations/mcp-server#rootly-docs-mcp-server">Rootly
@@ -406,13 +489,12 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
 
 
 async def landing_page(request: Request) -> HTMLResponse:
-    """GET / handler: the setup page, with URLs for the host that served it."""
-    code_mode_path = "/" + os.getenv("ROOTLY_CODE_MODE_PATH", "/mcp-codemode").strip("/")
+    """GET / handler: the setup page for the endpoints this app serves, on this host."""
     base_url = resolve_mcp_server_url(request).rstrip("/")
     if not base_url.startswith(("http://", "https://")):
         # The scheme can come from X-Forwarded-Proto; show only web URLs.
         base_url = "https://" + base_url.split("://", 1)[-1]
-    page = render_landing_page(base_url, code_mode_path)
+    page = render_landing_page(base_url, McpEndpoints.from_app_state(request.app.state))
     return HTMLResponse(
         page,
         headers={

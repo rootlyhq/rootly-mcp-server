@@ -49,8 +49,8 @@ lint: ## Lint with ruff
 
 lint-html: ## Validate the hosted setup page (html-validate; W3C Nu checker too when Docker is available)
 	@mkdir -p $(LANDING_DIR)
-	$(UV) python -c "from rootly_mcp_server.landing_page import render_landing_page; \
-		open('$(LANDING_DIR)/index.html', 'w').write(render_landing_page('https://mcp.rootly.com', '/mcp-codemode'))"
+	$(UV) python -c "from rootly_mcp_server.landing_page import HOSTED_ENDPOINTS, render_landing_page; \
+		open('$(LANDING_DIR)/index.html', 'w').write(render_landing_page('https://mcp.rootly.com', HOSTED_ENDPOINTS))"
 	npx --yes $(HTML_VALIDATE) --config .htmlvalidate.json $(LANDING_DIR)/index.html
 	@if command -v docker >/dev/null 2>&1; then \
 		docker run --rm -v "$(CURDIR)/$(LANDING_DIR):/data:ro" $(VNU_IMAGE) \
