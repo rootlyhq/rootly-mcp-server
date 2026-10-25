@@ -581,6 +581,18 @@ async def test_handoff_rejects_truncated_schedule_listing():
     assert request.await_count == 1
 
 
+async def test_handoff_over_the_filtered_cap_points_at_list_shifts():
+    async def responder(method, path, params=None):
+        return response({"data": [schedule()], "meta": {"total_pages": 21, "total_count": 2050}})
+
+    tools, request = oncall_tools(responder)
+    result = await tools["get_oncall_handoff_summary"](schedule_ids="sched-1")
+    assert result["error_type"] == "validation_error"
+    assert "2050 schedules, more than the 2000" in result["message"]
+    assert "Use list_shifts with schedule_ids instead." in result["message"]
+    assert request.await_count == 1
+
+
 async def test_handoff_with_a_filter_reads_past_500_schedules():
     """ROOTLY-MCP: an organization with 512 schedules got no handoff at all."""
     now = datetime.now(UTC)

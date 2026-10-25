@@ -840,7 +840,9 @@ def register_oncall_tools(
                     else f"{total_pages} pages of schedules"
                 )
                 remedy = (
-                    "Pass schedule_ids for the schedules you need, or use list_shifts."
+                    # The cap counts the whole organization, so a narrower
+                    # filter cannot help; list_shifts reads schedules by ID.
+                    "Use list_shifts with schedule_ids instead."
                     if narrowed
                     else "Pass team_ids or schedule_ids to narrow the summary."
                 )
