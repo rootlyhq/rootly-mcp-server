@@ -228,6 +228,11 @@ class _ArgumentClamp:
         return result
 
 
+def _team_key(value: str) -> str:
+    """Compare team names and slugs ignoring case and -/_/space separators."""
+    return " ".join(re.split(r"[\s_-]+", value.lower())).strip()
+
+
 def _split_csv_values(value: str) -> list[str]:
     """Split comma-separated values into a normalized list."""
     return [part.strip() for part in value.split(",") if part.strip()]
@@ -504,6 +509,7 @@ def register_incident_tools(
         resolved_team_ids: list[str] = []
         resolved_team_lookup: dict[str, str] = {}
         unresolved_teams: list[str] = []
+        suggestions: dict[str, list[str]] = {}
 
         for team in requested_teams:
             matched_id = None
@@ -538,6 +544,29 @@ def register_incident_tools(
                 if matched_id:
                     break
 
+            if not matched_id:
+                # "storage-access-platform" for a team named "Storage Access
+                # Platform": search, then accept only a separator-insensitive
+                # exact match. Anything looser is offered, not chosen.
+                key = _team_key(team)
+                response = await make_authenticated_request(
+                    "GET",
+                    "/v1/teams",
+                    params={"page[size]": 10, "page[number]": 1, "filter[search]": key},
+                )
+                response.raise_for_status()
+                candidates = []
+                for candidate in response.json().get("data", []):
+                    attrs = candidate.get("attributes", {})
+                    name, slug = attrs.get("name"), attrs.get("slug")
+                    if key in (_team_key(name or ""), _team_key(slug or "")):
+                        matched_id = str(candidate.get("id"))
+                        break
+                    if isinstance(name, str):
+                        candidates.append(f"{name!r} (slug {slug!r})" if slug else repr(name))
+                if not matched_id:
+                    suggestions[team] = candidates[:5]
+
             if matched_id:
                 resolved_team_ids.append(matched_id)
                 resolved_team_lookup[team] = matched_id
@@ -545,8 +574,18 @@ def register_incident_tools(
                 unresolved_teams.append(team)
 
         if unresolved_teams:
+            hints = [
+                f"Closest teams to {team!r}: {', '.join(suggestions[team])}."
+                if suggestions[team]
+                else f"No team name matches {team!r}."
+                for team in unresolved_teams
+            ]
             raise ValueError(
-                "Could not resolve team names/slugs to team IDs: " + ", ".join(unresolved_teams)
+                "Could not resolve team names/slugs to team IDs: "
+                + ", ".join(unresolved_teams)
+                + ". "
+                + " ".join(hints)
+                + " Pass an exact team name or slug, or team_ids (list_teams lists them)."
             )
 
         return ",".join(dict.fromkeys(resolved_team_ids)), resolved_team_lookup

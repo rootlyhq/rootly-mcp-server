@@ -83,18 +83,15 @@ _MAX_TOOL_SUGGESTIONS = 3
 _UNDEFINED_NAME = re.compile(r"name '([^']+)' is not defined")
 _CALL_TOOL_FAILURE = re.compile(r"call_tool\('[^']*'\) failed: ")
 _INTROSPECTION_BUILTINS = frozenset({"dir", "globals", "locals", "vars"})
-# Monty reports a clock read as "RuntimeError: 'datetime.now' is not supported
-# in this environment"; older releases said "OS function 'datetime.now' not
-# implemented".
-_NO_CLOCK = re.compile(
-    r"OS function|'(?:datetime|date)\.\w+' (?:is )?not (?:supported|implemented)"
-)
+# JSON / JavaScript literals scripts write in place of Python's.
+_FOREIGN_LITERALS = {"true": "True", "false": "False", "null": "None", "undefined": "None"}
+_DISPLAY_LINE_NUMBER = re.compile(r'^\s*File "[^"]*", line (\d+)')
 # Scripts that guessed the shape of a call_tool result. Monty raises these as
 # MontyRuntimeError, so they are recognized by message, not exception type.
 _RESULT_SHAPE_ERROR = re.compile(
     r"^KeyError: "
     r"|'(?:str|dict|list)' object has no attribute "
-    r"|(?:str|list) indices must be integers"
+    r"|(?:str|string|list) indices must be integers"
     r"|'NoneType' object is not subscriptable"
 )
 _RESULT_SHAPE_HINT = (
@@ -345,6 +342,40 @@ def _undefined_name_message(missing: str, tools: Sequence[Tool]) -> str | None:
     )
 
 
+def _syntax_error_message(exc: Exception, message: str) -> str:
+    """Point a Monty syntax error at its line; the bare message names no location.
+
+    ``MontySyntaxError.display()`` renders a CPython-style traceback whose last
+    frame carries the line number, the offending source line and a caret.
+    """
+    try:
+        display_lines = str(exc.display()).splitlines()  # type: ignore[attr-defined]
+    except Exception:
+        display_lines = []
+    line_number = None
+    source: list[str] = []
+    for line in display_lines:
+        found = _DISPLAY_LINE_NUMBER.match(line)
+        if found:
+            line_number, source = found.group(1), []
+        elif line_number is not None and not line.startswith(("SyntaxError", "Traceback")):
+            source.append(line)
+    if "line continuation character" in message:
+        # A script sent with escaped newlines arrives as one line full of "\n".
+        hint = (
+            "The code contains a literal backslash-n (\\n) where a line break belongs; "
+            "send real newlines in `code`."
+        )
+    else:
+        hint = (
+            "Code Mode runs a Python subset: write Python, not JavaScript or JSON, "
+            "with one statement per line."
+        )
+    location = f" on line {line_number}" if line_number else ""
+    parts = [f"SyntaxError{location}: {message}", *source, hint]
+    return "\n".join(parts)
+
+
 def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str | None:
     """Return a friendlier execute error message for known sandbox failures.
 
@@ -360,9 +391,17 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
     if _CALL_TOOL_FAILURE.search(message):
         return None
 
+    if type(exc).__name__ == "MontySyntaxError":
+        return _syntax_error_message(exc, message)
+
     undefined = _UNDEFINED_NAME.search(message)
     if undefined and (isinstance(exc, NameError) or "NameError" in message):
         missing = undefined.group(1)
+        if missing in _FOREIGN_LITERALS:
+            return (
+                f"{message}. Code Mode runs Python: write {_FOREIGN_LITERALS[missing]}, "
+                f"not the JSON/JavaScript literal {missing}."
+            )
         if missing in _INTROSPECTION_BUILTINS:
             return (
                 f"{message}. Introspection builtins (dir, globals, locals, vars) are not "
@@ -371,24 +410,10 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
             )
         if missing == "datetime":
             return (
-                f"{message}. Add `import datetime` first. The sandbox has no clock, so "
-                "datetime.now() is unavailable: pass explicit ISO 8601 timestamps."
+                f"{message}. Add `import datetime` first; the current UTC time is "
+                "datetime.datetime.now(datetime.timezone.utc)."
             )
         return _undefined_name_message(missing, tools)
-
-    if "unsupported operand type(s) for |: 'dict' and 'dict'" in message:
-        return (
-            f"{message}. The Code Mode sandbox does not support `|` on dicts; merge "
-            "them with `{**a, **b}` instead."
-        )
-
-    if _NO_CLOCK.search(message):
-        return (
-            f"{message}. The Code Mode sandbox has no clock or OS access, so "
-            "datetime.now() / date.today() are unavailable. Pass explicit ISO 8601 "
-            "timestamps (e.g. '2026-01-01T00:00:00Z'), or derive dates from one you "
-            "already have: `datetime.datetime.fromisoformat(s) - datetime.timedelta(days=7)`."
-        )
 
     if "object is not an iterator" in message:
         return (
@@ -421,18 +446,9 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
 
     if isinstance(exc, ModuleNotFoundError) or "No module named" in message:
         return (
-            f"{message}. Code Mode runs in a restricted sandbox, so imports like "
-            "`json` or `asyncio` are not available. Return native Python dict/list/str "
-            "values and use `await call_tool(name, params)` for Rootly operations."
-        )
-
-    if (
-        isinstance(exc, AttributeError) and "asyncio" in message and "sleep" in message
-    ) or "asyncio' has no attribute 'sleep'" in message:
-        return (
-            f"{message}. Code Mode does not provide `asyncio.sleep()`. Avoid manual "
-            "sleep/retry loops inside execute; call Rootly tools directly and return "
-            "the final result."
+            f"{message}. Code Mode runs in a sandbox with part of the standard library "
+            "(json, datetime, re, asyncio, ...) and no third-party packages, network or "
+            "filesystem. Use `await call_tool(name, params)` for Rootly operations."
         )
 
     if message.startswith("Expected ") or "got Subscript(" in message:
@@ -572,8 +588,9 @@ EXECUTE_DESCRIPTION = (
     "pages; use search_incidents for free-text lookups with query, page_size, and "
     "max_results. Do not use client prefixes like mcp__rootly-codemode__tool_search or "
     "rootly:get_current_user inside execute; call tool_search or the raw Rootly tool name "
-    "directly. Avoid imports such as json or asyncio and return native Python values; the "
-    "sandbox has no clock, so pass explicit dates instead of calling datetime.now(). "
+    "directly. Return native Python values (no json.dumps); for "
+    "relative dates, `import datetime` and start from "
+    "datetime.datetime.now(datetime.timezone.utc). "
     "Example: await call_tool('list_incidents', {'status': 'resolved', "
     "'started_after': '2026-01-01T00:00:00Z', 'page_size': 10})."
 )

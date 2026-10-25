@@ -25,7 +25,11 @@ from rootly_mcp_server.server import (
     _provider_tool_inventory,
     create_rootly_mcp_server,
 )
-from rootly_mcp_server.tool_arguments import normalize_tool_arguments, validation_aliases
+from rootly_mcp_server.tool_arguments import (
+    normalize_tool_arguments,
+    unknown_arguments_message,
+    validation_aliases,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -274,6 +278,31 @@ async def test_sentry_tail_names_reach_the_real_parameter(
     params = dict(requests[0].url.params)
     for key, value in expected.items():
         assert params.get(key) == value, (key, params)
+
+
+def test_shift_window_names_reach_list_shifts_range():
+    schema = {
+        "type": "object",
+        "properties": {"from_date": {}, "to_date": {}},
+        "additionalProperties": False,
+    }
+
+    result = normalize_tool_arguments({"starts_after": _TS1, "ends_before": _TS2}, schema)
+
+    assert result.arguments == {"from_date": _TS1, "to_date": _TS2}
+
+
+def test_ends_before_never_becomes_an_incident_start_bound():
+    schema = {
+        "type": "object",
+        "properties": {"started_after": {}, "started_before": {}},
+        "additionalProperties": False,
+    }
+
+    result = normalize_tool_arguments({"ends_before": _TS2}, schema)
+
+    assert set(result.unknown) == {"ends_before"}
+    assert "started_before" not in result.arguments
 
 
 def test_start_date_reaches_shift_incidents_start_time():
@@ -545,11 +574,12 @@ async def test_openapi_tools_are_untouched(server, sent):
 
 
 async def test_openapi_missing_path_argument_keeps_its_own_error(server, sent):
-    result = await _call(server, "get_alert", {"alert_id": "a1"})
+    # incident_id names another resource than /v1/action_items/{id}, so it stays unmapped.
+    result = await _call(server, "get_incident_action_items", {"incident_id": "i1"})
 
     text = _text(result)
     assert result.is_error
-    assert text.startswith("get_alert requires the path argument 'id'"), text
+    assert text.startswith("get_incident_action_items requires the path argument 'id'"), text
 
 
 def test_scope_is_the_registered_curated_tools(server):
@@ -704,3 +734,13 @@ async def test_code_mode_call_tool_gets_the_same_rewrites(monkeypatch):
     params = _incident_params(requests)
     assert params["filter[status]"] == "resolved"
     assert params["filter[started_at][gte]"] == _TS1
+
+
+def test_search_incidents_rejection_points_at_the_filtering_tools():
+    """ROOTLY-MCP-2M1 / 2KC: filters sent to the free-text search tool."""
+    message = unknown_arguments_message(
+        "search_incidents", {"properties": {"query": {}}}, {"status": "", "started_after": ""}
+    )
+
+    assert message.startswith("search_incidents does not accept 'status', 'started_after'.")
+    assert "use list_incidents (one page) or collect_incidents (many pages)" in message

@@ -68,6 +68,7 @@ PARAMETER_SYNONYMS: dict[str, tuple[str, ...]] = {
 # names) only reach the shift tools' range parameters. page_size reaches
 # collect_incidents' batch_size, which is sent as page[size], or list_audits'
 # max_results. start_date/end_date reach get_shift_incidents' start_time/end_time.
+# ends_before never reaches started_before: an incident's end is not its start.
 ARGUMENT_ALIASES: dict[str, tuple[str, ...]] = {
     "search": ("query",),
     "start_time": ("started_after", "start_date"),
@@ -76,6 +77,8 @@ ARGUMENT_ALIASES: dict[str, tuple[str, ...]] = {
     "end_date": ("started_before", "end_time", "to_date"),
     "starts_at": ("start_date", "from_date"),
     "ends_at": ("end_date", "to_date"),
+    "starts_after": ("started_after", "from_date", "start_date"),
+    "ends_before": ("to_date", "end_date"),
     "services": ("service_ids",),
     "max_results": ("page_size",),
     "page_size": ("batch_size", "max_results"),
@@ -107,6 +110,15 @@ _NO_EQUIVALENT_HINTS: dict[str, str] = {
     "created_after": "there is no created-time filter",
     "created_before": "there is no created-time filter",
     "include": "related records cannot be side-loaded; the response shape is fixed",
+}
+
+# Tools whose rejected arguments belong to a sibling tool, named in the error.
+_SIBLING_TOOL_HINTS: dict[str, str] = {
+    "search_incidents": (
+        " search_incidents only runs free-text lookups; use list_incidents (one page) "
+        "or collect_incidents (many pages) to filter by teams, status, severity or "
+        "started_after/started_before."
+    ),
 }
 
 # Fuzzy did-you-mean threshold. difflib's default (0.6) pairs short unrelated
@@ -408,6 +420,7 @@ def unknown_arguments_message(
         and "-created_at" in (sort.get("enum") or [])
     ):
         message += " To find recently created records, pass sort='-created_at'."
+    message += _SIBLING_TOOL_HINTS.get(tool_name, "")
     line = valid_parameters_line(tool_name, schema)
     return f"{message}\n{line}" if line else message
 

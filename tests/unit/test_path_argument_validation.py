@@ -9,15 +9,19 @@ the transport guard, which failed without naming the argument to pass.
 from __future__ import annotations
 
 import re
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx2
 import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from rootly_mcp_server.server import (
+    PathArgumentValidationMiddleware,
     _openapi_path_arguments,
     _provider_tool_inventory,
+    _resource_id_alias,
     create_rootly_mcp_server,
 )
 from rootly_mcp_server.spec_transform import (
@@ -86,8 +90,6 @@ class TestGetAlertCalls:
     @pytest.mark.parametrize(
         "arguments,rejected",
         [
-            ({"alert_id": "abc"}, ["alert_id"]),
-            ({"alert_id": "abc", "include": "notified_users"}, ["alert_id"]),
             ({"short_id": "ABC-1"}, ["short_id"]),
             ({"include": "notified_users"}, []),
             ({}, []),
@@ -124,25 +126,75 @@ class TestGetAlertCalls:
         assert url.params.get("include") == "notified_users"
 
 
+class TestPathArgumentDotSegments:
+    """fastmcp 4.1 rejects `.`/`..` path segments (PrefectHQ/fastmcp#5457).
+
+    Rootly path IDs are UUIDs or slugs matching ^[a-z0-9_-]+$, so no real ID is
+    a dot segment; a traversal attempt must fail readably and send nothing.
+    """
+
+    @pytest.mark.parametrize("alert_id", ["9f1c2d3e-4b5a-6c7d-8e9f-0a1b2c3d4e5f", "my-alert_1"])
+    async def test_real_ids_still_fill_the_path(self, server, sent_requests, alert_id):
+        async with Client(server) as client:
+            result = await client.call_tool("get_alert", {"id": alert_id}, raise_on_error=False)
+
+        assert not result.is_error, result
+        assert [request.url.path for request in sent_requests] == [f"/v1/alerts/{alert_id}"]
+
+    @pytest.mark.parametrize("alert_id", ["..", ".", "../users", "%2E%2E", "%252e%252e"])
+    async def test_dot_segments_are_rejected_before_any_request(
+        self, server, sent_requests, alert_id
+    ):
+        async with Client(server) as client:
+            result = await client.call_tool("get_alert", {"id": alert_id}, raise_on_error=False)
+
+        text = _error_text(result)
+        assert "GET /v1/alerts/{id}" in text
+        assert "Path parameter 'id' cannot contain dot segments" in text
+        assert sent_requests == []
+
+
 @pytest.mark.parametrize(
-    "tool_name,arguments",
+    "tool_name,arguments,path",
     [
-        # Argument shapes observed in production for the same failure mode.
-        ("get_team", {"team_id": "t-1"}),
-        ("get_cause", {"cause_id": "c-1"}),
-        ("get_schedule", {"schedule_id": "s-1"}),
-        ("get_incident_action_items", {"incident_id": "i-1"}),
+        # Argument shapes observed in production (Sentry, 2026-10-23).
+        ("get_alert", {"alert_id": "abc", "include": "notified_users"}, "/v1/alerts/abc"),
+        ("get_team", {"team_id": "t-1"}, "/v1/teams/t-1"),
+        ("get_cause", {"cause_id": "c-1"}, "/v1/causes/c-1"),
+        ("get_schedule", {"schedule_id": "s-1"}, "/v1/schedules/s-1"),
+        ("get_service", {"service_id": "svc-1"}, "/v1/services/svc-1"),
+        ("get_user", {"user_id": 42}, "/v1/users/42"),
     ],
 )
-async def test_other_id_tools_reject_resource_named_id(server, sent_requests, tool_name, arguments):
+async def test_resource_named_id_fills_the_path(server, sent_requests, tool_name, arguments, path):
     async with Client(server) as client:
         result = await client.call_tool(tool_name, arguments, raise_on_error=False)
 
+    assert not result.is_error, result
+    assert [request.url.path for request in sent_requests] == [path]
+
+
+async def test_other_resources_id_is_still_rejected(server, sent_requests):
+    # /v1/action_items/{id}: an incident_id names a different resource.
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "get_incident_action_items", {"incident_id": "i-1"}, raise_on_error=False
+        )
+
     text = _error_text(result)
-    assert f"{tool_name} requires the path argument 'id'" in text
-    (passed,) = arguments
-    assert f"does not accept '{passed}'" in text
+    assert "get_incident_action_items requires the path argument 'id'" in text
+    assert "does not accept 'incident_id'" in text
     assert sent_requests == []
+
+
+async def test_explicit_id_wins_over_resource_named_id(server, sent_requests):
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "get_alert", {"id": "real", "alert_id": "other"}, raise_on_error=False
+        )
+
+    assert not result.is_error, result
+    assert [request.url.path for request in sent_requests] == ["/v1/alerts/real"]
 
 
 async def test_nested_path_argument_is_reported_by_name(server, sent_requests):
@@ -239,3 +291,40 @@ class TestSpecHelpers:
         names = {param["name"] for param in path_item["get"]["parameters"]}
         assert "page[size]" not in names
         assert "filter[status]" not in names
+
+
+def test_several_candidate_ids_are_not_chosen_between():
+    # causes -> cause / caus: two different nonblank ids mean nothing is guessed.
+    assert _resource_id_alias("/v1/causes/{id}", "id", {"cause_id": "a", "caus_id": "b"}) is None
+    assert _resource_id_alias("/v1/causes/{id}", "id", {"cause_id": "a", "caus_id": ""}) == (
+        "cause_id"
+    )
+
+
+async def test_declared_resource_id_parameter_is_never_consumed():
+    """A tool that declares `alert_id` itself keeps it; the path error still fires."""
+    route = SimpleNamespace(
+        path="/v1/alerts/{id}",
+        method="GET",
+        parameter_map={"id": {"location": "path"}, "alert_id": {"location": "query"}},
+    )
+    tool = SimpleNamespace(
+        _route=route,
+        parameters={"properties": {"id": {}, "alert_id": {}}},
+    )
+
+    async def get_tool(_name):
+        return tool
+
+    message = SimpleNamespace(name="get_alert", arguments={"alert_id": "a1"})
+    context = SimpleNamespace(
+        message=message,
+        fastmcp_context=SimpleNamespace(fastmcp=SimpleNamespace(get_tool=get_tool)),
+    )
+
+    async def call_next(context: Any) -> Any:
+        raise AssertionError("the call must not proceed without its path argument")
+
+    with pytest.raises(ToolError, match="requires the path argument 'id'"):
+        await PathArgumentValidationMiddleware().on_call_tool(cast(Any, context), call_next)
+    assert message.arguments == {"alert_id": "a1"}

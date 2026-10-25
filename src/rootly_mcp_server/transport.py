@@ -17,9 +17,15 @@ from typing import Any
 import certifi
 import httpx2
 
+from .auth_logging import auth_rejection, exception_details, log_auth_rejection
 from .exceptions import RootlyValidationError
 from .security import mask_sensitive_data
-from .utils import OAUTH_PROTECTED_RESOURCE_PATH, auth_header_state, resolve_mcp_server_url
+from .utils import (
+    OAUTH_PROTECTED_RESOURCE_PATH,
+    _sanitize_log_excerpt,
+    auth_header_state,
+    resolve_mcp_server_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,26 +61,7 @@ _session_error_context: contextvars.ContextVar[dict[str, Any] | None] = contextv
     "_session_error_context", default=None
 )
 
-_MAX_LOG_EXCERPT_CHARS = 800
 _MAX_LOG_LIST_ITEMS = 20
-
-
-def _sanitize_log_excerpt(value: Any, max_length: int = _MAX_LOG_EXCERPT_CHARS) -> str:
-    """Sanitize arbitrary text snippets for structured logs without losing context."""
-    if value in (None, ""):
-        return ""
-
-    text = str(value).replace("\r\n", "\n").strip()
-    text = re.sub(r"/[\w/.-]+\.py", "[file]", text)
-    text = re.sub(r"C:\\[\w\\.-]+\.py", "[file]", text)
-    text = re.sub(r'File "[^"]+"', 'File "[file]"', text)
-    text = re.sub(r"Bearer\s+[A-Za-z0-9._~\-]+", "Bearer ***REDACTED***", text, flags=re.I)
-    text = re.sub(r"\brootly_[A-Za-z0-9]+\b", "rootly_***REDACTED***", text)
-
-    if len(text) > max_length:
-        text = text[:max_length] + "..."
-
-    return text
 
 
 def _sanitize_error_context_value(value: Any) -> Any:
@@ -322,10 +309,25 @@ class AuthCaptureMiddleware:
         # Maps token_hash -> (timestamp, authenticated user or None if invalid)
         self._token_cache: dict[str, tuple[float, dict[str, str] | None]] = {}
         # In-flight probes keyed by token_hash to prevent cache stampede
-        self._inflight: dict[str, asyncio.Future[dict[str, str] | None]] = {}
+        self._inflight: dict[
+            str, asyncio.Future[tuple[dict[str, str] | None, dict[str, Any] | None]]
+        ] = {}
 
     async def _validate_token_upstream(self, auth_header: str) -> dict[str, str] | None:
-        """Probe the Rootly API to verify the Bearer token and extract user identity."""
+        """Probe the Rootly API to verify the Bearer token and extract user identity.
+
+        On rejection, the reason is left in ``auth_rejection``. Only a token the
+        Rootly API actually refused is cached as invalid; a probe that crashed or
+        got a server error is retried on the next request.
+        """
+        authenticated_user, rejection = await self._check_token(auth_header)
+        auth_rejection.set(rejection)
+        return authenticated_user
+
+    async def _check_token(
+        self, auth_header: str
+    ) -> tuple[dict[str, str] | None, dict[str, Any] | None]:
+        """Resolve a token to its user, or to None and the reason it was rejected."""
         token_hash = hashlib.sha256(auth_header.encode()).hexdigest()
         now = time.monotonic()
 
@@ -338,29 +340,37 @@ class AuthCaptureMiddleware:
                 else self._NEGATIVE_CACHE_TTL
             )
             if (now - cached_at) < ttl:
-                return dict(authenticated_user) if authenticated_user is not None else None
+                if authenticated_user is None:
+                    return None, {"reason": "negative_cache"}
+                return dict(authenticated_user), None
 
         existing = self._inflight.get(token_hash)
         if existing is not None:
             return await existing
 
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[dict[str, str] | None] = loop.create_future()
+        future: asyncio.Future[tuple[dict[str, str] | None, dict[str, Any] | None]] = (
+            loop.create_future()
+        )
         self._inflight[token_hash] = future
 
         try:
-            authenticated_user = await self._probe_upstream(auth_header)
-            self._token_cache[token_hash] = (time.monotonic(), authenticated_user)
-            self._evict_cache(time.monotonic())
-            future.set_result(authenticated_user)
-            return authenticated_user
-        except Exception:
-            future.set_result(None)
-            return None
+            result = await self._probe_upstream(auth_header)
+            authenticated_user, rejection = result
+            refused = rejection is not None and rejection["reason"] == "upstream_rejected"
+            if authenticated_user is not None or refused:
+                self._token_cache[token_hash] = (time.monotonic(), authenticated_user)
+                self._evict_cache(time.monotonic())
+        except Exception as exc:
+            result = (None, exception_details("validation_exception", exc))
         finally:
             self._inflight.pop(token_hash, None)
+        future.set_result(result)
+        return result
 
-    async def _probe_upstream(self, auth_header: str) -> dict[str, str] | None:
+    async def _probe_upstream(
+        self, auth_header: str
+    ) -> tuple[dict[str, str] | None, dict[str, Any] | None]:
         """Make the actual upstream validation request."""
         try:
             async with upstream_client(timeout=10.0) as client:
@@ -372,11 +382,15 @@ class AuthCaptureMiddleware:
                     },
                 )
             if not resp.is_success:
-                return None
-            return _extract_rootly_user_identity(resp.json())
-        except Exception:
-            logger.warning("Token validation probe failed, rejecting request")
-            return None
+                refused = resp.status_code in (401, 403)
+                reason = "upstream_rejected" if refused else "upstream_error"
+                return None, {"reason": reason, "upstream_status": resp.status_code}
+            authenticated_user = _extract_rootly_user_identity(resp.json())
+            if authenticated_user is None:
+                return None, {"reason": "unreadable_identity", "upstream_status": resp.status_code}
+            return authenticated_user, None
+        except Exception as exc:
+            return None, exception_details("probe_exception", exc)
 
     def _evict_cache(self, now: float) -> None:
         """Remove expired entries then enforce hard size cap."""
@@ -453,6 +467,16 @@ class AuthCaptureMiddleware:
                 await self._validate_token_upstream(auth) if auth_state == "bearer" else None
             )
             if auth_state != "bearer" or not authenticated_user:
+                log_auth_rejection(
+                    auth_header=auth,
+                    auth_state=auth_state,
+                    path=path,
+                    transport=effective_transport,
+                    mcp_mode=mcp_mode,
+                    client_ip=client_ip,
+                    request_id=request_id,
+                    rejection=auth_rejection.get() if auth_state == "bearer" else None,
+                )
                 await send(
                     {
                         "type": "http.response.start",

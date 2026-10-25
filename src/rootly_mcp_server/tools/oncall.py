@@ -808,7 +808,11 @@ def register_oncall_tools(
             # Fetch schedules with team info. Page 1 first to learn total_pages,
             # then parallel-fetch any remaining pages with a small concurrency cap
             # to avoid hammering the upstream API.
-            max_pages = 5  # Schedules shouldn't have many pages
+            # Shifts are fetched per target schedule, so an unfiltered summary
+            # stops at 500 schedules; a team or schedule filter narrows the
+            # shift fetches and can afford a longer listing.
+            narrowed = bool(team_ids.strip() or schedule_ids.strip())
+            max_pages = 20 if narrowed else 5
             request_semaphore = asyncio.Semaphore(10)
 
             first_response = await make_authenticated_request(
@@ -829,8 +833,23 @@ def register_oncall_tools(
             all_schedules = list(first_data.get("data", []))
             total_pages = int(first_data.get("meta", {}).get("total_pages", 1))
             if total_pages > max_pages:
-                raise RootlyAPIError(
-                    "Schedule listing is incomplete; the handoff cannot be determined"
+                total_count = first_data.get("meta", {}).get("total_count")
+                found = (
+                    f"{total_count} schedules"
+                    if total_count
+                    else f"{total_pages} pages of schedules"
+                )
+                remedy = (
+                    # The cap counts the whole organization, so a narrower
+                    # filter cannot help; list_shifts reads schedules by ID.
+                    "Use list_shifts with schedule_ids instead."
+                    if narrowed
+                    else "Pass team_ids or schedule_ids to narrow the summary."
+                )
+                return mcp_error.tool_error(
+                    f"This organization has {found}, more than the {max_pages * 100} the "
+                    f"handoff summary reads{' with a filter' if narrowed else ''}. {remedy}",
+                    "validation_error",
                 )
 
             if total_pages > 1:

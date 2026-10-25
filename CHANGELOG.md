@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Upgraded `fastmcp[code-mode]` to `4.1.3`** (from `4.0.11`), with `pydantic-monty` `1.3.0` (from `0.0.21`). This also clears the fastmcp advisories fixed in 4.1.2 (post-transform component authorization; M2M OAuth issuer binding), neither of which this server's configuration was exposed to. The Code Mode sandbox keeps a 30 s / 100 MB budget per `execute` (Monty 1.1 renames the time limit `max_feed_duration_secs`). Monty adds a clock, dict `|`, `json` and `asyncio`, so the `execute` description now says to start relative dates from `datetime.datetime.now(datetime.timezone.utc)` instead of saying the sandbox has no clock, the missing-module hint no longer claims `json`/`asyncio` are unavailable, and the hints for the clock, dict `|` and `asyncio.sleep` cases are gone. The sandbox still has no host filesystem, environment or subprocess access; tests now pin that. An autogen tool called with a `.` or `..` path argument is now refused before any request is sent ("Path parameter 'id' cannot contain dot segments"); Rootly IDs are UUIDs or `^[a-z0-9_-]+$` slugs, so no real ID is affected. A stateful (non-hosted, `FASTMCP_STATELESS_HTTP` unset) `--transport streamable-http` session now expires after 30 idle minutes, the MCP SDK default; hosted deployments and the Docker image run stateless and are unaffected.
+
 ### Deprecated
 
 - **The SSE transport is deprecated and will be removed after 2026-11-20**: use Streamable HTTP (`https://mcp.rootly.com/mcp`) or Code Mode (`https://mcp.rootly.com/mcp-codemode`). Nothing stops working yet. Over the last 7 days SSE carried 3 of roughly 1,027,000 hosted tool calls, and in hosted mode it is already unreliable: an SSE session lives in one task's memory, and the load balancer routes its follow-up `POST /messages/` to any task, which answers "Could not find session". Until removal:

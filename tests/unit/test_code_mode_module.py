@@ -68,7 +68,7 @@ def test_build_code_mode_transform_includes_call_guidance():
     assert "no 'result' wrapper" in description
     assert "mcp__rootly-codemode__tool_search" in description
     assert "rootly:get_current_user" in description
-    assert "Avoid imports such as json or asyncio" in description
+    assert "Return native Python values (no json.dumps)" in description
     assert "await call_tool('list_incidents'" in description
     # Never names a parameter the tools do not take (Sentry: list_incidents
     # start_time/end_time, max_results on list_incidents).
@@ -228,16 +228,10 @@ def test_format_execute_exception_returns_friendlier_messages():
     assert "Use tool_search to discover available tools" in unknown_tool
 
     missing_import = _format_execute_exception(
-        Exception("ModuleNotFoundError: No module named 'json'")
+        Exception("ModuleNotFoundError: No module named 'requests'")
     )
     assert missing_import is not None
-    assert "restricted sandbox" in missing_import
-
-    asyncio_sleep = _format_execute_exception(
-        Exception("AttributeError: module 'asyncio' has no attribute 'sleep'")
-    )
-    assert asyncio_sleep is not None
-    assert "does not provide `asyncio.sleep()`" in asyncio_sleep
+    assert "no third-party packages, network or filesystem" in missing_import
 
     parser_error = _format_execute_exception(Exception("Expected name, got Subscript(...)"))
     assert parser_error is not None
@@ -575,7 +569,8 @@ def test_build_code_mode_transform_keeps_monty_resource_limits():
     # budget; a provider constructed with limits=None would drop them.
     provider = build_code_mode_transform().sandbox_provider
     assert isinstance(provider, MontySandboxProvider)
-    assert provider.limits == {"max_duration_secs": 30.0, "max_memory": 100_000_000}
+    # Monty 1.1 renamed max_duration_secs to max_feed_duration_secs (fastmcp 4.1).
+    assert provider.limits == {"max_feed_duration_secs": 30.0, "max_memory": 100_000_000}
 
 
 def test_code_mode_max_tool_calls_from_env(caplog):

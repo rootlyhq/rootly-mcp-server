@@ -940,26 +940,24 @@ class TestToolUsageIdentityHelpers:
         assert identity["mcp_mode"] == "classic"
 
     def test_log_tool_usage_event_emits_json_line(self):
-        with patch.object(server_module, "_configure_tool_usage_json_logger") as mock_configure:
-            with patch.object(server_module._tool_usage_json_logger, "info") as mock_info:
-                server_module._log_tool_usage_event(
-                    tool_name="search_incidents",
-                    status="success",
-                    duration_ms=123.456,
-                    arg_keys=["page_size", "page_number"],
-                    identity={
-                        "auth_header_state": "bearer",
-                        "token_fingerprint": "abc123",
-                        "client_ip": "203.0.113.10",
-                        "request_id": "req-1",
-                        "transport": "sse",
-                        "transport_effective": "sse",
-                        "transport_runtime": "both",
-                        "mcp_mode": "classic",
-                    },
-                )
+        with patch.object(server_module._tool_usage_json_logger, "info") as mock_info:
+            server_module._log_tool_usage_event(
+                tool_name="search_incidents",
+                status="success",
+                duration_ms=123.456,
+                arg_keys=["page_size", "page_number"],
+                identity={
+                    "auth_header_state": "bearer",
+                    "token_fingerprint": "abc123",
+                    "client_ip": "203.0.113.10",
+                    "request_id": "req-1",
+                    "transport": "sse",
+                    "transport_effective": "sse",
+                    "transport_runtime": "both",
+                    "mcp_mode": "classic",
+                },
+            )
 
-        mock_configure.assert_called_once()
         mock_info.assert_called_once()
         payload = json.loads(mock_info.call_args[0][0])
         assert payload["event"] == "mcp_tool_call"
@@ -973,29 +971,28 @@ class TestToolUsageIdentityHelpers:
         assert payload["auth_header_state"] == "bearer"
 
     def test_log_tool_usage_event_includes_error_context(self):
-        with patch.object(server_module, "_configure_tool_usage_json_logger"):
-            with patch.object(server_module._tool_usage_json_logger, "info") as mock_info:
-                server_module._log_tool_usage_event(
-                    tool_name="list_alerts",
-                    status="error",
-                    duration_ms=42.0,
-                    arg_keys=["page_size"],
-                    identity={
-                        "token_fingerprint": "abc123",
-                        "client_ip": "203.0.113.10",
-                        "request_id": "req-1",
-                        "transport": "sse",
-                        "transport_effective": "sse",
-                        "transport_runtime": "both",
-                        "mcp_mode": "classic",
-                    },
-                    error_type="ToolError",
-                    error_context={
-                        "error_message": "boom",
-                        "upstream_status": 502,
-                        "traceback_excerpt": "Traceback... trimmed",
-                    },
-                )
+        with patch.object(server_module._tool_usage_json_logger, "info") as mock_info:
+            server_module._log_tool_usage_event(
+                tool_name="list_alerts",
+                status="error",
+                duration_ms=42.0,
+                arg_keys=["page_size"],
+                identity={
+                    "token_fingerprint": "abc123",
+                    "client_ip": "203.0.113.10",
+                    "request_id": "req-1",
+                    "transport": "sse",
+                    "transport_effective": "sse",
+                    "transport_runtime": "both",
+                    "mcp_mode": "classic",
+                },
+                error_type="ToolError",
+                error_context={
+                    "error_message": "boom",
+                    "upstream_status": 502,
+                    "traceback_excerpt": "Traceback... trimmed",
+                },
+            )
 
         payload = json.loads(mock_info.call_args[0][0])
         assert payload["error_message"] == "boom"

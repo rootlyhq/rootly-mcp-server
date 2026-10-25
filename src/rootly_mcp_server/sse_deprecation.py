@@ -28,6 +28,7 @@ from .transport import (
     _normalize_headers,
     _normalize_path,
 )
+from .utils import _fingerprint_auth_header, json_line_logger
 
 SSE_DEPRECATED_AT = datetime(2026, 10, 21, tzinfo=UTC)
 SSE_SUNSET = datetime(2026, 11, 20, tzinfo=UTC)
@@ -62,19 +63,7 @@ SSE_CONNECTION_EVENT = "sse_deprecated_connection"
 
 _MAX_USER_AGENT_CHARS = 256
 
-_deprecation_json_logger = logging.getLogger("rootly_mcp_server.sse_deprecation_json")
-
-
-def _configure_deprecation_json_logger() -> None:
-    """Emit raw JSON lines, like the tool-usage logger, so Datadog parses fields."""
-    if getattr(_deprecation_json_logger, "_rootly_configured", False):
-        return
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    _deprecation_json_logger.handlers = [handler]
-    _deprecation_json_logger.setLevel(logging.WARNING)
-    _deprecation_json_logger.propagate = False
-    _deprecation_json_logger._rootly_configured = True  # type: ignore[attr-defined]
+_deprecation_json_logger = json_line_logger("rootly_mcp_server.sse_deprecation_json")
 
 
 def _query_param(scope: dict[str, Any], name: str) -> str:
@@ -85,8 +74,6 @@ def _query_param(scope: dict[str, Any], name: str) -> str:
 
 def log_sse_deprecated_connection(scope: dict[str, Any]) -> None:
     """Log one structured warning for a newly opened SSE stream."""
-    from .server import _fingerprint_auth_header
-
     headers = _normalize_headers(
         {key.decode("latin-1"): value.decode("latin-1") for key, value in scope.get("headers", [])}
     )
@@ -105,7 +92,6 @@ def log_sse_deprecated_connection(scope: dict[str, Any]) -> None:
         "tool_profile": _query_param(scope, "tool_profile")
         or headers.get("x-rootly-tool-profile", ""),
     }
-    _configure_deprecation_json_logger()
     _deprecation_json_logger.warning(
         json.dumps({k: v for k, v in event.items() if v != ""}, separators=(",", ":"))
     )

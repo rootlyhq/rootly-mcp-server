@@ -569,13 +569,48 @@ async def test_handoff_skips_coverage_gaps_and_recognizes_user_assignee():
 
 async def test_handoff_rejects_truncated_schedule_listing():
     async def responder(method, path, params=None):
-        return response({"data": [schedule()], "meta": {"total_pages": 6}})
+        return response({"data": [schedule()], "meta": {"total_pages": 6, "total_count": 512}})
 
     tools, request = oncall_tools(responder)
     result = await tools["get_oncall_handoff_summary"]()
     assert result["error"]
+    assert result["error_type"] == "validation_error"
+    assert "512 schedules" in result["message"]
+    assert "Pass team_ids or schedule_ids" in result["message"]
     assert "schedules" not in result
     assert request.await_count == 1
+
+
+async def test_handoff_over_the_filtered_cap_points_at_list_shifts():
+    async def responder(method, path, params=None):
+        return response({"data": [schedule()], "meta": {"total_pages": 21, "total_count": 2050}})
+
+    tools, request = oncall_tools(responder)
+    result = await tools["get_oncall_handoff_summary"](schedule_ids="sched-1")
+    assert result["error_type"] == "validation_error"
+    assert "2050 schedules, more than the 2000" in result["message"]
+    assert "Use list_shifts with schedule_ids instead." in result["message"]
+    assert request.await_count == 1
+
+
+async def test_handoff_with_a_filter_reads_past_500_schedules():
+    """ROOTLY-MCP: an organization with 512 schedules got no handoff at all."""
+    now = datetime.now(UTC)
+    active = shift((now - timedelta(hours=1)).isoformat(), (now + timedelta(hours=1)).isoformat())
+
+    async def responder(method, path, params=None):
+        if path == "/v1/schedules":
+            assert params is not None
+            page = params["page[number]"]
+            listed = schedule() if page == 6 else {"id": f"other-{page}", "attributes": {}}
+            return response({"data": [listed], "meta": {"total_pages": 6, "total_count": 512}})
+        assert path == "/v1/schedules/sched-1/shifts"
+        return response({"data": [active]})
+
+    tools, _ = oncall_tools(responder)
+    result = await tools["get_oncall_handoff_summary"](schedule_ids="sched-1")
+    assert [entry["schedule_id"] for entry in result["schedules"]] == ["sched-1"]
+    assert result["schedules"][0]["current_oncall"]["user_id"] == "1001"
 
 
 async def test_availability_does_not_report_free_users_when_schedule_query_fails():

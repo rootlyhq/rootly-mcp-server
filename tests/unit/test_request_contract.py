@@ -438,9 +438,12 @@ def _stub_response(request: httpx2.Request, template: str | None) -> httpx2.Resp
         }
     elif template == "/v1/teams":
         wanted = params.get("filter[slug]") or params.get("filter[name]") or "platform"
-        body = _list(
-            [{"id": "team-1", "type": "groups", "attributes": {"name": wanted, "slug": wanted}}]
-        )
+        attributes = {"name": wanted, "slug": wanted}
+        if _stub_options.get({}).get("team_named_with_spaces"):
+            # Only the separator-insensitive search accepts this name for the
+            # requested "storage-access-platform".
+            attributes = {"name": "Storage Access Platform", "slug": "sap"}
+        body = _list([{"id": "team-1", "type": "groups", "attributes": attributes}])
     elif template == "/v1/teams/{id}":
         body = {"data": {"id": "team-1", "type": "groups", "attributes": {"name": "Platform"}}}
     elif template == "/v1/severities":
@@ -681,6 +684,12 @@ SCENARIOS: list[tuple[str, str, dict[str, Any]] | tuple[str, str, dict[str, Any]
             "max_results": 10,
             "batch_size": 10,
         },
+    ),
+    (
+        "list_incidents/team_found_by_search",
+        "list_incidents",
+        {"teams": "storage-access-platform"},
+        {"team_named_with_spaces": True},
     ),
     ("search_incidents/single_page", "search_incidents", {"query": "db", "page_number": 1}),
     (

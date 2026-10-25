@@ -5,7 +5,7 @@
 
 # uv is pinned (Dependabot's docker ecosystem bumps this tag). The binary is
 # copied in rather than pip-installed so it never lands in the runtime image.
-FROM ghcr.io/astral-sh/uv:0.12.24 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.5 AS uv
 
 # ---------------------------------------------------------------------------
 # Builder: resolve nothing, install the lock into /opt/venv.

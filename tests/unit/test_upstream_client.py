@@ -110,9 +110,10 @@ class TestTokenProbe:
                 200, json={"data": {"id": "u1", "attributes": {"email": "a@b.c", "name": "A"}}}
             )
         )
-        user = await AuthCaptureMiddleware(app=None)._probe_upstream("Bearer tok")
+        user, rejection = await AuthCaptureMiddleware(app=None)._probe_upstream("Bearer tok")
 
         assert user == {"id": "u1", "email": "a@b.c", "name": "A"}
+        assert rejection is None
         (sent,) = seen
         assert sent.method == "GET"
         assert str(sent.url) == "https://api.rootly.com/v1/users/me"
@@ -128,14 +129,18 @@ class TestTokenProbe:
 
     async def test_rejected_token_returns_none(self, wire):
         wire(lambda r: httpx2.Response(401, json={"errors": []}))
-        assert await AuthCaptureMiddleware(app=None)._probe_upstream("Bearer bad") is None
+        user, rejection = await AuthCaptureMiddleware(app=None)._probe_upstream("Bearer bad")
+        assert user is None
+        assert rejection == {"reason": "upstream_rejected", "upstream_status": 401}
 
     async def test_transport_failure_returns_none(self, wire):
         def boom(request: httpx2.Request) -> httpx2.Response:
             raise httpx2.ConnectError("refused", request=request)
 
         wire(boom)
-        assert await AuthCaptureMiddleware(app=None)._probe_upstream("Bearer tok") is None
+        user, rejection = await AuthCaptureMiddleware(app=None)._probe_upstream("Bearer tok")
+        assert user is None
+        assert rejection is not None and rejection["reason"] == "probe_exception"
 
 
 @pytest.mark.asyncio
