@@ -39,8 +39,11 @@ def test_hosted_root_serves_the_setup_page(hosted_server):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "<title>Rootly MCP server</title>" in response.text
-    assert "claude mcp add --transport http rootly http://testserver/mcp" in response.text
-    assert "http://testserver/mcp-codemode" in response.text
+    # Code Mode is the recommended endpoint, as on docs.rootly.com.
+    assert "claude mcp add --transport http rootly http://testserver/mcp-codemode" in response.text
+    assert "<code>http://testserver/mcp</code>" in response.text
+    assert "http://testserver/sse" in response.text
+    assert "front door" not in response.text
     assert response.headers["x-content-type-options"] == "nosniff"
     assert 'href="https://docs.rootly.com/integrations/mcp-server"' in response.text
 

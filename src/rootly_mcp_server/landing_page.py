@@ -131,13 +131,12 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
     """Render the page for a server reachable at ``base_url``."""
     mcp_url = f"{base_url}/mcp"
     code_mode_url = f"{base_url}{code_mode_path}"
-    add_command = f"claude mcp add --transport http rootly {mcp_url}"
-    oauth_config = (
-        f'{{\n  "mcpServers": {{\n    "rootly": {{\n      "url": "{mcp_url}"\n    }}\n  }}\n}}'
-    )
+    # Code Mode is the endpoint docs.rootly.com recommends.
+    add_command = f"claude mcp add --transport http rootly {code_mode_url}"
+    oauth_config = f'{{\n  "mcpServers": {{\n    "rootly": {{\n      "url": "{code_mode_url}"\n    }}\n  }}\n}}'
     token_config = (
         '{\n  "mcpServers": {\n    "rootly": {\n'
-        f'      "url": "{mcp_url}",\n'
+        f'      "url": "{code_mode_url}",\n'
         '      "headers": {\n        "Authorization": "Bearer YOUR_ROOTLY_API_TOKEN"\n      }\n'
         "    }\n  }\n}"
     )
@@ -161,8 +160,8 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
 
   <h1>Bring Rootly into your AI assistant</h1>
   <p class="lede">This is the Rootly MCP server. Point Claude, Cursor or any Model Context
-  Protocol (MCP) client at it to search incidents, check who's on-call and work alerts
-  without leaving your editor.</p>
+  Protocol (MCP) client at it to search incidents, check who's on-call, find similar past
+  incidents and act on them without leaving your editor.</p>
 
   <div class="terminal" aria-label="Example command">
     <div class="terminal-head"><i></i><i></i><i></i></div>
@@ -176,38 +175,47 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
   {_code_block("cmd-claude", add_command)}
 
   <h2>Or add it to your client config</h2>
-  <p>Cursor, Windsurf, Claude Desktop and most other clients take this shape. Your client
-  handles the OAuth sign-in, so you don't need an API token.</p>
+  <p>Cursor, Claude Desktop and most other clients take this shape (Windsurf calls the key
+  <code>serverUrl</code>). Your client handles the OAuth sign-in, so you don't need an API token.</p>
   {_code_block("cfg-oauth", oauth_config)}
   <details>
     <summary>Prefer an API token?</summary>
-    <p>Send a Rootly API key as a Bearer header. A global key sees the whole organization,
-    a team key sees that team's entities, and a personal key sees what you can.
-    <a href="https://docs.rootly.com/api-reference/overview#how-to-generate-an-api-key%3F">Generate an API key</a>.</p>
+    <p>Generate one in Rootly under <strong>Account › Manage API keys</strong> and send it as a
+    Bearer header. Prefer a global key: on-call tools such as the handoff summary need
+    organization-wide visibility.</p>
     {_code_block("cfg-token", token_config)}
   </details>
 
   <h2>Endpoints</h2>
   <div class="card">
     <div class="endpoint">
-      <div class="endpoint-head"><code>{esc(mcp_url)}</code><span class="tag">Use this</span></div>
-      <p>Streamable HTTP. Works with every current MCP client.</p>
+      <div class="endpoint-head"><code>{esc(code_mode_url)}</code><span class="tag">Recommended</span></div>
+      <p>Code Mode. Your assistant gets five meta-tools instead of 200+ schemas, finds the tools
+      it needs, and chains them in one short Python block. Fewer tokens, fewer round trips.</p>
     </div>
     <div class="endpoint">
-      <div class="endpoint-head"><code>{esc(code_mode_url)}</code><span class="tag">Code Mode</span></div>
-      <p>Your agent writes short Python that chains tool calls, so one request does the work of many.</p>
+      <div class="endpoint-head"><code>{esc(mcp_url)}</code><span class="tag">Classic</span></div>
+      <p>Streamable HTTP with every tool registered directly. Add <code>?tool_profile=slim</code>
+      for about 70 of them.</p>
     </div>
     <div class="endpoint">
       <div class="endpoint-head"><code>{esc(base_url)}/sse</code><span class="tag old">Deprecated</span></div>
-      <p>Removed after 2026-11-20. Switch to <code>/mcp</code>.</p>
+      <p>Removed after 2026-11-20. Switch to Code Mode or Classic; usually only the URL changes.</p>
     </div>
   </div>
-  <p>Want a smaller tool list? Add <code>?tool_profile=slim</code> to the URL for about 70 tools.</p>
+  <p>Connect Code Mode or Classic, not both. With both, assistants tend to call the classic
+  tools directly and the full tool list loads anyway.</p>
+
+  <h2>Pair it with the docs</h2>
+  <p>The <a href="https://docs.rootly.com/integrations/mcp-server#rootly-docs-mcp-server">Rootly
+  Docs MCP server</a> at <code>https://docs.rootly.com/mcp</code> answers "how do I configure
+  this?" from current documentation. Connect both and your assistant can look up a setting,
+  then change it.</p>
 
   <h2>Things to ask once you're connected</h2>
   <ul class="asks">
     <li>Who's on-call for the payments team this weekend?</li>
-    <li>Summarize last month's SEV1 incidents and what resolved them.</li>
+    <li>Find past incidents like this one and what fixed them.</li>
     <li>Which alerts fired most this week?</li>
     <li>Pull the retrospective for INC-1234 and list its open action items.</li>
   </ul>
@@ -219,7 +227,6 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
       <a href="/health">Check server health</a>
       <a href="https://rootly.com">rootly.com</a>
     </nav>
-    This page used to be a 404. Now it's the front door.
   </footer>
 </main>
 <script>{_COPY_SCRIPT}</script>
