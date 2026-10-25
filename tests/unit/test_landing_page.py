@@ -120,3 +120,17 @@ async def test_page_needs_no_token_while_mcp_still_does(hosted_server):
     assert page.status_code == 200
     assert "Bring Rootly into your AI assistant" in page.text
     assert mcp.status_code == 401
+
+
+def test_every_documented_client_has_a_tab():
+    page = render_landing_page("https://mcp.example.com", "/mcp-codemode")
+
+    for label in ("Claude Code", "Cursor", "Codex", "Claude Desktop", "Gemini CLI"):
+        assert f">{label}</label>" in page
+    assert "Windsurf" not in page
+    assert "Slack" not in page
+    # Each copy button points at exactly one code block.
+    ids = re.findall(r'<pre id="([^"]+)"', page)
+    assert len(ids) == len(set(ids))
+    assert sorted(re.findall(r'data-copy="([^"]+)"', page)) == sorted(ids)
+    assert "url = &quot;https://mcp.example.com/mcp-codemode&quot;" in page

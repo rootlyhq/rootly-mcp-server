@@ -10,7 +10,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import html
+import json
 import os
+from urllib.parse import quote
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse
@@ -31,6 +33,31 @@ document.querySelectorAll("[data-copy]").forEach(function (button) {
 });
 """
 _COPY_SCRIPT_HASH = base64.b64encode(hashlib.sha256(_COPY_SCRIPT.encode()).digest()).decode()
+
+# The Rootly glyph on the brand purple, as served at rootly.com/brand/favicon.svg.
+# Inlined as a data URI so the page still makes no request of its own.
+_LOGO_SVG = (
+    '<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/200'
+    '0/svg"><rect width="32" height="32" fill="#8D6FDE"/><path d="M6.19141 18.8463C6.21248 18'
+    ".8424 13.1815 17.5605 16.0888 21.3252C18.9213 17.6089 25.9864 18.8463 25.9864 18.8463L25"
+    ".6658 20.8958C25.6658 20.8958 17.89 19.1903 17.29 24.1252H14.89C14.29 19.2026 6.51191 20"
+    ".8958 6.51191 20.8958L6.19141 18.8463ZM16.09 13.6002C16.09 13.6002 17.44 15.0252 17.44 1"
+    "6.5252C17.44 17.4252 16.8356 18.2502 16.09 18.2502C15.3445 18.2502 14.74 17.4252 14.74 1"
+    "6.5252C14.74 15.0252 16.09 13.6002 16.09 13.6002ZM7.33955 14.8147C7.33955 14.8147 9.1003"
+    " 13.9469 10.5331 14.3908C11.3928 14.6572 12.0019 15.4786 11.7813 16.1908C11.5606 16.903 "
+    "10.5938 17.2362 9.73408 16.9699C8.30242 16.5264 7.34109 14.8175 7.33955 14.8147ZM21.6378"
+    " 14.3908C23.0698 13.9472 24.8293 14.8138 24.8313 14.8147C24.8271 14.8221 23.8665 16.527 "
+    "22.4368 16.9699C21.5771 17.2363 20.6102 16.903 20.3896 16.1908C20.1689 15.4786 20.7781 1"
+    "4.6572 21.6378 14.3908ZM9.76397 10.6146L9.76877 10.6137 11.6922 10.2404 12.9567 11.0438C"
+    "13.7164 11.5264 14.0887 12.4789 13.6889 13.1082C13.2891 13.7375 12.2685 13.8053 11.5089 "
+    "13.3227C10.2428 12.5183 9.76397 10.6146 9.76397 10.6146ZM19.1688 11.0438C20.4334 10.2404"
+    " 22.3568 10.6137 22.3616 10.6146C22.3616 10.6146 21.8828 12.5183 20.6167 13.3227C19.857 "
+    "13.8053 18.8365 13.7375 18.4367 13.1082C18.0369 12.4789 18.4092 11.5264 19.1688 11.0438Z"
+    "M16.09 7.0752C16.09 7.0752 17.44 8.5002 17.44 10.0002C17.44 10.9002 16.8356 11.7252 16.0"
+    "9 11.7252C15.3445 11.7252 14.74 10.9002 14.74 10.0002C14.74 8.5002 16.09 7.0752 16.09 7."
+    '0752Z" fill="white"/></svg>'
+)
+_LOGO_DATA_URI = "data:image/svg+xml," + quote(_LOGO_SVG)
 
 CONTENT_SECURITY_POLICY = (
     "default-src 'none'; "
@@ -63,7 +90,8 @@ body {
 main { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
 .bar { height: 6px; background: linear-gradient(90deg, #6D55BD 0%, #D9CFFA 62%, #FFC387 100%); }
 .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.wordmark { font-weight: 650; font-size: 20px; letter-spacing: -0.01em; }
+.wordmark { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 20px; letter-spacing: -0.01em; }
+.wordmark img { width: 28px; height: 28px; border-radius: 7px; }
 .wordmark span { color: var(--brand); }
 .pill {
   display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px;
@@ -112,6 +140,14 @@ ul.asks li { background: var(--card); border: 1px solid var(--line); border-radi
 ul.asks li::before { content: "\\201C"; color: var(--brand); font-weight: 700; margin-right: 2px; }
 ul.asks li::after { content: "\\201D"; color: var(--brand); font-weight: 700; margin-left: 2px; }
 details summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
+.tabs { margin: 12px 0 16px; }
+.tabs > input { position: absolute; opacity: 0; pointer-events: none; }
+.tab-labels { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.tab-labels label { padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--card);
+  color: var(--muted); font-size: 14px; font-weight: 600; cursor: pointer; user-select: none; }
+.tab-labels label:hover { border-color: var(--brand); }
+.panel { display: none; }
+.panel .code { margin-bottom: 10px; }
 footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 15px; }
 footer nav { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; }
 @media (max-width: 560px) { h1 { font-size: 34px; } main { padding-top: 32px; } }
@@ -127,19 +163,129 @@ def _code_block(block_id: str, text: str) -> str:
     )
 
 
+def _mcp_servers_json(entry: dict) -> str:
+    return json.dumps({"mcpServers": {"rootly": entry}}, indent=2)
+
+
+def _clients(url: str) -> list[tuple[str, str, str]]:
+    """(key, tab label, panel HTML) per client, following docs.rootly.com's setup steps."""
+    token_header = {"Authorization": "Bearer YOUR_ROOTLY_API_TOKEN"}
+    return [
+        (
+            "claude-code",
+            "Claude Code",
+            "<p>Run this. A browser window opens so you can sign in to Rootly.</p>"
+            + _code_block("claude-code-oauth", f"claude mcp add --transport http rootly {url}")
+            + "<p>Or commit a <code>.mcp.json</code> to your project root:</p>"
+            + _code_block("claude-code-json", _mcp_servers_json({"type": "http", "url": url}))
+            + "<details><summary>With an API token</summary>"
+            + _code_block(
+                "claude-code-token",
+                f"claude mcp add --transport http rootly {url} \\\n"
+                '  --header "Authorization: Bearer YOUR_ROOTLY_API_TOKEN"',
+            )
+            + "</details>",
+        ),
+        (
+            "cursor",
+            "Cursor",
+            "<p>Add to <code>.cursor/mcp.json</code> in your project, or <code>~/.cursor/mcp.json</code>"
+            " for every project.</p>"
+            + _code_block("cursor-oauth", _mcp_servers_json({"url": url}))
+            + "<details><summary>With an API token</summary>"
+            + _code_block("cursor-token", _mcp_servers_json({"url": url, "headers": token_header}))
+            + "</details>",
+        ),
+        (
+            "codex",
+            "Codex",
+            "<p>Add to <code>~/.codex/config.toml</code>, then export your API key as"
+            " <code>ROOTLY_API_TOKEN</code>.</p>"
+            + _code_block(
+                "codex-toml",
+                f'[mcp_servers.rootly]\nurl = "{url}"\nbearer_token_env_var = "ROOTLY_API_TOKEN"',
+            ),
+        ),
+        (
+            "claude-desktop",
+            "Claude Desktop",
+            "<p>Add to <code>claude_desktop_config.json</code>. Claude Desktop opens a browser"
+            " window so you can sign in.</p>"
+            + _code_block("desktop-oauth", _mcp_servers_json({"url": url}))
+            + "<details><summary>With an API token (through mcp-remote)</summary>"
+            + _code_block(
+                "desktop-token",
+                _mcp_servers_json(
+                    {
+                        "command": "npx",
+                        "args": [
+                            "-y",
+                            "mcp-remote",
+                            url,
+                            "--transport",
+                            "http",
+                            "--header",
+                            "Authorization: Bearer YOUR_ROOTLY_API_TOKEN",
+                        ],
+                    }
+                ),
+            )
+            + "</details>",
+        ),
+        (
+            "gemini",
+            "Gemini CLI",
+            "<p>Install the extension:</p>"
+            + _code_block(
+                "gemini-ext",
+                "gemini extensions install https://github.com/rootlyhq/rootly-mcp-server",
+            )
+            + "<p>Or run the server locally from <code>~/.gemini/settings.json</code> with an API key:</p>"
+            + _code_block(
+                "gemini-json",
+                _mcp_servers_json(
+                    {
+                        "command": "uvx",
+                        "args": ["--from", "rootly-mcp-server", "rootly-mcp-server"],
+                        "env": {"ROOTLY_API_TOKEN": "YOUR_ROOTLY_API_TOKEN"},
+                    }
+                ),
+            ),
+        ),
+    ]
+
+
+def _client_tabs(url: str) -> str:
+    """CSS-only tabs: a radio per client, so the page needs no script beyond copy buttons."""
+    clients = _clients(url)
+    radios = "".join(
+        f'<input type="radio" name="client" id="tab-{key}"{" checked" if i == 0 else ""}>'
+        for i, (key, _, _) in enumerate(clients)
+    )
+    labels = "".join(f'<label for="tab-{key}">{label}</label>' for key, label, _ in clients)
+    panels = "".join(
+        f'<div class="panel" id="panel-{key}">{body}</div>' for key, _, body in clients
+    )
+    rules = "".join(
+        f'#tab-{key}:checked ~ .tab-labels label[for="tab-{key}"]'
+        "{background:var(--brand);border-color:var(--brand);color:#fff}"
+        f'#tab-{key}:focus-visible ~ .tab-labels label[for="tab-{key}"]'
+        "{outline:2px solid var(--brand);outline-offset:2px}"
+        f"#tab-{key}:checked ~ .panels #panel-{key}{{display:block}}"
+        for key, _, _ in clients
+    )
+    return (
+        f'<div class="tabs"><style>{rules}</style>{radios}'
+        f'<div class="tab-labels">{labels}</div><div class="panels">{panels}</div></div>'
+    )
+
+
 def render_landing_page(base_url: str, code_mode_path: str) -> str:
     """Render the page for a server reachable at ``base_url``."""
     mcp_url = f"{base_url}/mcp"
     code_mode_url = f"{base_url}{code_mode_path}"
     # Code Mode is the endpoint docs.rootly.com recommends.
     add_command = f"claude mcp add --transport http rootly {code_mode_url}"
-    oauth_config = f'{{\n  "mcpServers": {{\n    "rootly": {{\n      "url": "{code_mode_url}"\n    }}\n  }}\n}}'
-    token_config = (
-        '{\n  "mcpServers": {\n    "rootly": {\n'
-        f'      "url": "{code_mode_url}",\n'
-        '      "headers": {\n        "Authorization": "Bearer YOUR_ROOTLY_API_TOKEN"\n      }\n'
-        "    }\n  }\n}"
-    )
     esc = html.escape
     return f"""<!doctype html>
 <html lang="en">
@@ -148,13 +294,14 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rootly MCP server</title>
 <meta name="description" content="Connect Claude, Cursor or any MCP client to Rootly.">
+<link rel="icon" type="image/svg+xml" href="{_LOGO_DATA_URI}">
 <style>{_STYLE}</style>
 </head>
 <body>
 <div class="bar"></div>
 <main>
   <div class="top">
-    <div class="wordmark">Rootly <span>MCP</span></div>
+    <div class="wordmark"><img src="{_LOGO_DATA_URI}" alt=""><div>Rootly <span>MCP</span></div></div>
     <div class="pill"><span class="dot"></span>Up and answering</div>
   </div>
 
@@ -170,21 +317,12 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
     </div>
   </div>
 
-  <h2>Connect in one line</h2>
-  <p>In Claude Code, run this. A browser window opens so you can sign in to Rootly.</p>
-  {_code_block("cmd-claude", add_command)}
-
-  <h2>Or add it to your client config</h2>
-  <p>Cursor, Claude Desktop and most other clients take this shape (Windsurf calls the key
-  <code>serverUrl</code>). Your client handles the OAuth sign-in, so you don't need an API token.</p>
-  {_code_block("cfg-oauth", oauth_config)}
-  <details>
-    <summary>Prefer an API token?</summary>
-    <p>Generate one in Rootly under <strong>Account › Manage API keys</strong> and send it as a
-    Bearer header. Prefer a global key: on-call tools such as the handoff summary need
-    organization-wide visibility.</p>
-    {_code_block("cfg-token", token_config)}
-  </details>
+  <h2>Connect your client</h2>
+  {_client_tabs(code_mode_url)}
+  <p>Clients that support OAuth open a browser window so you can sign in to Rootly; no API
+  token needed. For a token, generate one under <strong>Account › Manage API keys</strong>.
+  Prefer a global key: on-call tools such as the handoff summary need organization-wide
+  visibility.</p>
 
   <h2>Endpoints</h2>
   <div class="card">
