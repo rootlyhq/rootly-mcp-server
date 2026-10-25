@@ -29,6 +29,7 @@ from . import (
     transport,
 )
 from .exceptions import RootlyAuthenticationError
+from .landing_page import landing_page
 from .mcp_error import MCPError
 from .security import mask_sensitive_data, sanitize_error_message
 from .telemetry_scrubber import RETIRED_INJECTED_PARAMS
@@ -1119,6 +1120,10 @@ def create_rootly_mcp_server(
         # Returns the exact token as text/plain, or 404 when unset/empty. This
         # path is not an MCP transport path, so the hosted auth middleware lets it
         # through without a Bearer token.
+        # A browser opening the server URL gets setup instructions instead of a
+        # 404. Not an MCP transport path, so hosted auth lets it through.
+        mcp.custom_route("/", methods=["GET"])(landing_page)
+
         @mcp.custom_route("/.well-known/openai-apps-challenge", methods=["GET"])
         async def openai_apps_challenge(request):
             token = os.getenv("ROOTLY_OPENAI_APPS_CHALLENGE_TOKEN", "").strip()
