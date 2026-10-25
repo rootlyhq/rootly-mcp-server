@@ -8,9 +8,14 @@ UV             := uv run --python $(PYTHON_VERSION)
 
 IMAGE := rootly-mcp-server
 
+# Validators for the hosted setup page served at GET /.
+HTML_VALIDATE := html-validate@11.16.2
+VNU_IMAGE     := ghcr.io/validator/validator@sha256:8f21030474e68e06905cfa801b37376e99c0e37867c653c5b6cd7e2dcaf3f503
+LANDING_DIR   := build/landing
+
 .PHONY: help install build run \
         test test-unit test-integration \
-        lint format format-check typecheck security \
+        lint lint-html format format-check typecheck security \
         fetch-spec audit-spec \
         docker-build docker-test \
         check ci hooks clean
@@ -41,6 +46,16 @@ test-integration: ## Run local integration tests (needs ROOTLY_API_TOKEN)
 # --- quality ---
 lint: ## Lint with ruff
 	$(UV) ruff check .
+
+lint-html: ## Validate the hosted setup page (html-validate; W3C Nu checker too when Docker is available)
+	@mkdir -p $(LANDING_DIR)
+	$(UV) python -c "from rootly_mcp_server.landing_page import render_landing_page; \
+		open('$(LANDING_DIR)/index.html', 'w').write(render_landing_page('https://mcp.rootly.com', '/mcp-codemode'))"
+	npx --yes $(HTML_VALIDATE) --config .htmlvalidate.json $(LANDING_DIR)/index.html
+	@if command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v "$(CURDIR)/$(LANDING_DIR):/data:ro" $(VNU_IMAGE) \
+			vnu --also-check-css --Werror /data/index.html && echo "W3C Nu checker: no messages"; \
+	else echo "docker not found; skipped the W3C Nu checker"; fi
 
 format: ## Auto-format with ruff
 	$(UV) ruff format .

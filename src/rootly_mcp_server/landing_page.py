@@ -148,6 +148,9 @@ details summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
 .tab-labels label:hover { border-color: var(--brand); }
 .panel { display: none; }
 .panel .code { margin-bottom: 10px; }
+a.install { display: inline-block; padding: 8px 16px; border-radius: 8px; background: var(--text); color: var(--bg);
+  font-weight: 600; text-decoration: none; }
+a.install:hover { opacity: .85; }
 footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 15px; }
 footer nav { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; }
 @media (max-width: 560px) { h1 { font-size: 34px; } main { padding-top: 32px; } }
@@ -167,8 +170,31 @@ def _mcp_servers_json(entry: dict) -> str:
     return json.dumps({"mcpServers": {"rootly": entry}}, indent=2)
 
 
+def _token_details(block_id: str, intro: str, text: str) -> str:
+    """An API-token alternative, collapsed: OAuth is the first choice everywhere."""
+    return (
+        f"<details><summary>With an API token instead</summary><p>{intro}</p>"
+        + _code_block(block_id, text)
+        + "</details>"
+    )
+
+
+def _cursor_install_link(url: str) -> str:
+    """Cursor's MCP install deeplink: name plus the base64 of the mcp.json entry."""
+    config = base64.b64encode(json.dumps({"url": url}).encode()).decode()
+    return (
+        "cursor://anysphere.cursor-deeplink/mcp/install"
+        f"?name=rootly&config={quote(config, safe='')}"
+    )
+
+
 def _clients(url: str) -> list[tuple[str, str, str]]:
-    """(key, tab label, panel HTML) per client, following docs.rootly.com's setup steps."""
+    """(key, tab label, panel HTML) per client: OAuth first, an API token as the fallback.
+
+    Commands follow each client's own docs: Claude Code, Codex and Gemini CLI
+    register a remote server from the CLI and sign in over OAuth; Cursor takes
+    an install link; Claude Desktop adds remote servers as custom connectors.
+    """
     token_header = {"Authorization": "Bearer YOUR_ROOTLY_API_TOKEN"}
     return [
         (
@@ -176,45 +202,56 @@ def _clients(url: str) -> list[tuple[str, str, str]]:
             "Claude Code",
             "<p>Run this. A browser window opens so you can sign in to Rootly.</p>"
             + _code_block("claude-code-oauth", f"claude mcp add --transport http rootly {url}")
-            + "<p>Or commit a <code>.mcp.json</code> to your project root:</p>"
+            + "<p>Or share it with your team by committing a <code>.mcp.json</code> to the"
+            " project root:</p>"
             + _code_block("claude-code-json", _mcp_servers_json({"type": "http", "url": url}))
-            + "<details><summary>With an API token</summary>"
-            + _code_block(
+            + _token_details(
                 "claude-code-token",
+                "Pass the key as a header:",
                 f"claude mcp add --transport http rootly {url} \\\n"
                 '  --header "Authorization: Bearer YOUR_ROOTLY_API_TOKEN"',
-            )
-            + "</details>",
+            ),
         ),
         (
             "cursor",
             "Cursor",
-            "<p>Add to <code>.cursor/mcp.json</code> in your project, or <code>~/.cursor/mcp.json</code>"
-            " for every project.</p>"
+            f'<p><a class="install" href="{html.escape(_cursor_install_link(url))}">Add to Cursor</a></p>'
+            "<p>Cursor asks you to confirm, then opens a browser window so you can sign in."
+            " Or add it to <code>.cursor/mcp.json</code> in your project (or"
+            " <code>~/.cursor/mcp.json</code> for every project):</p>"
             + _code_block("cursor-oauth", _mcp_servers_json({"url": url}))
-            + "<details><summary>With an API token</summary>"
-            + _code_block("cursor-token", _mcp_servers_json({"url": url, "headers": token_header}))
-            + "</details>",
+            + _token_details(
+                "cursor-token",
+                "Add the key as a header:",
+                _mcp_servers_json({"url": url, "headers": token_header}),
+            ),
         ),
         (
             "codex",
             "Codex",
-            "<p>Add to <code>~/.codex/config.toml</code>, then export your API key as"
-            " <code>ROOTLY_API_TOKEN</code>.</p>"
+            "<p>Register the server, then sign in. <code>login</code> opens a browser window.</p>"
             + _code_block(
-                "codex-toml",
+                "codex-oauth",
+                f"codex mcp add rootly --url {url}\ncodex mcp login rootly",
+            )
+            + _token_details(
+                "codex-token",
+                "Add this to <code>~/.codex/config.toml</code> and export the key as"
+                " <code>ROOTLY_API_TOKEN</code>:",
                 f'[mcp_servers.rootly]\nurl = "{url}"\nbearer_token_env_var = "ROOTLY_API_TOKEN"',
             ),
         ),
         (
             "claude-desktop",
             "Claude Desktop",
-            "<p>Add to <code>claude_desktop_config.json</code>. Claude Desktop opens a browser"
-            " window so you can sign in.</p>"
-            + _code_block("desktop-oauth", _mcp_servers_json({"url": url}))
-            + "<details><summary>With an API token (through mcp-remote)</summary>"
-            + _code_block(
+            "<p>Open <strong>Customize › Connectors</strong>, click <strong>+ Add</strong>, then"
+            " <strong>Add custom connector</strong>. Name it Rootly, paste this URL and choose"
+            " <strong>Sign in now</strong>. On Team and Enterprise plans an owner adds it under"
+            " Organization settings first.</p>"
+            + _code_block("desktop-url", url)
+            + _token_details(
                 "desktop-token",
+                "Run it through <code>mcp-remote</code> from <code>claude_desktop_config.json</code>:",
                 _mcp_servers_json(
                     {
                         "command": "npx",
@@ -229,35 +266,29 @@ def _clients(url: str) -> list[tuple[str, str, str]]:
                         ],
                     }
                 ),
-            )
-            + "</details>",
+            ),
         ),
         (
             "gemini",
             "Gemini CLI",
-            "<p>Install the extension:</p>"
-            + _code_block(
-                "gemini-ext",
+            "<p>Register the server:</p>"
+            + _code_block("gemini-oauth", f"gemini mcp add --transport http rootly {url}")
+            + "<p>Then, inside Gemini CLI, sign in. A browser window opens.</p>"
+            + _code_block("gemini-auth", "/mcp auth rootly")
+            + _token_details(
+                "gemini-token",
+                "Install the Rootly extension, which runs the server locally and asks for your key:",
                 "gemini extensions install https://github.com/rootlyhq/rootly-mcp-server",
-            )
-            + "<p>Or run the server locally from <code>~/.gemini/settings.json</code> with an API key:</p>"
-            + _code_block(
-                "gemini-json",
-                _mcp_servers_json(
-                    {
-                        "command": "uvx",
-                        "args": ["--from", "rootly-mcp-server", "rootly-mcp-server"],
-                        "env": {"ROOTLY_API_TOKEN": "YOUR_ROOTLY_API_TOKEN"},
-                    }
-                ),
             ),
         ),
     ]
 
 
-def _client_tabs(url: str) -> str:
-    """CSS-only tabs: a radio per client, so the page needs no script beyond copy buttons."""
-    clients = _clients(url)
+def _client_tabs(clients: list[tuple[str, str, str]]) -> tuple[str, str]:
+    """CSS-only tabs: a radio per client, so the page needs no script beyond copy buttons.
+
+    Returns the markup and the per-tab CSS rules, which belong in <head>.
+    """
     radios = "".join(
         f'<input type="radio" name="client" id="tab-{key}"{" checked" if i == 0 else ""}>'
         for i, (key, _, _) in enumerate(clients)
@@ -274,10 +305,11 @@ def _client_tabs(url: str) -> str:
         f"#tab-{key}:checked ~ .panels #panel-{key}{{display:block}}"
         for key, _, _ in clients
     )
-    return (
-        f'<div class="tabs"><style>{rules}</style>{radios}'
+    markup = (
+        f'<div class="tabs">{radios}'
         f'<div class="tab-labels">{labels}</div><div class="panels">{panels}</div></div>'
     )
+    return markup, rules
 
 
 def render_landing_page(base_url: str, code_mode_path: str) -> str:
@@ -286,8 +318,9 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
     code_mode_url = f"{base_url}{code_mode_path}"
     # Code Mode is the endpoint docs.rootly.com recommends.
     add_command = f"claude mcp add --transport http rootly {code_mode_url}"
+    tabs, tab_rules = _client_tabs(_clients(code_mode_url))
     esc = html.escape
-    return f"""<!doctype html>
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -295,7 +328,7 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
 <title>Rootly MCP server</title>
 <meta name="description" content="Connect Claude, Cursor or any MCP client to Rootly.">
 <link rel="icon" type="image/svg+xml" href="{_LOGO_DATA_URI}">
-<style>{_STYLE}</style>
+<style>{_STYLE}{tab_rules}</style>
 </head>
 <body>
 <div class="bar"></div>
@@ -310,7 +343,7 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
   Protocol (MCP) client at it to search incidents, check who's on-call, find similar past
   incidents and act on them without leaving your editor.</p>
 
-  <div class="terminal" aria-label="Example command">
+  <div class="terminal" aria-hidden="true">
     <div class="terminal-head"><i></i><i></i><i></i></div>
     <div class="terminal-body">
       <span class="muted">$ </span><span class="typed" style="--chars: {len(add_command)}">{esc(add_command)}</span>
@@ -318,11 +351,10 @@ def render_landing_page(base_url: str, code_mode_path: str) -> str:
   </div>
 
   <h2>Connect your client</h2>
-  {_client_tabs(code_mode_url)}
-  <p>Clients that support OAuth open a browser window so you can sign in to Rootly; no API
-  token needed. For a token, generate one under <strong>Account › Manage API keys</strong>.
-  Prefer a global key: on-call tools such as the handoff summary need organization-wide
-  visibility.</p>
+  {tabs}
+  <p>Each option signs you in with OAuth, so there's no key to store or rotate. If you use an
+  API token instead, generate it under <strong>Account › Manage API keys</strong> and prefer a
+  global key: on-call tools such as the handoff summary need organization-wide visibility.</p>
 
   <h2>Endpoints</h2>
   <div class="card">

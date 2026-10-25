@@ -180,6 +180,29 @@ jobs:
         if: always()
         run: docker stop rootly-mcp-server && docker rm rootly-mcp-server
 
+  landing-page:
+    name: Landing page HTML
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      # Renders the page served at GET / and checks it with html-validate
+      # (spec, best practices, accessibility) and the W3C Nu checker.
+      - name: Validate the setup page
+        run: make lint-html UV="uv run"
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
+import json
 import re
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import httpx2 as httpx
 import pytest
@@ -134,3 +137,33 @@ def test_every_documented_client_has_a_tab():
     assert len(ids) == len(set(ids))
     assert sorted(re.findall(r'data-copy="([^"]+)"', page)) == sorted(ids)
     assert "url = &quot;https://mcp.example.com/mcp-codemode&quot;" in page
+
+
+def test_oauth_comes_first_and_tokens_are_collapsed():
+    page = render_landing_page("https://mcp.example.com", "/mcp-codemode")
+    url = "https://mcp.example.com/mcp-codemode"
+
+    assert f"codex mcp add rootly --url {url}\ncodex mcp login rootly" in page
+    assert f"gemini mcp add --transport http rootly {url}" in page
+    assert "/mcp auth rootly" in page
+    assert "Add custom connector" in page
+    # Every token variant sits after its OAuth steps, inside a collapsed section.
+    panels = page.split('<div class="panel" id="panel-')[1:]
+    assert len(panels) == 5
+    for panel in panels:
+        oauth_steps, token_section = panel.split("<details><summary>With an API token instead", 1)
+        assert "<pre" in oauth_steps
+        assert "Bearer" not in oauth_steps and "ROOTLY_API_TOKEN" not in oauth_steps
+        assert "<pre" in token_section
+
+
+def test_cursor_install_link_carries_the_code_mode_url():
+    page = render_landing_page("https://mcp.example.com", "/mcp-codemode")
+
+    link = re.search(r'href="(cursor://anysphere\.cursor-deeplink/mcp/install\?[^"]+)"', page)
+    assert link
+    query = parse_qs(urlparse(html.unescape(link.group(1))).query)
+    assert query["name"] == ["rootly"]
+    assert json.loads(base64.b64decode(query["config"][0])) == {
+        "url": "https://mcp.example.com/mcp-codemode"
+    }
