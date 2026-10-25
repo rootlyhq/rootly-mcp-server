@@ -83,6 +83,9 @@ _MAX_TOOL_SUGGESTIONS = 3
 _UNDEFINED_NAME = re.compile(r"name '([^']+)' is not defined")
 _CALL_TOOL_FAILURE = re.compile(r"call_tool\('[^']*'\) failed: ")
 _INTROSPECTION_BUILTINS = frozenset({"dir", "globals", "locals", "vars"})
+# JSON / JavaScript literals scripts write in place of Python's.
+_FOREIGN_LITERALS = {"true": "True", "false": "False", "null": "None", "undefined": "None"}
+_DISPLAY_LINE_NUMBER = re.compile(r'^\s*File "[^"]*", line (\d+)')
 # Monty reports a clock read as "RuntimeError: 'datetime.now' is not supported
 # in this environment"; older releases said "OS function 'datetime.now' not
 # implemented".
@@ -345,6 +348,40 @@ def _undefined_name_message(missing: str, tools: Sequence[Tool]) -> str | None:
     )
 
 
+def _syntax_error_message(exc: Exception, message: str) -> str:
+    """Point a Monty syntax error at its line; the bare message names no location.
+
+    ``MontySyntaxError.display()`` renders a CPython-style traceback whose last
+    frame carries the line number, the offending source line and a caret.
+    """
+    try:
+        display_lines = str(exc.display()).splitlines()  # type: ignore[attr-defined]
+    except Exception:
+        display_lines = []
+    line_number = None
+    source: list[str] = []
+    for line in display_lines:
+        found = _DISPLAY_LINE_NUMBER.match(line)
+        if found:
+            line_number, source = found.group(1), []
+        elif line_number is not None and not line.startswith(("SyntaxError", "Traceback")):
+            source.append(line)
+    if "line continuation character" in message:
+        # A script sent with escaped newlines arrives as one line full of "\n".
+        hint = (
+            "The code contains a literal backslash-n (\\n) where a line break belongs; "
+            "send real newlines in `code`."
+        )
+    else:
+        hint = (
+            "Code Mode runs a Python subset: write Python, not JavaScript or JSON, "
+            "with one statement per line."
+        )
+    location = f" on line {line_number}" if line_number else ""
+    parts = [f"SyntaxError{location}: {message}", *source, hint]
+    return "\n".join(parts)
+
+
 def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str | None:
     """Return a friendlier execute error message for known sandbox failures.
 
@@ -360,9 +397,17 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
     if _CALL_TOOL_FAILURE.search(message):
         return None
 
+    if type(exc).__name__ == "MontySyntaxError":
+        return _syntax_error_message(exc, message)
+
     undefined = _UNDEFINED_NAME.search(message)
     if undefined and (isinstance(exc, NameError) or "NameError" in message):
         missing = undefined.group(1)
+        if missing in _FOREIGN_LITERALS:
+            return (
+                f"{message}. Code Mode runs Python: write {_FOREIGN_LITERALS[missing]}, "
+                f"not the JSON/JavaScript literal {missing}."
+            )
         if missing in _INTROSPECTION_BUILTINS:
             return (
                 f"{message}. Introspection builtins (dir, globals, locals, vars) are not "

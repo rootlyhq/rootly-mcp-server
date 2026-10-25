@@ -367,6 +367,13 @@ async def test_call_shape_values_stay_data_in_the_sandbox():
         ("r = 'text'\nreturn r['data']", "no 'result' wrapper"),
         ("r = {'data': []}\nreturn r.result", "no 'result' wrapper"),
         ("r = None\nreturn r['data']", "no 'result' wrapper"),
+        # Syntax errors name their line and show it (ROOTLY-MCP-2GJ).
+        ("a = 1\nb = 2 c = 3\nreturn a", "SyntaxError on line 2"),
+        ("a = 1\nb = 2 c = 3\nreturn a", "    b = 2 c = 3"),
+        ("const x = 1;\nreturn x", "not JavaScript or JSON"),
+        ("a = 1\\nreturn a", "literal backslash-n"),
+        ("return {'ok': true}", "write True, not the JSON/JavaScript literal true"),
+        ("return [null]", "write None"),
     ],
 )
 async def test_sandbox_errors_carry_an_actionable_hint(client: Client, code: str, expected: str):

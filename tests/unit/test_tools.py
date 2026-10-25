@@ -1025,13 +1025,77 @@ class TestStructuredListIncidentsTool:
         name_response.raise_for_status.return_value = None
         name_response.json.return_value = {"data": []}
 
-        request.side_effect = [slug_response, name_response]
+        search_response = Mock()
+        search_response.raise_for_status.return_value = None
+        search_response.json.return_value = {"data": []}
+
+        request.side_effect = [slug_response, name_response, search_response]
 
         result = await tools["list_incidents"](teams="Infrastructure")
 
         assert result["error"] is True
         assert result["error_type"] == "validation_error"
         assert "Could not resolve team names/slugs" in result["message"]
+        assert "No team name matches 'Infrastructure'." in result["message"]
+        assert "list_teams" in result["message"]
+
+    @staticmethod
+    def _teams_response(*teams: tuple[str, str, str]) -> Mock:
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [
+                {"id": team_id, "type": "teams", "attributes": {"name": name, "slug": slug}}
+                for team_id, name, slug in teams
+            ]
+        }
+        return response
+
+    @pytest.mark.asyncio
+    async def test_list_incidents_matches_team_ignoring_separators(self):
+        """'storage-access-platform' names the team 'Storage Access Platform'."""
+        tools, request = self._register_tools()
+        incidents_response = Mock()
+        incidents_response.raise_for_status.return_value = None
+        incidents_response.json.return_value = {"data": [], "meta": {"total_pages": 1}}
+        request.side_effect = [
+            self._teams_response(),
+            self._teams_response(),
+            self._teams_response(("team-9", "Storage Access Platform", "sap")),
+            incidents_response,
+        ]
+
+        result = await tools["list_incidents"](teams="storage-access-platform")
+
+        assert request.await_args_list[2] == call(
+            "GET",
+            "/v1/teams",
+            params={
+                "page[size]": 10,
+                "page[number]": 1,
+                "filter[search]": "storage access platform",
+            },
+        )
+        assert result["filters"]["resolved_team_ids"] == "team-9"
+
+    @pytest.mark.asyncio
+    async def test_unresolved_team_error_offers_the_closest_teams(self):
+        tools, request = self._register_tools()
+        request.side_effect = [
+            self._teams_response(),
+            self._teams_response(),
+            self._teams_response(
+                ("team-1", "Web Platform", "web-platform"), ("team-2", "Webhooks", "webhooks")
+            ),
+        ]
+
+        result = await tools["list_incidents"](teams="web")
+
+        assert result["error_type"] == "validation_error"
+        assert (
+            "Closest teams to 'web': 'Web Platform' (slug 'web-platform'), "
+            "'Webhooks' (slug 'webhooks')." in result["message"]
+        )
 
 
 @pytest.mark.unit

@@ -25,7 +25,11 @@ from rootly_mcp_server.server import (
     _provider_tool_inventory,
     create_rootly_mcp_server,
 )
-from rootly_mcp_server.tool_arguments import normalize_tool_arguments, validation_aliases
+from rootly_mcp_server.tool_arguments import (
+    normalize_tool_arguments,
+    unknown_arguments_message,
+    validation_aliases,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -730,3 +734,13 @@ async def test_code_mode_call_tool_gets_the_same_rewrites(monkeypatch):
     params = _incident_params(requests)
     assert params["filter[status]"] == "resolved"
     assert params["filter[started_at][gte]"] == _TS1
+
+
+def test_search_incidents_rejection_points_at_the_filtering_tools():
+    """ROOTLY-MCP-2M1 / 2KC: filters sent to the free-text search tool."""
+    message = unknown_arguments_message(
+        "search_incidents", {"properties": {"query": {}}}, {"status": "", "started_after": ""}
+    )
+
+    assert message.startswith("search_incidents does not accept 'status', 'started_after'.")
+    assert "use list_incidents (one page) or collect_incidents (many pages)" in message

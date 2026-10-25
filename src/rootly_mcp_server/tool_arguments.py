@@ -112,6 +112,15 @@ _NO_EQUIVALENT_HINTS: dict[str, str] = {
     "include": "related records cannot be side-loaded; the response shape is fixed",
 }
 
+# Tools whose rejected arguments belong to a sibling tool, named in the error.
+_SIBLING_TOOL_HINTS: dict[str, str] = {
+    "search_incidents": (
+        " search_incidents only runs free-text lookups; use list_incidents (one page) "
+        "or collect_incidents (many pages) to filter by teams, status, severity or "
+        "started_after/started_before."
+    ),
+}
+
 # Fuzzy did-you-mean threshold. difflib's default (0.6) pairs short unrelated
 # names such as types/teams; real typos score well above 0.7.
 _SUGGESTION_CUTOFF = 0.7
@@ -411,6 +420,7 @@ def unknown_arguments_message(
         and "-created_at" in (sort.get("enum") or [])
     ):
         message += " To find recently created records, pass sort='-created_at'."
+    message += _SIBLING_TOOL_HINTS.get(tool_name, "")
     line = valid_parameters_line(tool_name, schema)
     return f"{message}\n{line}" if line else message
 
