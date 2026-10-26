@@ -646,21 +646,11 @@ def _openapi_path_arguments(tool: Any) -> tuple[str, str, list[str]] | None:
     return str(getattr(route, "method", "GET")).upper(), path, names
 
 
-# What a model sends for "no value" once it has stringified null, None or
-# undefined. As a path segment each one 404s (`GET /v1/users/null`) instead of
-# naming the argument to fill. Lowercase "none" stays valid: a slug can be that.
-_PLACEHOLDER_ARGUMENTS = frozenset({"null", "None", "undefined"})
-
-
-def _is_placeholder_argument(value: Any) -> bool:
-    return isinstance(value, str) and value.strip() in _PLACEHOLDER_ARGUMENTS
-
-
 def _is_blank_argument(value: Any) -> bool:
     return (
         value is None
         or (isinstance(value, str) and not value.strip())
-        or _is_placeholder_argument(value)
+        or tool_arguments.is_placeholder_argument(value)
     )
 
 
@@ -683,6 +673,8 @@ def _resource_id_alias(path: str, path_arg: str, args: Mapping[str, Any]) -> str
     resource the URL does, so it can only mean ``id``. The segment before the
     placeholder must name the resource: ``get_incident_action_items(incident_id=...)``
     against ``/v1/action_items/{id}`` confuses two resources and is not mapped.
+    A compound resource also answers to its last word: ``path_id`` on
+    ``/v1/escalation_paths/{escalation_policy_path_id}/...``.
     """
     segments = path.strip("/").split("/")
     placeholder = "{" + path_arg + "}"
@@ -691,9 +683,46 @@ def _resource_id_alias(path: str, path_arg: str, args: Mapping[str, Any]) -> str
     index = segments.index(placeholder)
     if index == 0 or segments[index - 1].startswith("{"):
         return None
-    candidates = [f"{form}_id" for form in _singular_forms(segments[index - 1].replace("-", "_"))]
+    resource = segments[index - 1].replace("-", "_")
+    nouns = {resource, resource.rsplit("_", 1)[-1]}
+    candidates = sorted({f"{form}_id" for noun in nouns for form in _singular_forms(noun)})
     present = [name for name in candidates if not _is_blank_argument(args.get(name))]
     return present[0] if len(present) == 1 else None
+
+
+async def _sibling_tool_hint(
+    server: FastMCP, tool_name: str, method: str, path: str, args: Mapping[str, Any]
+) -> str:
+    """Names the tool that reaches the same collection through the caller's arguments.
+
+    ``list_escalation_levels_paths(escalation_policy_id=...)`` meant
+    ``list_escalation_levels``: both list ``escalation_levels``, one under a
+    path and one under a policy. Only an exposed tool whose path arguments the
+    caller supplied in full is named, so the hint is always a call that works.
+    """
+    collection = path.rstrip("/").rsplit("/", 1)[-1]
+    if collection.startswith("{"):
+        return ""
+    try:
+        tools = await server.list_tools(run_middleware=False)
+    except Exception:
+        return ""
+    for other in tools:
+        info = _openapi_path_arguments(other) if other.name != tool_name else None
+        if info is None:
+            continue
+        other_method, other_path, other_args = info
+        if (
+            other_method == method
+            and other_path.rstrip("/").rsplit("/", 1)[-1] == collection
+            and all(not _is_blank_argument(args.get(name)) for name in other_args)
+        ):
+            takes = ", ".join(f"'{name}'" for name in other_args)
+            return (
+                f" To reach {collection} by {takes}, call {other.name} "
+                f"({other_method} {other_path}) instead."
+            )
+    return ""
 
 
 class PathArgumentValidationMiddleware(fastmcp_middleware.Middleware):
@@ -755,10 +784,11 @@ class PathArgumentValidationMiddleware(fastmcp_middleware.Middleware):
         unrecognized = sorted(name for name in args if name not in declared)
         missing_list = ", ".join(f"'{name}'" for name in missing)
         plural = len(missing) > 1
-        placeholders = [name for name in missing if _is_placeholder_argument(args.get(name))]
+        placeholders = [
+            name for name in missing if tool_arguments.is_placeholder_argument(args.get(name))
+        ]
         if placeholders:
-            received = ", ".join(f"{name}={args[name]!r}" for name in placeholders)
-            reason = f"got {received} -- a placeholder, not an ID"
+            reason = f"got {tool_arguments.describe_received(placeholders, args)} -- a placeholder, not an ID"
         else:
             reason = f"{'they were' if plural else 'it was'} not provided"
         message = (
@@ -769,6 +799,9 @@ class PathArgumentValidationMiddleware(fastmcp_middleware.Middleware):
             message += (
                 f" This tool does not accept {', '.join(repr(name) for name in unrecognized)}"
                 f" -- {'those arguments were' if len(unrecognized) > 1 else 'it was'} ignored."
+            )
+            message += await _sibling_tool_hint(
+                context.fastmcp_context.fastmcp, tool_name, method, path, args
             )
         example = ", ".join(f'"{name}": "<value>"' for name in missing)
         message += f" Retry with {{{example}}}."
@@ -887,7 +920,10 @@ class ToolArgumentAliasMiddleware(fastmcp_middleware.Middleware):
     Before validation this rewrites the unambiguous shapes against the tool's
     own input schema (see ``tool_arguments.normalize_tool_arguments``) and, if
     anything is still undeclared, raises a ToolError that names each argument,
-    a did-you-mean where one exists, and the valid parameters.
+    a did-you-mean where one exists, and the valid parameters. A ``null`` on a
+    parameter that cannot take one means "unset" and is dropped; on a required
+    parameter, or a placeholder string there, it is named in the error instead
+    of pydantic's "Input should be a valid string".
 
     Autogen OpenAPI tools are left alone: their arguments are API-shaped by
     design and PathArgumentValidationMiddleware owns their errors. When
@@ -937,6 +973,21 @@ class ToolArgumentAliasMiddleware(fastmcp_middleware.Middleware):
         schema = getattr(tool, "parameters", None)
         if not isinstance(schema, dict) or schema.get("additionalProperties", True) is not False:
             return await call_next(context)
+
+        args, dropped, empty_required = tool_arguments.split_null_arguments(args, schema)
+        if empty_required:
+            plural = len(empty_required) > 1
+            listed = ", ".join(f"'{name}'" for name in empty_required)
+            example = ", ".join(f'"{name}": "<value>"' for name in empty_required)
+            raise ToolError(
+                f"{tool_name} requires the argument{'s' if plural else ''} {listed}, but got "
+                f"{tool_arguments.describe_received(empty_required, args)} -- a placeholder, "
+                f"not a value. Retry with {{{example}}}."
+            )
+        if dropped:
+            bucket = _tool_argument_rewrites.get()
+            if bucket is not None:
+                bucket.extend(f"{name}:null->omitted" for name in dropped)
 
         normalized = tool_arguments.normalize_tool_arguments(
             args, schema, self._accepted_aliases(tool), tool_name

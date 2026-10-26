@@ -179,6 +179,17 @@ class TestPathArgumentDotSegments:
         ("get_schedule", {"schedule_id": "s-1"}, "/v1/schedules/s-1"),
         ("get_service", {"service_id": "svc-1"}, "/v1/services/svc-1"),
         ("get_user", {"user_id": 42}, "/v1/users/42"),
+        # ROOTLY-MCP-2MX (2026-10-26): a compound resource's last word names it too.
+        (
+            "list_escalation_levels_paths",
+            {"escalation_policy_id": "pol-1", "path_id": "p-1"},
+            "/v1/escalation_paths/p-1/escalation_levels",
+        ),
+        (
+            "list_escalation_levels_paths",
+            {"escalation_path_id": "p-1"},
+            "/v1/escalation_paths/p-1/escalation_levels",
+        ),
     ],
 )
 async def test_resource_named_id_fills_the_path(server, sent_requests, tool_name, arguments, path):
@@ -199,6 +210,34 @@ async def test_other_resources_id_is_still_rejected(server, sent_requests):
     text = _error_text(result)
     assert "get_incident_action_items requires the path argument 'id'" in text
     assert "does not accept 'incident_id'" in text
+    assert sent_requests == []
+
+
+async def test_sibling_tool_on_the_same_collection_is_named(server, sent_requests):
+    # ROOTLY-MCP-2NE: escalation levels under a policy, asked of the path tool.
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "list_escalation_levels_paths", {"escalation_policy_id": "pol-1"}, raise_on_error=False
+        )
+
+    text = _error_text(result)
+    assert "requires the path argument 'escalation_policy_path_id'" in text
+    assert (
+        "To reach escalation_levels by 'escalation_policy_id', call list_escalation_levels "
+        "(GET /v1/escalation_policies/{escalation_policy_id}/escalation_levels) instead."
+    ) in text
+    assert sent_requests == []
+
+
+async def test_no_sibling_is_named_without_its_arguments(server, sent_requests):
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "list_escalation_levels_paths", {"id": "x"}, raise_on_error=False
+        )
+
+    text = _error_text(result)
+    assert "does not accept 'id'" in text
+    assert "call list_escalation_levels" not in text
     assert sent_requests == []
 
 

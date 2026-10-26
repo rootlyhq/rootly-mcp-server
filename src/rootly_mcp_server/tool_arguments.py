@@ -183,6 +183,60 @@ def _properties(schema: Mapping[str, Any] | None) -> dict[str, Any]:
     return properties if isinstance(properties, dict) else {}
 
 
+# What a model sends for "no value" once it has stringified null, None or
+# undefined. As an ID each one fails far from the cause (`GET /v1/users/null`
+# 404s) instead of naming the argument to fill. Lowercase "none" stays valid: a
+# slug can be that.
+PLACEHOLDER_ARGUMENTS = frozenset({"null", "None", "undefined"})
+
+
+def is_placeholder_argument(value: Any) -> bool:
+    return isinstance(value, str) and value.strip() in PLACEHOLDER_ARGUMENTS
+
+
+def _accepts_null(property_schema: Any) -> bool:
+    if not isinstance(property_schema, dict):
+        return False
+    declared = property_schema.get("type")
+    if declared == "null" or (isinstance(declared, list) and "null" in declared):
+        return True
+    return any(_accepts_null(option) for option in property_schema.get("anyOf") or [])
+
+
+def split_null_arguments(
+    arguments: Mapping[str, Any], schema: Mapping[str, Any] | None
+) -> tuple[dict[str, Any], list[str], list[str]]:
+    """(arguments with unset nulls removed, names removed, required names left empty).
+
+    Models send ``null`` for parameters they mean to leave unset, and pydantic
+    rejects it on every non-nullable one -- twelve errors at once on
+    ``collect_incidents``. An optional parameter, or one the tool does not
+    declare, is dropped, which is what the caller meant. A required one cannot
+    be, so it is reported along with required ones set to a placeholder string.
+    """
+    properties = _properties(schema)
+    required = set((schema or {}).get("required") or [])
+    kept: dict[str, Any] = {}
+    dropped: list[str] = []
+    empty_required: list[str] = []
+    for name, value in arguments.items():
+        if name in required and (value is None or is_placeholder_argument(value)):
+            empty_required.append(name)
+        elif value is None and not _accepts_null(properties.get(name)):
+            dropped.append(name)
+            continue
+        kept[name] = value
+    return kept, dropped, empty_required
+
+
+def describe_received(names: Sequence[str], arguments: Mapping[str, Any]) -> str:
+    """``incident_id=null, id='None'`` -- the empty values the caller sent, as JSON-ish."""
+    return ", ".join(
+        f"{name}=null" if arguments.get(name) is None else f"{name}={arguments[name]!r}"
+        for name in names
+    )
+
+
 def suggest_parameter(name: str, properties: Sequence[str]) -> str | None:
     """Return the real parameter a mistyped ``name`` most likely meant."""
     synonyms = PARAMETER_SYNONYMS.get(name)

@@ -27,6 +27,7 @@ from rootly_mcp_server.server import (
 )
 from rootly_mcp_server.tool_arguments import (
     normalize_tool_arguments,
+    split_null_arguments,
     unknown_arguments_message,
     validation_aliases,
 )
@@ -744,3 +745,62 @@ def test_search_incidents_rejection_points_at_the_filtering_tools():
 
     assert message.startswith("search_incidents does not accept 'status', 'started_after'.")
     assert "use list_incidents (one page) or collect_incidents (many pages)" in message
+
+
+# ---------------------------------------------------------------------------
+# JSON null and placeholder arguments (Sentry, 2026-10-26)
+# ---------------------------------------------------------------------------
+
+
+async def test_nulls_on_optional_parameters_mean_unset(server, sent):
+    # collect_incidents failed with "12 validation errors" when every optional
+    # parameter came as null; list_incidents with an undeclared start_time=null.
+    collect = await _call(
+        server, "collect_incidents", {"query": None, "status": None, "max_results": None}
+    )
+    listed = await _call(
+        server, "list_incidents", {"status": "resolved", "start_time": None, "sort": None}
+    )
+
+    assert not collect.is_error, _text(collect)
+    assert not listed.is_error, _text(listed)
+    params = _incident_params(sent)
+    assert params["filter[status]"] == "resolved"
+    assert params["sort"] == "-created_at"
+
+
+@pytest.mark.parametrize("value", [None, "null", "undefined", "None"])
+async def test_empty_required_argument_is_named(server, sent, value):
+    # list_incident_roles(incident_id=null) got pydantic's
+    # "Input should be a valid string" 13 times in a week.
+    result = await _call(server, "list_incident_roles", {"incident_id": value})
+
+    text = _text(result)
+    assert result.is_error
+    received = "incident_id=null" if value is None else f"incident_id={value!r}"
+    assert (
+        f"list_incident_roles requires the argument 'incident_id', but got {received} "
+        "-- a placeholder, not a value."
+    ) in text
+    assert 'Retry with {"incident_id": "<value>"}' in text
+    assert "valid string" not in text
+    assert not sent
+
+
+def test_nullable_parameters_keep_their_null():
+    schema = {
+        "properties": {
+            "a": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "b": {"type": ["integer", "null"]},
+            "c": {"type": "string"},
+        },
+        "required": [],
+    }
+
+    kept, dropped, empty_required = split_null_arguments(
+        {"a": None, "b": None, "c": None, "d": None}, schema
+    )
+
+    assert kept == {"a": None, "b": None}
+    assert dropped == ["c", "d"]
+    assert empty_required == []
