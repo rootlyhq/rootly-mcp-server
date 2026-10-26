@@ -6,7 +6,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from html import unescape
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, cast, get_args
 
 from mcp.types import ToolAnnotations
 from pydantic import AliasChoices, Field
@@ -179,6 +179,26 @@ INCIDENT_LIST_FIELDS = (
     "started_at,resolved_at,retrospective_progress_status"
 )
 INCIDENT_REFERENCE_FIELDS = "id,sequential_id"
+# Every sort GET /v1/incidents accepts. Models ask for "-started_at" to get the
+# latest incidents, which created/updated alone rejected (ROOTLY-MCP-5).
+IncidentSort = Literal[
+    "created_at",
+    "-created_at",
+    "updated_at",
+    "-updated_at",
+    "started_at",
+    "-started_at",
+    "in_triage_at",
+    "-in_triage_at",
+    "mitigated_at",
+    "-mitigated_at",
+    "resolved_at",
+    "-resolved_at",
+]
+INCIDENT_SORT_DESCRIPTION = (
+    "Sort order for incidents; a leading '-' sorts newest first. Supported values: "
+    + ", ".join(get_args(IncidentSort))
+)
 INCIDENT_UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
@@ -601,7 +621,7 @@ def register_incident_tools(
         started_after: str,
         started_before: str,
         custom_field_selected_option_ids: str,
-        sort: Literal["created_at", "-created_at", "updated_at", "-updated_at"],
+        sort: IncidentSort,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build shared incident query params and filter metadata for list/collect tools."""
         resolved_team_lookup: dict[str, str] = {}
@@ -712,10 +732,8 @@ def register_incident_tools(
             ),
         ] = "",
         sort: Annotated[
-            Literal["created_at", "-created_at", "updated_at", "-updated_at"],
-            Field(
-                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at"
-            ),
+            IncidentSort,
+            Field(description=INCIDENT_SORT_DESCRIPTION),
         ] = "-created_at",
         page_size: Annotated[
             int,
@@ -859,10 +877,8 @@ def register_incident_tools(
             ),
         ] = "",
         sort: Annotated[
-            Literal["created_at", "-created_at", "updated_at", "-updated_at"],
-            Field(
-                description="Sort order for incidents. Supported values: created_at, -created_at, updated_at, -updated_at"
-            ),
+            IncidentSort,
+            Field(description=INCIDENT_SORT_DESCRIPTION),
         ] = "-created_at",
         max_results: Annotated[
             int,

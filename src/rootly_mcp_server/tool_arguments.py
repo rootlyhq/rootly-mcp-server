@@ -436,6 +436,10 @@ def _jsonapi_data_schema(schema: Mapping[str, Any] | None) -> tuple[str | None, 
     return resource_type, _properties(data_properties.get("attributes"))
 
 
+class MalformedJsonApiBody(ValueError):
+    """A write tool's ``data`` arrived as a string that does not parse as JSON."""
+
+
 def repair_jsonapi_body(
     arguments: Mapping[str, Any], schema: Mapping[str, Any] | None
 ) -> tuple[dict[str, Any], list[str]]:
@@ -446,6 +450,10 @@ def repair_jsonapi_body(
     with "must be nested under data.attributes". Attributes are moved only
     when every misplaced key is one the schema declares under
     ``data.attributes``; anything else is left for the API to reject.
+
+    A ``data`` string that is not valid JSON raises ``MalformedJsonApiBody``:
+    Rootly's 400 for it ("data: Expected hash") echoes the whole string back
+    without saying where it broke.
     """
     resource_type, attribute_properties = _jsonapi_data_schema(schema)
     if not attribute_properties:
@@ -457,8 +465,13 @@ def repair_jsonapi_body(
     if isinstance(data, str):
         try:
             parsed = json.loads(data)
-        except ValueError:
-            return result, rewrites
+        except json.JSONDecodeError as exc:
+            example = json.dumps({"type": resource_type or "<type>", "attributes": {}})
+            raise MalformedJsonApiBody(
+                f"`data` must be a JSON object, but it arrived as a string that is not "
+                f"valid JSON ({exc.msg} at character {exc.pos} of {len(data)}). Pass "
+                f"`data` as an object rather than a string, e.g. {example}."
+            ) from None
         if not isinstance(parsed, dict):
             return result, rewrites
         data = parsed

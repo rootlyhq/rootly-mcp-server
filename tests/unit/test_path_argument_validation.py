@@ -112,7 +112,22 @@ class TestGetAlertCalls:
         assert "unfilled path parameter" not in text
         assert sent_requests == []
 
-    @pytest.mark.parametrize("alert_id", ["abc", 123])
+    @pytest.mark.parametrize("placeholder", ["null", "None", "undefined", " null "])
+    async def test_placeholder_id_is_rejected_before_any_request(
+        self, server, sent_requests, placeholder
+    ):
+        # ROOTLY-MCP-3C: `get_user(id="null")` went out as GET /v1/users/null
+        # and came back as a bare 404.
+        async with Client(server) as client:
+            result = await client.call_tool("get_user", {"id": placeholder}, raise_on_error=False)
+
+        text = _error_text(result)
+        assert "get_user requires the path argument 'id' for GET /v1/users/{id}" in text
+        assert f"got id={placeholder!r} -- a placeholder, not an ID" in text
+        assert "not provided" not in text
+        assert sent_requests == []
+
+    @pytest.mark.parametrize("alert_id", ["abc", 123, "none"])
     async def test_id_fills_the_path(self, server, sent_requests, alert_id):
         async with Client(server) as client:
             result = await client.call_tool(

@@ -205,11 +205,10 @@ async def test_did_you_mean_never_swaps_in_a_different_filter(client: Client):
 
 
 async def test_literal_error_keeps_the_allowed_values(client: Client):
-    text = await _run(client, "return await call_tool('list_incidents', {'sort': 'started_at'})")
+    text = await _run(client, "return await call_tool('list_incidents', {'sort': 'newest'})")
 
-    assert (
-        "sort: Input should be 'created_at', '-created_at', 'updated_at' or '-updated_at'" in text
-    )
+    assert "sort: Input should be 'created_at', '-created_at', 'updated_at'" in text
+    assert "'resolved_at' or '-resolved_at'" in text
     assert "Valid parameters for list_incidents" in text
 
 

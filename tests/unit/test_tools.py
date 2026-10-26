@@ -1935,6 +1935,44 @@ class TestResultCountArgumentAliases:
 
 
 @pytest.mark.unit
+class TestIncidentSortValues:
+    """ROOTLY-MCP-5: `sort="-started_at"` failed validation though the API takes it."""
+
+    @staticmethod
+    def _api_sort_values() -> list[str]:
+        with open("src/rootly_mcp_server/data/swagger.json") as handle:
+            spec = json.load(handle)
+        (sort,) = [
+            param
+            for param in spec["paths"]["/v1/incidents"]["get"]["parameters"]
+            if param["name"] == "sort"
+        ]
+        return sort["schema"]["enum"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ["list_incidents", "collect_incidents"])
+    async def test_every_api_sort_is_accepted(self, tool_name):
+        mcp = TestResultCountArgumentAliases._server(AsyncMock())
+
+        tool = await mcp.get_tool(tool_name)
+        assert tool is not None
+        schema = tool.parameters["properties"]["sort"]
+
+        assert schema["enum"] == self._api_sort_values()
+        assert "-started_at" in schema["description"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sort", ["-started_at", "resolved_at"])
+    async def test_started_and_resolved_sorts_reach_the_api(self, sort):
+        request = AsyncMock(return_value=_incidents_page())
+        mcp = TestResultCountArgumentAliases._server(request)
+
+        await mcp.call_tool("list_incidents", {"sort": sort})
+
+        assert request.await_args_list[-1].kwargs["params"]["sort"] == sort
+
+
+@pytest.mark.unit
 class TestSearchIncidentsResultCap:
     """`limit` must limit on the default page, not only when fetching all pages.
 

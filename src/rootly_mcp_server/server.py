@@ -646,8 +646,22 @@ def _openapi_path_arguments(tool: Any) -> tuple[str, str, list[str]] | None:
     return str(getattr(route, "method", "GET")).upper(), path, names
 
 
+# What a model sends for "no value" once it has stringified null, None or
+# undefined. As a path segment each one 404s (`GET /v1/users/null`) instead of
+# naming the argument to fill. Lowercase "none" stays valid: a slug can be that.
+_PLACEHOLDER_ARGUMENTS = frozenset({"null", "None", "undefined"})
+
+
+def _is_placeholder_argument(value: Any) -> bool:
+    return isinstance(value, str) and value.strip() in _PLACEHOLDER_ARGUMENTS
+
+
 def _is_blank_argument(value: Any) -> bool:
-    return value is None or (isinstance(value, str) and not value.strip())
+    return (
+        value is None
+        or (isinstance(value, str) and not value.strip())
+        or _is_placeholder_argument(value)
+    )
 
 
 def _singular_forms(segment: str) -> set[str]:
@@ -741,9 +755,15 @@ class PathArgumentValidationMiddleware(fastmcp_middleware.Middleware):
         unrecognized = sorted(name for name in args if name not in declared)
         missing_list = ", ".join(f"'{name}'" for name in missing)
         plural = len(missing) > 1
+        placeholders = [name for name in missing if _is_placeholder_argument(args.get(name))]
+        if placeholders:
+            received = ", ".join(f"{name}={args[name]!r}" for name in placeholders)
+            reason = f"got {received} -- a placeholder, not an ID"
+        else:
+            reason = f"{'they were' if plural else 'it was'} not provided"
         message = (
             f"{tool_name} requires the path argument{'s' if plural else ''} {missing_list} "
-            f"for {method} {path}, but {'they were' if plural else 'it was'} not provided."
+            f"for {method} {path}, but {reason}."
         )
         if unrecognized:
             message += (
@@ -782,9 +802,12 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
         if route is None or str(getattr(route, "method", "GET")).upper() == "GET":
             return await call_next(context)
 
-        repaired, rewrites = tool_arguments.repair_jsonapi_body(
-            args, getattr(tool, "parameters", None)
-        )
+        try:
+            repaired, rewrites = tool_arguments.repair_jsonapi_body(
+                args, getattr(tool, "parameters", None)
+            )
+        except tool_arguments.MalformedJsonApiBody as exc:
+            raise ToolError(f"{context.message.name}: {exc}") from None
         if rewrites:
             bucket = _tool_argument_rewrites.get()
             if bucket is not None:

@@ -80,6 +80,21 @@ async def test_misshapen_attach_alert_bodies_are_repaired(server, sent, data):
     assert _sent_body(sent) == EXPECTED_BODY
 
 
+async def test_malformed_json_string_names_where_it_broke(server, sent):
+    # ROOTLY-MCP-2MF: a stringified body one closing brace short went upstream
+    # unchanged and came back as Rootly's "data: Expected hash".
+    data = json.dumps(EXPECTED_BODY["data"])[:-1]
+
+    result = await _attach(server, data)
+
+    assert result.is_error
+    text = _text(result)
+    assert "attach_alert: `data` must be a JSON object" in text
+    assert f"at character {len(data)} of {len(data)}" in text
+    assert '{"type": "alerts", "attributes": {}}' in text
+    assert sent == []
+
+
 async def test_well_formed_body_is_sent_unchanged(server, sent):
     result = await _attach(server, EXPECTED_BODY["data"])
 
