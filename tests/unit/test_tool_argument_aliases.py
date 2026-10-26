@@ -769,6 +769,24 @@ async def test_nulls_on_optional_parameters_mean_unset(server, sent):
     assert params["sort"] == "-created_at"
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"filters": {"status": None, "severity": "sev1"}},
+        {"filter_started_at": {"gte": None, "lte": _TS2}, "filter[status]": None},
+    ],
+    ids=["filters-dict", "range-dict"],
+)
+async def test_nulls_inside_filter_objects_mean_unset(server, sent, arguments):
+    # Greptile on #278: these nulls only become parameters during normalization.
+    result = await _call(server, "list_incidents", arguments)
+
+    assert not result.is_error, _text(result)
+    params = _incident_params(sent)
+    assert "filter[status]" not in params
+    assert "filter[started_at][gte]" not in params
+
+
 @pytest.mark.parametrize("value", [None, "null", "undefined", "None"])
 async def test_empty_required_argument_is_named(server, sent, value):
     # list_incident_roles(incident_id=null) got pydantic's

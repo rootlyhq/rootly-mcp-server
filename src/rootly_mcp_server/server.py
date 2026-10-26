@@ -974,23 +974,11 @@ class ToolArgumentAliasMiddleware(fastmcp_middleware.Middleware):
         if not isinstance(schema, dict) or schema.get("additionalProperties", True) is not False:
             return await call_next(context)
 
-        args, dropped, empty_required = tool_arguments.split_null_arguments(args, schema)
-        if empty_required:
-            plural = len(empty_required) > 1
-            listed = ", ".join(f"'{name}'" for name in empty_required)
-            example = ", ".join(f'"{name}": "<value>"' for name in empty_required)
-            raise ToolError(
-                f"{tool_name} requires the argument{'s' if plural else ''} {listed}, but got "
-                f"{tool_arguments.describe_received(empty_required, args)} -- a placeholder, "
-                f"not a value. Retry with {{{example}}}."
-            )
-        if dropped:
-            bucket = _tool_argument_rewrites.get()
-            if bucket is not None:
-                bucket.extend(f"{name}:null->omitted" for name in dropped)
-
         normalized = tool_arguments.normalize_tool_arguments(
-            args, schema, self._accepted_aliases(tool), tool_name
+            _drop_null_arguments(tool_name, args, schema),
+            schema,
+            self._accepted_aliases(tool),
+            tool_name,
         )
         if normalized.rewrites:
             logger.debug("Normalized %s arguments: %s", tool_name, ", ".join(normalized.rewrites))
@@ -1001,8 +989,31 @@ class ToolArgumentAliasMiddleware(fastmcp_middleware.Middleware):
             raise ToolError(
                 tool_arguments.unknown_arguments_message(tool_name, schema, normalized.unknown)
             )
-        context.message.arguments = normalized.arguments
+        # Again on the rewritten names: a null inside `filters={...}` or a range
+        # dict only becomes a parameter during normalization.
+        context.message.arguments = _drop_null_arguments(tool_name, normalized.arguments, schema)
         return await call_next(context)
+
+
+def _drop_null_arguments(
+    tool_name: str, args: dict[str, Any], schema: Mapping[str, Any]
+) -> dict[str, Any]:
+    """``args`` without nulls that mean "unset"; raises when a required argument is empty."""
+    kept, dropped, empty_required = tool_arguments.split_null_arguments(args, schema)
+    if empty_required:
+        plural = len(empty_required) > 1
+        listed = ", ".join(f"'{name}'" for name in empty_required)
+        example = ", ".join(f'"{name}": "<value>"' for name in empty_required)
+        raise ToolError(
+            f"{tool_name} requires the argument{'s' if plural else ''} {listed}, but got "
+            f"{tool_arguments.describe_received(empty_required, args)} -- a placeholder, "
+            f"not a value. Retry with {{{example}}}."
+        )
+    if dropped:
+        bucket = _tool_argument_rewrites.get()
+        if bucket is not None:
+            bucket.extend(f"{name}:null->omitted" for name in dropped)
+    return kept
 
 
 def create_rootly_mcp_server(
