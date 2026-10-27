@@ -61,6 +61,10 @@ class TestServerDefaultsModule:
         assert "/catalogs/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/catalogs/{catalog_id}/entities" in DEFAULT_ALLOWED_PATHS
         assert "/catalog_entities/{id}" in DEFAULT_ALLOWED_PATHS
+        assert "/catalogs/{catalog_id}/properties" in DEFAULT_ALLOWED_PATHS
+        assert "/catalog_properties/{id}" in DEFAULT_ALLOWED_PATHS
+        assert "/catalog_entities/{catalog_entity_id}/properties" in DEFAULT_ALLOWED_PATHS
+        assert "/catalog_entity_properties/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/causes" in DEFAULT_ALLOWED_PATHS
         assert "/causes/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/shifts" in DEFAULT_ALLOWED_PATHS

@@ -348,6 +348,10 @@ DEFAULT_ALLOWED_PATHS = [
     "/catalogs/{id}",
     "/catalogs/{catalog_id}/entities",
     "/catalog_entities/{id}",
+    "/catalogs/{catalog_id}/properties",
+    "/catalog_properties/{id}",
+    "/catalog_entities/{catalog_entity_id}/properties",
+    "/catalog_entity_properties/{id}",
     "/causes",
     "/causes/{id}",
     # Alert events
@@ -623,6 +627,10 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/catalogs/{id}",
     "/catalogs/{catalog_id}/entities",
     "/catalog_entities/{id}",
+    "/catalogs/{catalog_id}/properties",
+    "/catalog_properties/{id}",
+    "/catalog_entities/{catalog_entity_id}/properties",
+    "/catalog_entity_properties/{id}",
     # Sub-statuses - create + update
     "/sub_statuses",
     "/sub_statuses/{id}",

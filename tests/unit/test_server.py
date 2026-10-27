@@ -406,6 +406,10 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "get_catalog" in tool_names
         assert "list_catalog_entities" in tool_names
         assert "get_catalog_entity" in tool_names
+        assert "list_catalog_properties" in tool_names
+        assert "get_catalog_property" in tool_names
+        assert "list_catalog_entity_properties" in tool_names
+        assert "get_catalog_entity_property" in tool_names
         assert "list_causes" in tool_names
         assert "get_cause" in tool_names
 
@@ -430,7 +434,13 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "create_form_field" in tool_names
         assert "update_form_field" in tool_names
         assert "update_workflow_form_field_condition" in tool_names
+        assert "create_catalog_property" in tool_names
+        assert "update_catalog_property" in tool_names
+        assert "create_catalog_entity_property" in tool_names
+        assert "update_catalog_entity_property" in tool_names
         assert "delete_alert_event" not in tool_names
+        assert "delete_catalog_property" not in tool_names
+        assert "delete_catalog_entity_property" not in tool_names
 
     async def test_enable_write_tools_exposes_curated_generated_write_tools(
         self, mock_environment_token

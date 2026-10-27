@@ -667,6 +667,8 @@ get_alert_source
 get_alert_urgency
 get_catalog
 get_catalog_entity
+get_catalog_entity_property
+get_catalog_property
 get_cause
 get_current_user
 get_custom_form
@@ -709,6 +711,8 @@ list_alert_urgencies
 list_alerts
 list_all_incident_action_items
 list_catalog_entities
+list_catalog_entity_properties
+list_catalog_properties
 list_catalogs
 list_causes
 list_custom_forms
