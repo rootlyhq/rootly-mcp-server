@@ -40,6 +40,22 @@ def _flatten(resource: dict[str, Any]) -> dict[str, Any]:
     return {"id": resource.get("id"), **(resource.get("attributes") or {})}
 
 
+def _api_error(exc: Exception) -> dict[str, Any] | None:
+    response = getattr(exc, "response", None)
+    try:
+        errors = response.json().get("errors") if response is not None else None
+    except ValueError:
+        return None
+    if (
+        isinstance(errors, list)
+        and errors
+        and isinstance(errors[0], dict)
+        and errors[0].get("title")
+    ):
+        return errors[0]
+    return None
+
+
 def _progress_instruction(done: bool, next_cursor: str | None) -> str:
     if done:
         return "The investigation has finished. Call get_investigation for the verdict."
@@ -67,6 +83,9 @@ def register_investigation_tools(
 
     def _error(exc: Exception) -> dict[str, Any]:
         error_type, message = mcp_error.categorize_error(exc)
+        api_error = _api_error(exc)
+        if api_error:
+            message = f"{api_error.get('title')} ({api_error.get('code')})"
         return mcp_error.tool_error(message, error_type)
 
     async def _fetch_progress(investigation_id: str, after_cursor: str | None) -> dict[str, Any]:

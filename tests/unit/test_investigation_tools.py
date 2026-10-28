@@ -34,6 +34,12 @@ class FakeMCPError:
         return {"error": True, "error_type": error_type, "message": error_message}
 
 
+class _HTTPError(Exception):
+    def __init__(self, response: Mock):
+        super().__init__("Client error '409 Conflict'")
+        self.response = response
+
+
 def _response(body: dict) -> Mock:
     response = Mock()
     response.raise_for_status.return_value = None
@@ -268,3 +274,23 @@ async def test_cancel_investigation_returns_tool_error_on_http_failure():
     result = await tools["cancel_investigation"](investigation_id="inv-1")
 
     assert result == {"error": True, "error_type": "RuntimeError", "message": "409 Conflict"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_investigation_surfaces_api_error_title_and_code():
+    response = Mock(status_code=409)
+    response.json.return_value = {
+        "errors": [
+            {
+                "title": "The investigation has already finished.",
+                "code": "not_cancellable",
+                "status": "409",
+            }
+        ]
+    }
+    response.raise_for_status.side_effect = _HTTPError(response)
+    tools = _register(AsyncMock(return_value=response))
+
+    result = await tools["cancel_investigation"](investigation_id="inv-1")
+
+    assert result["message"] == "The investigation has already finished. (not_cancellable)"
