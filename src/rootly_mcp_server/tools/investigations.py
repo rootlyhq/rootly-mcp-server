@@ -12,6 +12,7 @@ from pydantic import Field
 
 PROGRESS_POLL_INTERVAL_SECONDS = 3.0
 MAX_WAIT_SECONDS = 15
+MAX_PROGRESS_PAGES = 5
 
 InvestigationId = Annotated[str, Field(description="Investigation id (UUID).")]
 WaitSeconds = Annotated[
@@ -56,7 +57,12 @@ def _api_error(exc: Exception) -> dict[str, Any] | None:
     return None
 
 
-def _progress_instruction(done: bool, next_cursor: str | None) -> str:
+def _progress_instruction(done: bool, next_cursor: str | None, has_more: bool = False) -> str:
+    if has_more:
+        return (
+            "More progress is already waiting. Call get_investigation_progress again now with "
+            f"after_cursor={next_cursor!r} and wait_seconds=0."
+        )
     if done:
         return "The investigation has finished. Call get_investigation for the verdict."
     return (
@@ -209,19 +215,22 @@ def register_investigation_tools(
         deadline = time.monotonic() + wait_seconds
         entries: list[dict[str, Any]] = []
         cursor = after_cursor
+        pages = 0
         try:
             while True:
                 page = await _fetch_progress(investigation_id, cursor)
+                pages += 1
                 entries.extend(page.get("entries", []))
                 cursor = page.get("next_cursor") or cursor
-                if page.get("has_more"):
+                if page.get("has_more") and pages < MAX_PROGRESS_PAGES:
                     continue
                 if entries or page.get("done") or time.monotonic() + poll_interval > deadline:
                     break
                 await sleep(poll_interval)
         except Exception as exc:
             return _error(exc)
-        done = bool(page.get("done"))
+        has_more = bool(page.get("has_more"))
+        done = bool(page.get("done")) and not has_more
         return {
             "investigation_id": investigation_id,
             "status": page.get("status"),
@@ -230,8 +239,9 @@ def register_investigation_tools(
             "phases": page.get("phases", []),
             "open_questions": page.get("open_questions", []),
             "entries": entries,
+            "has_more": has_more,
             "next_cursor": cursor,
-            "next_step": _progress_instruction(done, cursor),
+            "next_step": _progress_instruction(done, cursor, has_more),
         }
 
     if not enable_write_tools:

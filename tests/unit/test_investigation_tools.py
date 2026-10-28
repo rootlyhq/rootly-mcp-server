@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from rootly_mcp_server.tools.investigations import register_investigation_tools
+from rootly_mcp_server.tools.investigations import (
+    MAX_PROGRESS_PAGES,
+    register_investigation_tools,
+)
 
 
 class FakeMCP:
@@ -176,6 +179,25 @@ async def test_progress_polls_until_entries_arrive_and_says_to_continue():
     assert result["done"] is False
     assert "after_cursor='c1'" in result["next_step"]
     assert result["open_questions"] == [{"key": "pods", "question": "Were pods OOMKilled?"}]
+
+
+@pytest.mark.asyncio
+async def test_progress_caps_pages_per_call_and_asks_to_continue():
+    request = AsyncMock(
+        side_effect=[
+            _response(_progress([{"title": str(i)}], done=True, cursor=f"c{i}", has_more=True))
+            for i in range(MAX_PROGRESS_PAGES + 1)
+        ]
+    )
+    tools = _register(request)
+
+    result = await tools["get_investigation_progress"](investigation_id="inv-1")
+
+    assert request.await_count == MAX_PROGRESS_PAGES
+    assert len(result["entries"]) == MAX_PROGRESS_PAGES
+    assert result["has_more"] is True
+    assert result["done"] is False
+    assert f"after_cursor='c{MAX_PROGRESS_PAGES - 1}'" in result["next_step"]
 
 
 @pytest.mark.asyncio
