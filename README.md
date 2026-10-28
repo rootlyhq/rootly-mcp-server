@@ -645,7 +645,7 @@ The default tool surface depends on deployment profile:
 - `list_incidents`
 - `list_shifts`
 - `search_incidents`
-- `start_investigation`, `ask_investigation`, `cancel_investigation` - start an AI SRE investigation, send a follow-up (e.g. what your local agent found for an open question), or cancel one; write tools
+- `start_investigation`, `cancel_investigation` - start or cancel an AI SRE investigation; write tools
 - `suggest_solutions`
 - `update_incident` - update native incident fields with severity validation; retrospective status changes require the Rootly UI
 

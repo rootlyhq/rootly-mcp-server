@@ -393,9 +393,6 @@ def _stub_response(request: httpx2.Request, template: str | None) -> httpx2.Resp
     now = datetime.now(UTC)
     body: dict[str, Any]
 
-    if template == "/v1/investigations/{id}/messages":
-        return httpx2.Response(200, json=_list([], answering=method == "POST"))
-
     if method in {"POST", "PUT", "PATCH"}:
         return httpx2.Response(200, json={"data": _incident()})
 
@@ -914,7 +911,7 @@ SCENARIOS: list[tuple[str, str, dict[str, Any]] | tuple[str, str, dict[str, Any]
     (
         "get_investigation/by_alert",
         "get_investigation",
-        {"alert_id": "alert-1", "include_messages": True},
+        {"alert_id": "alert-1"},
     ),
     (
         "get_investigation_progress",
@@ -922,11 +919,6 @@ SCENARIOS: list[tuple[str, str, dict[str, Any]] | tuple[str, str, dict[str, Any]
         {"investigation_id": INVESTIGATION_UUID, "after_cursor": "1793223109000000:x"},
     ),
     ("start_investigation", "start_investigation", {"alert_id": "alert-1", "rerun": True}),
-    (
-        "ask_investigation",
-        "ask_investigation",
-        {"investigation_id": INVESTIGATION_UUID, "message": "pods were OOMKilled"},
-    ),
     ("cancel_investigation", "cancel_investigation", {"investigation_id": INVESTIGATION_UUID}),
     # resources.py
     (

@@ -99,7 +99,7 @@ def test_write_tools_are_gated():
     }
 
     all_tools = _register(AsyncMock())
-    assert {"start_investigation", "ask_investigation", "cancel_investigation"} <= set(all_tools)
+    assert {"start_investigation", "cancel_investigation"} <= set(all_tools)
 
 
 @pytest.mark.asyncio
@@ -128,27 +128,20 @@ async def test_list_investigations_sends_filters_and_flattens():
 
 
 @pytest.mark.asyncio
-async def test_get_investigation_resolves_latest_for_alert_and_includes_messages():
+async def test_get_investigation_resolves_latest_for_alert():
     request = AsyncMock(
         side_effect=[
             _response({"data": [_investigation("inv-9")]}),
             _response({"data": _investigation("inv-9", summary="Disk full")}),
-            _response(
-                {
-                    "data": [{"id": "m1", "attributes": {"role": "user", "content": "why?"}}],
-                    "meta": {"answering": False},
-                }
-            ),
         ]
     )
     tools = _register(request)
 
-    result = await tools["get_investigation"](alert_id="alert-1", include_messages=True)
+    result = await tools["get_investigation"](alert_id="alert-1")
 
+    assert request.await_count == 2
     assert request.await_args_list[1].args == ("GET", "/v1/investigations/inv-9")
-    assert request.await_args_list[2].args == ("GET", "/v1/investigations/inv-9/messages")
     assert result["investigation"]["summary"] == "Disk full"
-    assert result["conversation"]["messages"] == [{"id": "m1", "role": "user", "content": "why?"}]
 
 
 @pytest.mark.asyncio
@@ -264,28 +257,6 @@ async def test_start_investigation_requires_exactly_one_target():
 
     assert both["error_type"] == neither["error_type"] == "validation_error"
     request.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_ask_investigation_posts_message():
-    request = AsyncMock(
-        return_value=_response(
-            {"data": [], "meta": {"answering": True, "pending_question": "pods OOMKilled"}}
-        )
-    )
-    tools = _register(request)
-
-    result = await tools["ask_investigation"](investigation_id="inv-1", message="pods OOMKilled")
-
-    request.assert_awaited_once_with(
-        "POST",
-        "/v1/investigations/inv-1/messages",
-        json={
-            "data": {"type": "investigation_messages", "attributes": {"message": "pods OOMKilled"}}
-        },
-    )
-    assert result["meta"]["answering"] is True
-    assert "include_messages=true" in result["next_step"]
 
 
 @pytest.mark.asyncio

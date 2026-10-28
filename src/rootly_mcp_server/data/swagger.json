@@ -42921,98 +42921,6 @@
         }
       }
     },
-    "/v1/investigations/{id}/messages": {
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "required": true
-        }
-      ],
-      "get": {
-        "summary": "Lists follow-up messages on an AI SRE investigation",
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ],
-        "tags": [
-          "Investigations"
-        ],
-        "operationId": "ListInvestigationMessages",
-        "responses": {
-          "200": {
-            "description": "returns the caller's follow-up conversation",
-            "content": {
-              "application/vnd.api+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/investigation_message_list"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "rejects a shared credential, since conversations are per user",
-            "content": {
-              "application/vnd.api+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/errors_list"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "summary": "Asks a follow-up on an AI SRE investigation",
-        "description": "Rootly answers in the caller's follow-up conversation; poll GET messages until meta.answering is false.",
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ],
-        "tags": [
-          "Investigations"
-        ],
-        "operationId": "CreateInvestigationMessage",
-        "parameters": [],
-        "responses": {
-          "202": {
-            "description": "queues the follow-up",
-            "content": {
-              "application/vnd.api+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/investigation_message_list"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "follow-ups wait for the run to finish",
-            "content": {
-              "application/vnd.api+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/errors_list"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/vnd.api+json": {
-              "schema": {
-                "$ref": "#/components/schemas/new_investigation_message"
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/investigations/{id}/cancel": {
       "parameters": [
         {
@@ -117329,10 +117237,6 @@
                       "type": "string",
                       "format": "date-time"
                     },
-                    "follow_up_available": {
-                      "type": "boolean",
-                      "description": "Whether POST /v1/investigations/{id}/messages accepts a follow-up."
-                    },
                     "summary": {
                       "type": "string",
                       "nullable": true
@@ -117456,8 +117360,7 @@
                   "required": [
                     "status",
                     "url",
-                    "created_at",
-                    "follow_up_available"
+                    "created_at"
                   ]
                 }
               },
@@ -117553,10 +117456,6 @@
                   "created_at": {
                     "type": "string",
                     "format": "date-time"
-                  },
-                  "follow_up_available": {
-                    "type": "boolean",
-                    "description": "Whether POST /v1/investigations/{id}/messages accepts a follow-up."
                   },
                   "summary": {
                     "type": "string",
@@ -117681,8 +117580,7 @@
                 "required": [
                   "status",
                   "url",
-                  "created_at",
-                  "follow_up_available"
+                  "created_at"
                 ]
               }
             },
@@ -117696,115 +117594,6 @@
         "required": [
           "data"
         ]
-      },
-      "investigation_message_list": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "investigation_messages"
-                  ]
-                },
-                "attributes": {
-                  "type": "object",
-                  "properties": {
-                    "role": {
-                      "type": "string",
-                      "enum": [
-                        "user",
-                        "assistant"
-                      ]
-                    },
-                    "content": {
-                      "type": "string"
-                    },
-                    "created_at": {
-                      "type": "string",
-                      "format": "date-time"
-                    }
-                  },
-                  "required": [
-                    "role",
-                    "content",
-                    "created_at"
-                  ]
-                }
-              },
-              "required": [
-                "id",
-                "type",
-                "attributes"
-              ]
-            }
-          },
-          "meta": {
-            "type": "object",
-            "properties": {
-              "answering": {
-                "type": "boolean",
-                "description": "True while Rootly is still writing the answer; poll this endpoint until false."
-              },
-              "pending_question": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "answering"
-            ]
-          }
-        },
-        "required": [
-          "data",
-          "meta"
-        ]
-      },
-      "new_investigation_message": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "investigation_messages"
-                ]
-              },
-              "attributes": {
-                "type": "object",
-                "properties": {
-                  "message": {
-                    "type": "string",
-                    "maxLength": 20000
-                  }
-                },
-                "required": [
-                  "message"
-                ],
-                "additionalProperties": false
-              }
-            },
-            "required": [
-              "type",
-              "attributes"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "data"
-        ],
-        "additionalProperties": false
       }
     }
   }

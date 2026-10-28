@@ -79,7 +79,7 @@ def register_investigation_tools(
     poll_interval: float = PROGRESS_POLL_INTERVAL_SECONDS,
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
 ) -> None:
-    """Register investigation tools. Start, ask and cancel need write tools enabled."""
+    """Register investigation tools. Start and cancel need write tools enabled."""
 
     async def _request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         response = await make_authenticated_request(method, path, **kwargs)
@@ -161,13 +161,10 @@ def register_investigation_tools(
         incident_id: Annotated[
             str | None, Field(description="Use the latest investigation of this incident.")
         ] = None,
-        include_messages: Annotated[
-            bool, Field(description="Also return the follow-up conversation.")
-        ] = False,
     ) -> dict[str, Any]:
         """Get an investigation's verdict: summary, root cause, confidence, hypotheses,
-        evidence, causal chain and open_questions (what Rootly couldn't verify; answer
-        them with ask_investigation)."""
+        evidence, causal chain and open_questions (what Rootly couldn't verify, so you
+        can check them with tools only you have)."""
         try:
             if not investigation_id:
                 if not (alert_id or incident_id):
@@ -183,19 +180,9 @@ def register_investigation_tools(
                     return mcp_error.tool_error("No investigation found.", "not_found")
                 investigation_id = str(latest["investigations"][0]["id"])
             body = await _request("GET", f"/v1/investigations/{investigation_id}")
-            result = {"investigation": _flatten(body["data"])}
-            if include_messages:
-                result["conversation"] = await _conversation(investigation_id)
-            return result
+            return {"investigation": _flatten(body["data"])}
         except Exception as exc:
             return _error(exc)
-
-    async def _conversation(investigation_id: str) -> dict[str, Any]:
-        body = await _request("GET", f"/v1/investigations/{investigation_id}/messages")
-        return {
-            "messages": [_flatten(item) for item in body.get("data", [])],
-            "meta": body.get("meta", {}),
-        }
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -286,45 +273,6 @@ def register_investigation_tools(
             "investigation": investigation,
             "next_step": "Call get_investigation_progress with "
             f"investigation_id={investigation['id']!r} to follow it.",
-        }
-
-    @mcp.tool(
-        annotations=ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=False,
-            idempotent_hint=False,
-            open_world_hint=True,
-        ),
-    )
-    async def ask_investigation(
-        investigation_id: InvestigationId,
-        message: Annotated[
-            str,
-            Field(
-                min_length=1,
-                max_length=20_000,
-                description="Follow-up question, or what you found locally (e.g. kubectl output) for an open question.",
-            ),
-        ],
-    ) -> dict[str, Any]:
-        """Send a follow-up to a completed investigation, e.g. answers to its
-        open_questions. Rootly answers asynchronously: read it with
-        get_investigation(include_messages=true) until conversation.meta.answering is false."""
-        try:
-            body = await _request(
-                "POST",
-                f"/v1/investigations/{investigation_id}/messages",
-                json={
-                    "data": {"type": "investigation_messages", "attributes": {"message": message}}
-                },
-            )
-        except Exception as exc:
-            return _error(exc)
-        return {
-            "messages": [_flatten(item) for item in body.get("data", [])],
-            "meta": body.get("meta", {}),
-            "next_step": "Rootly is answering. Call get_investigation with "
-            f"investigation_id={investigation_id!r} and include_messages=true in a few seconds.",
         }
 
     @mcp.tool(
