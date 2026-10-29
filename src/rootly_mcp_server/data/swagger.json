@@ -117129,21 +117129,43 @@
               },
               "attributes": {
                 "type": "object",
-                "properties": {
-                  "alert_id": {
-                    "type": "string",
-                    "format": "uuid"
+                "description": "Give exactly one of alert_id or incident_id.",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "alert_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "rerun": {
+                        "type": "boolean",
+                        "description": "Start a fresh run when the latest investigation has finished."
+                      }
+                    },
+                    "required": [
+                      "alert_id"
+                    ],
+                    "additionalProperties": false
                   },
-                  "incident_id": {
-                    "type": "string",
-                    "format": "uuid"
-                  },
-                  "rerun": {
-                    "type": "boolean",
-                    "description": "Start a fresh run when the latest investigation has finished."
+                  {
+                    "type": "object",
+                    "properties": {
+                      "incident_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "rerun": {
+                        "type": "boolean",
+                        "description": "Start a fresh run when the latest investigation has finished."
+                      }
+                    },
+                    "required": [
+                      "incident_id"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "additionalProperties": false
+                ]
               }
             },
             "required": [
