@@ -117246,8 +117246,41 @@
                       "nullable": true
                     },
                     "review_status": {
-                      "type": "string",
-                      "nullable": true
+                      "type": "object",
+                      "nullable": true,
+                      "description": "Set when the final review failed and the verdict rests on an earlier review round.",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "retained_prior_review"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "final_review_failed": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "retained_review_round": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "retained_decision": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "accept",
+                            "upgrade",
+                            null
+                          ]
+                        },
+                        "retained_kind": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
                     },
                     "hypotheses": {
                       "type": "array",
@@ -117466,8 +117499,41 @@
                     "nullable": true
                   },
                   "review_status": {
-                    "type": "string",
-                    "nullable": true
+                    "type": "object",
+                    "nullable": true,
+                    "description": "Set when the final review failed and the verdict rests on an earlier review round.",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "retained_prior_review"
+                        ]
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "final_review_failed": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "retained_review_round": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "retained_decision": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "accept",
+                          "upgrade",
+                          null
+                        ]
+                      },
+                      "retained_kind": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    }
                   },
                   "hypotheses": {
                     "type": "array",
