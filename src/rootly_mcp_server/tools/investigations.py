@@ -211,9 +211,10 @@ def register_investigation_tools(
                 cursor = page.get("next_cursor") or cursor
                 if page.get("has_more") and pages < MAX_PROGRESS_PAGES:
                     continue
-                if entries or page.get("done") or time.monotonic() + poll_interval > deadline:
+                remaining = deadline - time.monotonic()
+                if entries or page.get("done") or remaining <= 0:
                     break
-                await sleep(poll_interval)
+                await sleep(min(poll_interval, remaining))
         except Exception as exc:
             return _error(exc)
         has_more = bool(page.get("has_more"))

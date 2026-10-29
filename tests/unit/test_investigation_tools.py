@@ -175,6 +175,32 @@ async def test_progress_polls_until_entries_arrive_and_says_to_continue():
 
 
 @pytest.mark.asyncio
+async def test_progress_waits_the_requested_time_when_shorter_than_the_poll_interval():
+    request = AsyncMock(
+        side_effect=[
+            _response(_progress([], done=False, cursor=None)),
+            _response(_progress([{"kind": "step", "title": "Read logs"}], done=False, cursor="c1")),
+        ]
+    )
+    sleep = AsyncMock()
+    mcp = FakeMCP()
+    register_investigation_tools(
+        mcp=mcp,
+        make_authenticated_request=request,
+        mcp_error=FakeMCPError(),
+        enable_write_tools=True,
+        poll_interval=3.0,
+        sleep=sleep,
+    )
+
+    result = await mcp.tools["get_investigation_progress"](investigation_id="inv-1", wait_seconds=1)
+
+    assert request.await_count == 2
+    assert 0 < sleep.await_args.args[0] <= 1
+    assert result["entries"] == [{"kind": "step", "title": "Read logs"}]
+
+
+@pytest.mark.asyncio
 async def test_progress_caps_pages_per_call_and_asks_to_continue():
     request = AsyncMock(
         side_effect=[
