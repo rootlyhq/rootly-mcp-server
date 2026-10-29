@@ -42765,11 +42765,21 @@
         "parameters": [],
         "responses": {
           "202": {
-            "description": "starts an investigation",
+            "description": "reruns a finished investigation",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
                   "$ref": "#/components/schemas/investigation"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "rerun is unavailable while the latest investigation is running",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
                 }
               }
             }
@@ -42795,7 +42805,7 @@
             }
           },
           "422": {
-            "description": "needs exactly one resource",
+            "description": "rejects both an alert and an incident",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
@@ -42842,7 +42852,7 @@
         "operationId": "GetInvestigation",
         "responses": {
           "200": {
-            "description": "returns the verdict",
+            "description": "returns the report's open questions",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
