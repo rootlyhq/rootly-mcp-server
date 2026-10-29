@@ -56,6 +56,7 @@ from rootly_mcp_server.tools import (
     register_alert_tools,
     register_audit_tools,
     register_incident_tools,
+    register_investigation_tools,
     register_oncall_tools,
     register_resource_handlers,
 )
@@ -291,6 +292,7 @@ def _tool_call_site() -> tuple[str, int]:
 # --------------------------------------------------------------------------- #
 
 INCIDENT_UUID = "11111111-2222-4333-8444-555555555555"
+INVESTIGATION_UUID = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
 SEQUENTIAL_ID = 4460
 
 
@@ -351,6 +353,14 @@ def _shift(shift_id: str, user_id: str, starts: datetime, ends: datetime) -> dic
             "on_call_role": {"data": {"id": "role-1", "type": "on_call_roles"}},
             "schedule_rotation": {"data": {"id": "rot-1", "type": "schedule_rotations"}},
         },
+    }
+
+
+def _investigation() -> dict:
+    return {
+        "id": INVESTIGATION_UUID,
+        "type": "investigations",
+        "attributes": {"status": "completed", "outcome": "root_cause_identified"},
     }
 
 
@@ -528,6 +538,23 @@ def _stub_response(request: httpx2.Request, template: str | None) -> httpx2.Resp
                 "attributes": {"short_id": "PhIQtP", "summary": "Disk full"},
             }
         }
+    elif template == "/v1/investigations":
+        body = _list([_investigation()])
+    elif template == "/v1/investigations/{id}":
+        body = {"data": _investigation()}
+    elif template == "/v1/investigations/{id}/progress":
+        body = {
+            "data": {
+                "id": INVESTIGATION_UUID,
+                "type": "investigation_progress",
+                "attributes": {
+                    "status": "completed",
+                    "done": True,
+                    "entries": [],
+                    "next_cursor": None,
+                },
+            }
+        }
     elif template == "/v1/audits":
         body = _list(
             [
@@ -634,6 +661,12 @@ def _build_tools(records: list[RecordedRequest], errors: list[str]) -> dict[str,
     )
     register_audit_tools(
         mcp=mcp, make_authenticated_request=make_authenticated_request, mcp_error=mcp_error
+    )
+    register_investigation_tools(
+        mcp=mcp,
+        make_authenticated_request=make_authenticated_request,
+        mcp_error=mcp_error,
+        enable_write_tools=True,
     )
     return mcp.tools
 
@@ -869,6 +902,24 @@ SCENARIOS: list[tuple[str, str, dict[str, Any]] | tuple[str, str, dict[str, Any]
             "max_results": 10,
         },
     ),
+    # investigations.py
+    (
+        "list_investigations/all_filters",
+        "list_investigations",
+        {"alert_id": "alert-1", "status": "completed", "outcome": "best_effort"},
+    ),
+    (
+        "get_investigation/by_alert",
+        "get_investigation",
+        {"alert_id": "alert-1"},
+    ),
+    (
+        "get_investigation_progress",
+        "get_investigation_progress",
+        {"investigation_id": INVESTIGATION_UUID, "after_cursor": "1793223109000000:x"},
+    ),
+    ("start_investigation", "start_investigation", {"alert_id": "alert-1", "rerun": True}),
+    ("cancel_investigation", "cancel_investigation", {"investigation_id": INVESTIGATION_UUID}),
     # resources.py
     (
         "resource:incident",

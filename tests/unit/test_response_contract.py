@@ -108,6 +108,7 @@ from rootly_mcp_server.tools import (  # noqa: E402
     register_alert_tools,
     register_audit_tools,
     register_incident_tools,
+    register_investigation_tools,
     register_oncall_tools,
     register_resource_handlers,
 )
@@ -983,6 +984,14 @@ def _build_tools(run: ResponseRun) -> dict[str, Any]:
     )
     register_audit_tools(
         mcp=mcp, make_authenticated_request=make_authenticated_request, mcp_error=mcp_error
+    )
+    # A poll interval longer than the wait budget makes progress return after one fetch.
+    register_investigation_tools(
+        mcp=mcp,
+        make_authenticated_request=make_authenticated_request,
+        mcp_error=mcp_error,
+        enable_write_tools=True,
+        poll_interval=60,
     )
     return mcp.tools
 

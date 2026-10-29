@@ -633,15 +633,19 @@ The default tool surface depends on deployment profile:
 - `find_related_incidents`
 - `get_incident` - retrieve a single incident for direct verification, including PIR-related fields
 - `get_alert_by_short_id`
+- `get_investigation` - an AI SRE investigation's verdict, evidence, causal chain and open questions (by id, or latest for an alert/incident)
+- `get_investigation_progress` - follow a running investigation; call again with `after_cursor` until `done`
 - `get_oncall_handoff_summary`
 - `get_oncall_schedule_summary`
 - `get_oncall_shift_metrics`
 - `get_server_version`
 - `get_shift_incidents`
 - `list_endpoints`
+- `list_investigations`
 - `list_incidents`
 - `list_shifts`
 - `search_incidents`
+- `start_investigation`, `cancel_investigation` - start or cancel an AI SRE investigation; write tools
 - `suggest_solutions`
 - `update_incident` - update native incident fields with severity validation; retrospective status changes require the Rootly UI
 

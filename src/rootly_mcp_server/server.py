@@ -36,6 +36,7 @@ from .telemetry_scrubber import RETIRED_INJECTED_PARAMS
 from .tools.alerts import register_alert_tools
 from .tools.audits import register_audit_tools
 from .tools.incidents import register_incident_tools
+from .tools.investigations import register_investigation_tools
 from .tools.oncall import register_oncall_tools
 from .tools.resources import register_resource_handlers
 from .transport import upstream_client
@@ -1444,6 +1445,13 @@ def create_rootly_mcp_server(
         mcp=mcp,
         make_authenticated_request=make_authenticated_request,
         mcp_error=MCPError,
+    )
+
+    register_investigation_tools(
+        mcp=mcp,
+        make_authenticated_request=make_authenticated_request,
+        mcp_error=MCPError,
+        enable_write_tools=enable_write_tools,
     )
 
     # A curated tool and an autogen tool can resolve to the same name; drop the

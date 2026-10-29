@@ -42649,6 +42649,344 @@
           }
         }
       }
+    },
+    "/v1/investigations": {
+      "get": {
+        "summary": "Lists AI SRE investigations",
+        "description": "Investigations on alerts and incidents the caller can read, newest first.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "Investigations"
+        ],
+        "operationId": "ListInvestigations",
+        "parameters": [
+          {
+            "name": "filter[alert_id]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "filter[incident_id]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "filter[status]",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated statuses.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter[outcome]",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated outcomes.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page[number]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page[size]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "filters by alert",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation_list"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "rejects unknown statuses",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "AI SRE is disabled for the team",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Starts an AI SRE investigation",
+        "description": "Starts an investigation on an alert or incident you can update, or returns the one already running.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "Investigations"
+        ],
+        "operationId": "CreateInvestigation",
+        "parameters": [],
+        "responses": {
+          "202": {
+            "description": "reruns a finished investigation",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "rerun is unavailable while the latest investigation is running",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "read-only tokens cannot start investigations",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "alerts on another team are not found",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "rejects both an alert and an incident",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/new_investigation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/investigations/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "required": true
+        }
+      ],
+      "get": {
+        "summary": "Retrieves an AI SRE investigation",
+        "description": "The verdict, hypotheses, evidence, causal chain and open questions.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "Investigations"
+        ],
+        "operationId": "GetInvestigation",
+        "responses": {
+          "200": {
+            "description": "returns the report's open questions",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "other teams' investigations are not found",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/investigations/{id}/progress": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "required": true
+        },
+        {
+          "name": "after",
+          "in": "query",
+          "required": false,
+          "description": "next_cursor from the previous call.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Retrieves AI SRE investigation progress",
+        "description": "Returns immediately with steps and tool calls recorded after the cursor. Poll with after=next_cursor until done is true.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "Investigations"
+        ],
+        "operationId": "GetInvestigationProgress",
+        "responses": {
+          "200": {
+            "description": "returns progress since the start",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation_progress"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "rejects a malformed cursor",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/investigations/{id}/cancel": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "required": true
+        }
+      ],
+      "post": {
+        "summary": "Cancels an AI SRE investigation",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "Investigations"
+        ],
+        "operationId": "CancelInvestigation",
+        "responses": {
+          "200": {
+            "description": "cancels a running investigation",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "finished investigations cannot be cancelled",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "read-only tokens cannot cancel",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "servers": [
@@ -116604,6 +116942,755 @@
         "required": [
           "id",
           "type"
+        ]
+      },
+      "investigation_progress": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "investigation_progress"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "running",
+                      "completed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "done": {
+                    "type": "boolean",
+                    "description": "True once the investigation has finished; stop polling."
+                  },
+                  "phases": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "phase": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "started_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "finished_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "phase",
+                        "label",
+                        "status"
+                      ]
+                    }
+                  },
+                  "open_questions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "question": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "question"
+                      ]
+                    }
+                  },
+                  "entries": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "cursor": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "step",
+                            "tool"
+                          ]
+                        },
+                        "phase": {
+                          "type": "string"
+                        },
+                        "phase_label": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "tool": {
+                          "type": "string"
+                        },
+                        "sentence": {
+                          "type": "string"
+                        },
+                        "outcome": {
+                          "type": "string"
+                        },
+                        "error_type": {
+                          "type": "string"
+                        },
+                        "error_label": {
+                          "type": "string"
+                        },
+                        "rows_returned": {
+                          "type": "integer"
+                        },
+                        "duration_ms": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "cursor",
+                        "at",
+                        "kind"
+                      ]
+                    }
+                  },
+                  "has_more": {
+                    "type": "boolean",
+                    "description": "More entries are ready; call again with after=next_cursor without waiting."
+                  },
+                  "next_cursor": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Pass as `after` on the next call."
+                  }
+                },
+                "required": [
+                  "status",
+                  "done",
+                  "phases",
+                  "open_questions",
+                  "entries",
+                  "has_more",
+                  "next_cursor"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "attributes"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "new_investigation": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "investigations"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "description": "Give exactly one of alert_id or incident_id.",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "alert_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "rerun": {
+                        "type": "boolean",
+                        "description": "Start a fresh run. Returns 409 rerun_unavailable while the latest investigation is still running or rerun is off for the team."
+                      }
+                    },
+                    "required": [
+                      "alert_id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "incident_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "rerun": {
+                        "type": "boolean",
+                        "description": "Start a fresh run. Returns 409 rerun_unavailable while the latest investigation is still running or rerun is off for the team."
+                      }
+                    },
+                    "required": [
+                      "incident_id"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "attributes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "investigation_list": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "investigations"
+                  ]
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "running",
+                        "completed",
+                        "failed",
+                        "cancelled"
+                      ]
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "root_cause_identified",
+                        "best_effort",
+                        "inconclusive",
+                        "blocked",
+                        "could_not_investigate",
+                        null
+                      ]
+                    },
+                    "confidence": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "trigger_source": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "alert_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "incident_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "nullable": true
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "The investigation tab on the alert or incident page."
+                    },
+                    "started_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "finished_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "summary": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "root_cause": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "review_status": {
+                      "type": "object",
+                      "nullable": true,
+                      "description": "Set when the final review failed and the verdict rests on an earlier review round.",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "retained_prior_review"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "final_review_failed": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "retained_review_round": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "retained_decision": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "accept",
+                            "upgrade",
+                            null
+                          ]
+                        },
+                        "retained_kind": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "hypotheses": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "claim": {
+                            "type": "string"
+                          },
+                          "summary": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "category": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "confidence": {
+                            "type": "integer"
+                          },
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "confirmed",
+                              "refuted",
+                              "investigating",
+                              "inconclusive"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "weight": {
+                            "type": "string",
+                            "enum": [
+                              "decisive",
+                              "supporting"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "causal_chain": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "edge": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "evidence": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "confirmed",
+                              "likely",
+                              "refuted"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "open_questions": {
+                      "type": "array",
+                      "description": "What the investigation could not verify.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "question": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "question"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "url",
+                    "created_at"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "attributes"
+              ]
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "investigation": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "investigations"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "running",
+                      "completed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "root_cause_identified",
+                      "best_effort",
+                      "inconclusive",
+                      "blocked",
+                      "could_not_investigate",
+                      null
+                    ]
+                  },
+                  "confidence": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "trigger_source": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "alert_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "incident_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "The investigation tab on the alert or incident page."
+                  },
+                  "started_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "finished_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "root_cause": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "review_status": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "Set when the final review failed and the verdict rests on an earlier review round.",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "retained_prior_review"
+                        ]
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "final_review_failed": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "retained_review_round": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "retained_decision": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "accept",
+                          "upgrade",
+                          null
+                        ]
+                      },
+                      "retained_kind": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    }
+                  },
+                  "hypotheses": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "claim": {
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "category": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "confidence": {
+                          "type": "integer"
+                        },
+                        "verdict": {
+                          "type": "string",
+                          "enum": [
+                            "confirmed",
+                            "refuted",
+                            "investigating",
+                            "inconclusive"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string"
+                        },
+                        "detail": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "weight": {
+                          "type": "string",
+                          "enum": [
+                            "decisive",
+                            "supporting"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "causal_chain": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "edge": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "evidence": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "confirmed",
+                            "likely",
+                            "refuted"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "open_questions": {
+                    "type": "array",
+                    "description": "What the investigation could not verify.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "question": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "question"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "status",
+                  "url",
+                  "created_at"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "attributes"
+            ]
+          }
+        },
+        "required": [
+          "data"
         ]
       }
     }
