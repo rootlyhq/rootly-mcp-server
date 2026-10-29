@@ -117140,7 +117140,7 @@
                       },
                       "rerun": {
                         "type": "boolean",
-                        "description": "Start a fresh run when the latest investigation has finished."
+                        "description": "Start a fresh run. Returns 409 rerun_unavailable while the latest investigation is still running or rerun is off for the team."
                       }
                     },
                     "required": [
@@ -117157,7 +117157,7 @@
                       },
                       "rerun": {
                         "type": "boolean",
-                        "description": "Start a fresh run when the latest investigation has finished."
+                        "description": "Start a fresh run. Returns 409 rerun_unavailable while the latest investigation is still running or rerun is off for the team."
                       }
                     },
                     "required": [

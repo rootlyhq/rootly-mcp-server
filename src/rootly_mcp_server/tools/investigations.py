@@ -246,7 +246,13 @@ def register_investigation_tools(
         alert_id: Annotated[str | None, Field(description="Alert to investigate.")] = None,
         incident_id: Annotated[str | None, Field(description="Incident to investigate.")] = None,
         rerun: Annotated[
-            bool, Field(description="Start a fresh run even if one already exists.")
+            bool,
+            Field(
+                description=(
+                    "Start a fresh run. Fails with rerun_unavailable while the latest run is "
+                    "still going or rerun is off for the team."
+                )
+            ),
         ] = False,
     ) -> dict[str, Any]:
         """Start an AI SRE investigation on one alert or incident. Then follow it with
