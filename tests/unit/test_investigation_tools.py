@@ -196,6 +196,7 @@ async def test_progress_waits_the_requested_time_when_shorter_than_the_poll_inte
     result = await mcp.tools["get_investigation_progress"](investigation_id="inv-1", wait_seconds=1)
 
     assert request.await_count == 2
+    assert sleep.await_args is not None
     assert 0 < sleep.await_args.args[0] <= 1
     assert result["entries"] == [{"kind": "step", "title": "Read logs"}]
 
@@ -313,3 +314,17 @@ async def test_cancel_investigation_surfaces_api_error_title_and_code():
     result = await tools["cancel_investigation"](investigation_id="inv-1")
 
     assert result["message"] == "The investigation has already finished. (not_cancellable)"
+
+
+@pytest.mark.asyncio
+async def test_get_investigation_error_without_code_shows_only_the_title():
+    response = Mock(status_code=404)
+    response.json.return_value = {
+        "errors": [{"title": "Not found or unauthorized", "status": "404"}]
+    }
+    response.raise_for_status.side_effect = _HTTPError(response)
+    tools = _register(AsyncMock(return_value=response))
+
+    result = await tools["get_investigation"](investigation_id="missing")
+
+    assert result["message"] == "Not found or unauthorized"

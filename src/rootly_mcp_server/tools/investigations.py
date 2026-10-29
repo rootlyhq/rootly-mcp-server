@@ -91,7 +91,8 @@ def register_investigation_tools(
         error_type, message = mcp_error.categorize_error(exc)
         api_error = _api_error(exc)
         if api_error:
-            message = f"{api_error.get('title')} ({api_error.get('code')})"
+            code = api_error.get("code")
+            message = f"{api_error['title']} ({code})" if code else api_error["title"]
         return mcp_error.tool_error(message, error_type)
 
     async def _fetch_progress(investigation_id: str, after_cursor: str | None) -> dict[str, Any]:
