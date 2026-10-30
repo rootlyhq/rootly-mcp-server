@@ -37,7 +37,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
-    "fastmcp[code-mode]==4.1.3",  # Pin to patched version with Code Mode support (4.1 needs Monty >=1.1)
+    "fastmcp[code-mode]==4.1.4",  # Pin to patched version with Code Mode support (4.1 needs Monty >=1.1)
     "authlib>=1.7.1",  # Override vulnerable transitive authlib (GHSA-jj8c-mmj3-mmgv, GHSA-w8p2-r796-3vmq)
     "python-dotenv>=1.2.2",  # Override vulnerable transitive python-dotenv (GHSA-m8f7-34r5-grfg)
     "python-multipart>=0.0.31",  # Override vulnerable transitive python-multipart (CVE-2026-40347, GHSA-v9pg-7xvm-68hf and others)
@@ -53,7 +53,7 @@ dependencies = [
     "idna>=3.15",  # Override vulnerable transitive idna (PYSEC-2026-215)
     "click>=8.3.3",  # Override vulnerable transitive click (PYSEC-2026-2132)
     "requests==2.34.2", # Pin to patched version
-    "httpx2==2.13.0",  # Rootly API client handed to FastMCP.from_openapi; FastMCP 4 deprecates legacy httpx there
+    "httpx2==2.16.0",  # Rootly API client handed to FastMCP.from_openapi; FastMCP 4 deprecates legacy httpx there
     "certifi>=2026.10.19",  # CA bundle for every httpx2 outbound client (matches legacy httpx); floor for CVE-2026-111943 (#242)
     "pydantic==2.14.1",  # Pin to specific version
     "brotli>=1.2.1",    # For Brotli compression support in httpx2
