@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - '*'
+  # Dispatched at the new tag by release-please.yml.
+  workflow_dispatch:
 
 permissions:
   contents: read
