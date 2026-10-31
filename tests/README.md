@@ -273,15 +273,15 @@ uv run pytest --fixtures test_specific_file.py
 @pytest.mark.unit
 class TestNewFeature:
     """Test new feature functionality."""
-    
+
     def test_feature_basic_case(self, mock_dependency):
         """Test basic functionality works."""
         # Given
         setup_conditions()
-        
-        # When  
+
+        # When
         result = new_feature()
-        
+
         # Then
         assert result.is_expected()
 ```

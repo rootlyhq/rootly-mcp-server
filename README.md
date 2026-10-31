@@ -863,16 +863,10 @@ Complete handoff: current/next on-call + incidents during shifts.
 
 ```python
 # All on-call (any timezone)
-get_oncall_handoff_summary(
-    team_ids="team-1,team-2",
-    timezone="America/Los_Angeles"
-)
+get_oncall_handoff_summary(team_ids="team-1,team-2", timezone="America/Los_Angeles")
 
 # Regional filter - only show APAC on-call during APAC business hours
-get_oncall_handoff_summary(
-    timezone="Asia/Tokyo",
-    filter_by_region=True
-)
+get_oncall_handoff_summary(timezone="Asia/Tokyo", filter_by_region=True)
 ```
 
 Regional filtering shows only people on-call during business hours (9am-5pm) in the specified timezone.
@@ -900,8 +894,8 @@ get_shift_incidents(
     start_time="2025-10-20T09:00:00Z",
     end_time="2025-10-20T17:00:00Z",
     severity="critical",  # optional
-    status="resolved",    # optional
-    tags="database,api"   # optional
+    status="resolved",  # optional
+    tags="database,api",  # optional
 )
 ```
 
