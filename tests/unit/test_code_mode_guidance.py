@@ -436,6 +436,40 @@ def test_format_execute_exception_recognizes_sentry_shapes(message: str):
     assert len(hint) > len(message)
 
 
+@pytest.mark.parametrize(
+    ("code", "error"),
+    [
+        # ROOTLY-MCP-V8
+        (
+            "import json\nreturn json.dumps({'a': 1}, default=str)",
+            "unexpected keyword argument 'default'",
+        ),
+        (
+            "import json, datetime\nreturn json.dumps({'at': datetime.datetime.now()})",
+            "is not JSON serializable",
+        ),
+    ],
+)
+async def test_json_dumps_without_an_encoder_hook_is_explained(
+    client: Client, code: str, error: str
+):
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert error in text
+    assert "has no default= or cls= hook" in text
+    assert ".isoformat()" in text
+
+
+async def test_json_dumps_options_the_sandbox_supports_still_work(client: Client):
+    is_error, text = await _execute(
+        client, {"code": "import json\nreturn json.dumps({'b': 1, 'a': 2}, indent=2)"}
+    )
+
+    assert not is_error
+    assert '"a": 2' in text
+
+
 def test_format_execute_exception_leaves_call_tool_failures_alone():
     message = (
         "Exception: call_tool('list_incidents') failed: start_time: Unexpected keyword "
