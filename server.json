@@ -3,7 +3,7 @@
   "name": "com.rootly/mcp-server",
   "title": "Rootly",
   "description": "Incident management, on-call scheduling, and intelligent analysis powered by Rootly.",
-  "version": "2.2.9",
+  "version": "2.4.0",
   "repository": {
     "url": "https://github.com/rootlyhq/rootly-mcp-server",
     "source": "github"
@@ -26,7 +26,7 @@
     {
       "registryType": "pypi",
       "identifier": "rootly-mcp-server",
-      "version": "2.2.9",
+      "version": "2.4.0",
       "transport": {
         "type": "stdio"
       },
