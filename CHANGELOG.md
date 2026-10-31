@@ -48,6 +48,49 @@ that release appears directly below this section.
 - **`httpx` is no longer a dependency**: the hosted token check, the OAuth authorization-server metadata proxy and the On-Call Health client now use `httpx2`, like the Rootly API client already did, so `httpx` (and `httpcore`) are no longer installed. Outbound requests are unchanged byte for byte: the same headers in the same order (including the `python-httpx/0.28.1` User-Agent these clients sent before), the same trust roots and the same timeouts. Anything that imported `httpx` only because this package pulled it in needs to depend on it directly. The unused `respx` dev dependency is dropped with it.
 - **The on-call aggregating tools now filter shifts upstream**: the three tools above fetched the whole workspace's shifts and discarded the rows they could not use, spending a bounded page budget on shifts that were never eligible for the answer. `schedule_ids[]` and `user_ids[]` are now sent to `/v1/shifts`, so the budget is spent on shifts that can appear in the result — a candidate whose shifts previously fell past the last page fetched could be scored as free. (`check_responder_availability` already reads per-schedule shifts and rejects non-numeric IDs since #235, so it is unchanged here.)
 
+## [2.4.0](https://github.com/rootlyhq/rootly-mcp-server/compare/v2.3.22...v2.4.0) (2026-10-31)
+
+
+### Features
+
+* add Observability logs, patterns and counts tools ([#240](https://github.com/rootlyhq/rootly-mcp-server/issues/240)) ([7f74410](https://github.com/rootlyhq/rootly-mcp-server/commit/7f7441014b3c02b8458ecebd00a9920a70038411))
+* **codemode:** resolve non-canonical tool names and expose tools as functions ([#252](https://github.com/rootlyhq/rootly-mcp-server/issues/252)) ([7640e16](https://github.com/rootlyhq/rootly-mcp-server/commit/7640e161bc92a0d1cdf4cfcb9e680193c77ac1ae))
+* deprecate the SSE transport, sunset 2026-11-20 ([#251](https://github.com/rootlyhq/rootly-mcp-server/issues/251)) ([ed888b5](https://github.com/rootlyhq/rootly-mcp-server/commit/ed888b5b0acbaa0cb83bc4a4caaa260883d4aed9))
+* expose catalog property tools ([#279](https://github.com/rootlyhq/rootly-mcp-server/issues/279)) ([39b04f7](https://github.com/rootlyhq/rootly-mcp-server/commit/39b04f70b818f8d20a6df889b989b28b6faf9788))
+* log MCP auth rejections and exception details ([#272](https://github.com/rootlyhq/rootly-mcp-server/issues/272)) ([e3489ce](https://github.com/rootlyhq/rootly-mcp-server/commit/e3489ce8553589187ad97e1c62bf08c9494680b7))
+* run PostHog alongside AgentCat whenever POSTHOG_PROJECT_TOKEN is set ([#227](https://github.com/rootlyhq/rootly-mcp-server/issues/227)) ([83bc567](https://github.com/rootlyhq/rootly-mcp-server/commit/83bc567b1838672cc3d8f42eb8e404ba4778e14e))
+* serve a setup page at GET / on hosted deployments ([#275](https://github.com/rootlyhq/rootly-mcp-server/issues/275)) ([ff988d6](https://github.com/rootlyhq/rootly-mcp-server/commit/ff988d6c328e14edca4204827c2000a89cda6717))
+* **tools:** AI SRE investigation tools [RAI-1839] ([#280](https://github.com/rootlyhq/rootly-mcp-server/issues/280)) ([deeb571](https://github.com/rootlyhq/rootly-mcp-server/commit/deeb571e96f59e50511dd1681db1ff091c5208b6))
+
+
+### Bug Fixes
+
+* actionable errors for the top repeat failures in the Oct 24 Sentry sweep ([#273](https://github.com/rootlyhq/rootly-mcp-server/issues/273)) ([fb0e468](https://github.com/rootlyhq/rootly-mcp-server/commit/fb0e468790371bc04abe6bd1a1aeb1d002937b29))
+* actionable errors for the top repeat failures in the Oct 26 Sentry sweep ([#276](https://github.com/rootlyhq/rootly-mcp-server/issues/276)) ([537dce8](https://github.com/rootlyhq/rootly-mcp-server/commit/537dce85fcc7f3c3c99a09e50f27237c50d5507b))
+* close argument-repair gaps seen in Sentry after [#264](https://github.com/rootlyhq/rootly-mcp-server/issues/264) ([#265](https://github.com/rootlyhq/rootly-mcp-server/issues/265)) ([35f125b](https://github.com/rootlyhq/rootly-mcp-server/commit/35f125b7c5bc1e7f5577e831edbbd69dc0fcc8e7))
+* **codemode:** correct execute guidance and make failed calls self-explaining ([#257](https://github.com/rootlyhq/rootly-mcp-server/issues/257)) ([dc79dd4](https://github.com/rootlyhq/rootly-mcp-server/commit/dc79dd4b90403fa465807fdf3398070a9cf976a3))
+* **codemode:** restore the per-execute tool call limit ([#254](https://github.com/rootlyhq/rootly-mcp-server/issues/254)) ([fcc89d7](https://github.com/rootlyhq/rootly-mcp-server/commit/fcc89d77e7ce6ef74da94a19979ca0807532c763))
+* deduplicate an alias passed alongside its parameter; map bare id and shift field names ([#266](https://github.com/rootlyhq/rootly-mcp-server/issues/266)) ([bd786cd](https://github.com/rootlyhq/rootly-mcp-server/commit/bd786cd6b7134d0614a3b75cbc0f11f95b08638b))
+* **deps:** add urllib3 floor, raise pyjwt and mcp floors for open advisories ([#234](https://github.com/rootlyhq/rootly-mcp-server/issues/234)) [skip ci] ([2df6c87](https://github.com/rootlyhq/rootly-mcp-server/commit/2df6c87e190d9fd2ca3a16eaa9e78e3e5b3a51f6))
+* **docker:** exec the server so it receives SIGTERM ([#245](https://github.com/rootlyhq/rootly-mcp-server/issues/245)) ([7734986](https://github.com/rootlyhq/rootly-mcp-server/commit/7734986abef1edd248e149e0aa9cee1f32df4812))
+* don't log client disconnects as ASGI exceptions ([#250](https://github.com/rootlyhq/rootly-mcp-server/issues/250)) [skip ci] ([3e41e1e](https://github.com/rootlyhq/rootly-mcp-server/commit/3e41e1e791e485327c811ad027d00c1462ee4040))
+* fill a /v1/&lt;resources&gt;/{id} path from the matching &lt;resource&gt;_id ([#271](https://github.com/rootlyhq/rootly-mcp-server/issues/271)) ([d3228c0](https://github.com/rootlyhq/rootly-mcp-server/commit/d3228c09c43c193f540016a6fbdba305a42a7cbc))
+* name real MCP tools in alert-route hints; explain sandbox json.dumps limits ([#289](https://github.com/rootlyhq/rootly-mcp-server/issues/289)) ([1ea3502](https://github.com/rootlyhq/rootly-mcp-server/commit/1ea3502448004f059ce9d57e50491ea44550d3ff))
+* **oncall:** drop the ignored tags filter and resolve handoff roles ([#259](https://github.com/rootlyhq/rootly-mcp-server/issues/259)) ([85818fe](https://github.com/rootlyhq/rootly-mcp-server/commit/85818febca42f68d787c7097e6a5ddeb9e6f5bfd))
+* **oncall:** read shift roles from the included user; deprecate schedule_ids ([#260](https://github.com/rootlyhq/rootly-mcp-server/issues/260)) ([c5b0a96](https://github.com/rootlyhq/rootly-mcp-server/commit/c5b0a9673ef652c19b49ee0b5a8efcfa7a467bf0))
+* **oncall:** scope on-call shift queries to what was actually asked for ([#220](https://github.com/rootlyhq/rootly-mcp-server/issues/220)) [skip ci] ([84069ce](https://github.com/rootlyhq/rootly-mcp-server/commit/84069ced95c0c242845405be5e70109d584f44a0))
+* **oncall:** stop paginating schedule shifts, which returned duplicates ([#258](https://github.com/rootlyhq/rootly-mcp-server/issues/258)) ([46426ed](https://github.com/rootlyhq/rootly-mcp-server/commit/46426edaec83bb40875b36aa85a32ee3c4a62e17))
+* repair API-shaped arguments to curated tools and explain the rest ([#264](https://github.com/rootlyhq/rootly-mcp-server/issues/264)) ([16d7151](https://github.com/rootlyhq/rootly-mcp-server/commit/16d71514ee4f92089d119bfb8db0de8f506c40a1))
+* repair misshapen JSON:API write bodies; map the last Sentry argument names ([#267](https://github.com/rootlyhq/rootly-mcp-server/issues/267)) ([4e41716](https://github.com/rootlyhq/rootly-mcp-server/commit/4e417160a071863d665b269f93db16a69573f4ea))
+* resolve the five response-contract violations ([#262](https://github.com/rootlyhq/rootly-mcp-server/issues/262)) ([a55ce6e](https://github.com/rootlyhq/rootly-mcp-server/commit/a55ce6e6a307630a73251e515aeeaf98f7d5996b))
+* tell models which path argument a tool needs ([#249](https://github.com/rootlyhq/rootly-mcp-server/issues/249)) ([b5c7a3d](https://github.com/rootlyhq/rootly-mcp-server/commit/b5c7a3d338a3e28ded086194f710042fe885c123))
+* treat null arguments as unset and point path-ID mixups at the right tool ([#278](https://github.com/rootlyhq/rootly-mcp-server/issues/278)) ([009b5c9](https://github.com/rootlyhq/rootly-mcp-server/commit/009b5c923bfcaaccaa24714dab6ee050c6c0cd0b))
+
+
+### Documentation
+
+* add Databricks setup and Marketplace listing kit ([#239](https://github.com/rootlyhq/rootly-mcp-server/issues/239)) [skip ci] ([1022f6c](https://github.com/rootlyhq/rootly-mcp-server/commit/1022f6c2f9cbbfd8aa62f3699083b553abc5cd25))
+
 ## [2.3.22] - Released 2026-10-21
 
 ### Security
