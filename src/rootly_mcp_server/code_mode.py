@@ -94,6 +94,12 @@ _RESULT_SHAPE_ERROR = re.compile(
     r"|(?:str|string|list) indices must be integers"
     r"|'NoneType' object is not subscriptable"
 )
+# ROOTLY-MCP-V8: json.dumps(..., default=str) is the usual way to serialize a
+# datetime, but Monty's JSONEncoder takes neither default= nor cls=.
+_JSON_ENCODER_ERROR = re.compile(
+    r"JSONEncoder\.__init__\(\) got an unexpected keyword argument"
+    r"|is not JSON serializable"
+)
 _RESULT_SHAPE_HINT = (
     "call_tool returns the tool's result directly, with no 'result' wrapper: a dict "
     "such as the JSON:API body {'data': [...], 'meta': {...}} for API tools, or the "
@@ -426,6 +432,13 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
             f"{message}. Sort or compare by a plain value, e.g. "
             "`sorted(items, key=lambda item: item.get('id') or '')`, and give "
             "missing values a default so None never meets a str or int."
+        )
+
+    if _JSON_ENCODER_ERROR.search(message):
+        return (
+            f"{message}. The sandbox's json.dumps has no default= or cls= hook. Return "
+            "the dict or list itself instead of a JSON string, and turn datetimes into "
+            "strings first with .isoformat()."
         )
 
     if _RESULT_SHAPE_ERROR.search(message):

@@ -771,8 +771,58 @@ class TestTransportModule:
             response,
         )
         body = annotated.json()
-        assert body["_use_tool"]["use"] == "listAlertRoutes"
-        assert body["_use_tool"]["instead_of"] == "listAlertRoutingRules"
+        assert body["_use_tool"]["use"] == "list_alert_routes"
+        assert body["_use_tool"]["instead_of"] == "list_alert_routing_rules"
+        assert "Call list_alert_routes instead" in body["_use_tool"]["reason"]
+
+    @pytest.mark.parametrize(
+        ("method", "path", "legacy", "replacement"),
+        [
+            ("GET", "/v1/alert_routing_rules/abc", "get_alert_routing_rule", "get_alert_route"),
+            ("POST", "/v1/alert_routing_rules", "create_alert_routing_rule", "create_alert_route"),
+            (
+                "PUT",
+                "/v1/alert_routing_rules/abc",
+                "update_alert_routing_rule",
+                "update_alert_route",
+            ),
+        ],
+    )
+    def test_alert_routing_rules_403_names_the_matching_alert_route_tool(
+        self, method, path, legacy, replacement
+    ):
+        # ROOTLY-MCP-1X: the hint named the operationId `listAlertRoutes`, which
+        # is not a tool the model can call.
+        url = f"https://api.rootly.com{path}"
+        response = httpx2.Response(
+            403,
+            request=httpx2.Request(method, url),
+            content=(
+                b'{"errors":[{"title":"Advanced alert routing features are enabled '
+                b'for your team.","status":"403"}]}'
+            ),
+        )
+        body = transport.AuthenticatedHTTPXClient._maybe_annotate_alert_routing_deprecation(
+            method, url, response
+        ).json()
+        assert body["_use_tool"] == {
+            "instead_of": legacy,
+            "use": replacement,
+            "reason": body["_use_tool"]["reason"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_alert_route_hint_names_real_tools(self, monkeypatch):
+        from rootly_mcp_server.server import create_rootly_mcp_server
+
+        monkeypatch.setenv("ROOTLY_API_TOKEN", "test-token")
+        server = create_rootly_mcp_server(
+            swagger_path="src/rootly_mcp_server/data/swagger.json", hosted=False
+        )
+        names = {tool.name for tool in await server.list_tools()}
+        for legacy, replacement in transport._ALERT_ROUTE_REPLACEMENTS.values():
+            assert legacy in names
+            assert replacement in names
 
     def test_alert_routing_rules_non_advanced_403_not_annotated(self):
         """Other 403 reasons (auth failure, etc.) must not get the use_tool hint."""

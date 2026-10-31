@@ -859,6 +859,18 @@ def upstream_client(**kwargs: Any) -> httpx2.AsyncClient:
     return client
 
 
+# (method, is_collection) on /v1/alert_routing_rules -> (legacy MCP tool, the
+# /v1/alert_routes tool to call instead). Named as MCP tools, not operationIds,
+# because the model can only act on a name it sees in its tool list.
+_ALERT_ROUTE_REPLACEMENTS: dict[tuple[str, bool], tuple[str, str]] = {
+    ("GET", True): ("list_alert_routing_rules", "list_alert_routes"),
+    ("GET", False): ("get_alert_routing_rule", "get_alert_route"),
+    ("POST", True): ("create_alert_routing_rule", "create_alert_route"),
+    ("PUT", False): ("update_alert_routing_rule", "update_alert_route"),
+    ("PATCH", False): ("update_alert_routing_rule", "update_alert_route"),
+}
+
+
 class AuthenticatedHTTPXClient:
     """An HTTPX client wrapper that handles Rootly API authentication and parameter transformation."""
 
@@ -1443,16 +1455,20 @@ class AuthenticatedHTTPXClient:
             first_title = str(errors[0].get("title", ""))
         if "advanced alert routing" not in first_title.lower():
             return response
-        replacement = "listAlertRoutes" if method.upper() == "GET" else "the Alert Routes endpoint"
+        legacy_tool, replacement = _ALERT_ROUTE_REPLACEMENTS.get(
+            (method.upper(), path == "/v1/alert_routing_rules"),
+            ("an alert_routing_rule tool", "list_alert_routes"),
+        )
         body.setdefault(
             "_use_tool",
             {
-                "instead_of": "listAlertRoutingRules",
+                "instead_of": legacy_tool,
                 "use": replacement,
                 "reason": (
-                    "This tenant has Advanced Alert Routing enabled. The legacy "
-                    "/v1/alert_routing_rules endpoint is locked; use /v1/alert_routes "
-                    "(operationId listAlertRoutes / getAlertRoute) instead."
+                    "This team has Advanced Alert Routing enabled, so the legacy "
+                    "alert_routing_rule tools always fail here. Call "
+                    f"{replacement} instead; alert routes have their own schema, so "
+                    "check it with get_schema or list_alert_routes before writing."
                 ),
             },
         )
