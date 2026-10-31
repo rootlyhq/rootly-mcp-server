@@ -59,3 +59,18 @@ Additional testing tools are available in the `tests/` directory.
 The `Makefile` wraps the toolchain; run `make help` to list every target.
 Common ones: `make check` (pre-push gate), `make test`, and `make fetch-spec`
 to refresh the bundled OpenAPI spec from source.
+
+## Releases
+
+Releases are cut by [release-please](https://github.com/googleapis/release-please).
+PR titles become the squash commit, so write them as
+[conventional commits](https://www.conventionalcommits.org/): `fix:` makes a
+patch release, `feat:` a minor one, and `feat!:` or a `BREAKING CHANGE:` footer
+a major one. `chore:`, `ci:`, `docs:`, `test:` and dependency bumps don't
+trigger a release.
+
+On every push to `main`, release-please keeps one open release PR up to date.
+It bumps the version in `pyproject.toml`, `uv.lock` and `server.json`, and adds
+a `CHANGELOG.md` section. Merging that PR tags the release, creates the GitHub
+Release and publishes the package to PyPI. Don't bump versions or edit released
+`CHANGELOG.md` sections by hand.
