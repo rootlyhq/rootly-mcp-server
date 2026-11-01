@@ -1,0 +1,14 @@
+{
+  "ticket": "code-mode-sandbox-fails-on-import-ast-rootly-mcp",
+  "title": "Code Mode: make unsupported-module imports (import ast) actionable in execute (ROOTLY-MCP-2WP)",
+  "summary": "Code Mode's execute tool runs scripts in pydantic_monty, which has no `ast` module (checked against 1.3.0, the pinned version, and 1.4.0, the latest), so `import ast` raises ModuleNotFoundError (ROOTLY-MCP-2WP, https://rootly.sentry.io/issues/7823666790/). The model then gets a generic hint ('json, datetime, re, asyncio, ...') that names neither what the sandbox actually has nor a replacement, so it can't self-correct and the Rootly workflow it was running fails. Datadog shows the same pattern for zoneinfo, time, urllib and builtins. The fix names the real importable module set, which a test checks against the sandbox, and gives module-specific replacements, starting with ast -> json.loads / call_tool's already-parsed results and zoneinfo -> datetime.timezone.",
+  "change_kind": "bug",
+  "work_kind": "change",
+  "acceptance_criteria": [
+    {"id": "ac-1", "text": "A regression test runs `import ast` through the real Code Mode execute tool (real Monty sandbox, tests/unit/test_code_mode_guidance.py). It asserts the error names 'ast', says ast is unavailable in the sandbox, and points to the replacement: call_tool already returns parsed dicts/lists, and json.loads parses JSON text. The test fails on main and passes with the fix."},
+    {"id": "ac-2", "text": "An unsupported-module error from execute lists the sandbox's importable stdlib modules explicitly, not 'json, datetime, re, asyncio, ...'. A unit test runs `import <m>` for every module in that list through the real sandbox, and each one succeeds, so the list cannot drift from Monty."},
+    {"id": "ac-3", "text": "`import zoneinfo` gets a module-specific hint pointing to datetime.timezone.utc / datetime.timezone(datetime.timedelta(hours=N)). A third-party import such as `requests` still gets the existing 'no third-party packages, network or filesystem; use call_tool' guidance (the existing tests in test_code_mode_module.py and test_code_mode_guidance.py still pass)."},
+    {"id": "ac-4", "text": "`make lint` (or the repo's ruff + pyright checks) and the affected unit tests (tests/unit/test_code_mode_guidance.py, tests/unit/test_code_mode_module.py) pass."},
+    {"id": "ac-5", "text": "The PR is labelled `sentry` and names ROOTLY-MCP-2WP with https://rootly.sentry.io/issues/7823666790/. It describes the real impact: a failed execute means the agent's Rootly workflow doesn't complete, and Sentry's 0 users is normal for MCP tool calls. It is not merged."}
+  ]
+}

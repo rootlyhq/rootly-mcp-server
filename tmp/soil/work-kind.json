@@ -1,0 +1,6 @@
+{
+  "key": "bug|Code Mode: make unsupported-module imports (import ast) actionable in execute (ROOTLY-MCP-2WP)|Code Mode's execute tool runs scripts in pydantic_monty, which has no `ast` module (checked against 1.3.0, the pinned version, and 1.4.0, the latest), so `import ast` raises ModuleNotFoundError (ROOTLY-MCP-2WP, https://rootly.sentry.io/issues/7823666790/). The model then gets a generic hint ('json, datetime, re, asyncio, ...') that names neither what the sandbox actually has nor a replacement, so it can't self-correct and the Rootly workflow it was running fails. Datadog shows the same pattern fo",
+  "perf": false,
+  "source": "classifier",
+  "probability": 0.04
+}

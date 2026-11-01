@@ -1,0 +1,8 @@
+uv run --python 3.12 ruff check .
+All checks passed!
+uv run --python 3.12 ruff format --check .
+102 files already formatted
+uv run --python 3.12 pyright
+0 errors, 0 warnings, 0 informations
+uv run --python 3.12 mypy src/rootly_mcp_server
+Success: no issues found in 33 source files

@@ -1,0 +1,3 @@
+    assert "ast is not available in the sandbox" in text
+E   assert 'ast is not available in the sandbox' in "Error calling tool 'execute': ModuleNotFoundError: No module named 'ast'. Code Mode runs in a sandbox with part of th...o, ...) and no third-party packages, network or filesystem. Use `await call_tool(name, params)` for Rootly operations."
+FAILED tests/unit/test_code_mode_guidance.py::test_import_ast_points_to_json_and_parsed_results

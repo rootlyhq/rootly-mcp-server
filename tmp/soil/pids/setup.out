@@ -1,0 +1,171 @@
+downloading uv 0.13.6 aarch64-unknown-linux-gnu
+installing to /home/dev/.local/bin
+  uv
+  uvx
+everything's installed!
+
+To add $HOME/.local/bin to your PATH, either restart your shell or run:
+
+    source $HOME/.local/bin/env (sh, bash, zsh)
+    source $HOME/.local/bin/env.fish (fish)
+Using CPython 3.12.3 interpreter at: /usr/bin/python3
+Creating virtual environment at: .venv
+Resolved 124 packages in 1ms
+   Building rootly-mcp-server @ file:///workspace/lane
+Downloading cryptography (4.5MiB)
+Downloading scikit-learn (8.5MiB)
+Downloading pip (1.7MiB)
+Downloading pyright (5.9MiB)
+Downloading beartype (1.5MiB)
+Downloading ruff (9.6MiB)
+Downloading pygments (1.2MiB)
+Downloading scipy (32.4MiB)
+Downloading pydantic-core (2.0MiB)
+Downloading ast-serialize (1.2MiB)
+Downloading brotli (1.3MiB)
+Downloading numpy (15.0MiB)
+Downloading pydantic-monty-runtime (14.5MiB)
+Downloading pydantic-monty-client (3.9MiB)
+Downloading mypy (13.8MiB)
+ Downloaded pygments
+ Downloaded ast-serialize
+ Downloaded brotli
+ Downloaded beartype
+ Downloaded pydantic-core
+ Downloaded pip
+ Downloaded cryptography
+ Downloaded pydantic-monty-client
+ Downloaded scikit-learn
+ Downloaded ruff
+ Downloaded numpy
+ Downloaded mypy
+ Downloaded pyright
+ Downloaded scipy
+      Built rootly-mcp-server @ file:///workspace/lane
+ Downloaded pydantic-monty-runtime
+Prepared 121 packages in 1.93s
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+Installed 121 packages in 694ms
+ + aiofile==3.12.3
+ + annotated-types==0.8.0
+ + anyio==4.15.1
+ + ast-serialize==0.13.1
+ + attrs==26.1.0
+ + authlib==1.9.1
+ + backoff==2.2.1
+ + bandit==1.9.4
+ + beartype==0.23.1
+ + black==26.10.1
+ + boolean-py==5.0
+ + brotli==1.2.1
+ + cachecontrol==0.14.4
+ + cachetools==7.2.4
+ + caio==0.12.9
+ + certifi==2026.10.23
+ + cffi==2.1.1
+ + charset-normalizer==3.5.2
+ + click==8.5.0
+ + cloudpickle==3.1.2
+ + coverage==7.17.0
+ + cryptography==50.0.2
+ + cyclonedx-python-lib==11.6.0
+ + cyclopts==5.2.0
+ + defusedxml==0.7.1
+ + detect-secrets==1.5.0
+ + distro==1.9.0
+ + dnspython==2.9.0
+ + docstring-parser==0.18.0
+ + email-validator==2.3.0
+ + exceptiongroup==1.3.1
+ + fastmcp==4.1.4
+ + fastmcp-slim==4.1.4
+ + filelock==4.2.1
+ + griffelib==2.4.0
+ + h11==0.16.0
+ + httpcore2==2.16.0
+ + httpx2==2.16.0
+ + idna==3.20
+ + iniconfig==2.0.0
+ + isort==9.0.2
+ + joblib==1.6.0
+ + joserfc==1.7.7
+ + jsonref==1.1.0
+ + jsonschema==4.26.0
+ + jsonschema-path==0.5.0
+ + jsonschema-specifications==2025.9.1
+ + librt==0.16.0
+ + license-expression==30.4.4
+ + markdown-it-py==4.2.0
+ + mcp==2.3.0
+ + mcp-types==2.3.0
+ + mdurl==0.1.2
+ + msgpack==1.2.4
+ + mypy==2.4.0
+ + mypy-extensions==1.1.0
+ + narwhals==2.27.1
+ + nodeenv==1.9.1
+ + numpy==2.5.4
+ + openapi-pydantic==0.6.0
+ + opentelemetry-api==1.45.1
+ + packageurl-python==0.17.6
+ + packaging==26.3
+ + pathable==0.6.0
+ + pathspec==1.0.4
+ + pip==26.2.2
+ + pip-api==0.0.34
+ + pip-audit==2.10.1
+ + pip-requirements-parser==32.0.1
+ + platformdirs==4.13.5
+ + pluggy==1.7.0
+ + posthog==7.76.0
+ + py-key-value-aio==0.4.6
+ + py-serializable==2.1.0
+ + pycparser==3.11
+ + pydantic==2.14.1
+ + pydantic-core==2.50.1
+ + pydantic-monty==1.3.0
+ + pydantic-monty-client==1.3.0
+ + pydantic-monty-runtime==1.3.0
+ + pydantic-settings==2.16.1
+ + pygments==2.21.0
+ + pyjwt==2.15.1
+ + pyparsing==3.3.2
+ + pyperclip==1.11.0
+ + pyright==1.1.414
+ + pytest==9.2.0
+ + pytest-asyncio==1.4.1
+ + pytest-cov==7.1.0
+ + pytest-mock==3.17.0
+ + pytest-timeout==2.4.0
+ + python-dotenv==1.2.4
+ + python-multipart==0.0.32
+ + pytokens==0.4.1
+ + pyyaml==6.0.3
+ + referencing==0.37.0
+ + requests==2.34.2
+ + rich==15.0.0
+ + rich-rst==2.2.0
+ + rootly-mcp-server==2.4.0 (from file:///workspace/lane)
+ + rpds-py==2026.9.1
+ + ruff==0.17.3
+ + scikit-learn==1.9.1
+ + scipy==1.18.1
+ + sortedcontainers==2.4.0
+ + sse-starlette==3.5.0
+ + sseclient-py==1.9.0
+ + starlette==1.10.0
+ + stevedore==5.6.0
+ + threadpoolctl==3.7.0
+ + tomli==2.4.0
+ + tomli-w==1.2.0
+ + truststore==0.10.5
+ + types-requests==2.33.0.20261006
+ + typing-extensions==4.16.0
+ + typing-inspection==0.4.4
+ + uncalled-for==0.4.1
+ + urllib3==2.8.0
+ + uvicorn==0.54.0
+ + watchfiles==1.3.0
+ + websockets==17.3

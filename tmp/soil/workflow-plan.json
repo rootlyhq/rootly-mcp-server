@@ -1,0 +1,11 @@
+{
+  "skip": [],
+  "depth": {
+    "level": "medium"
+  },
+  "noCode": false,
+  "contextDepth": "light",
+  "rationale": "jev: no-code no (p=1.00), context light (p=0.67), risk medium (p=0.66)",
+  "confidence": 0.66,
+  "source": "jev"
+}

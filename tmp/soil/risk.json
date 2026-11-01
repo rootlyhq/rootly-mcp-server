@@ -1,0 +1,10 @@
+{
+  "level": "low",
+  "rationale": "The change only rewrites the text of one error-hint branch in _format_execute_exception, which runs after the Monty sandbox has already raised; it does not change what code the sandbox runs, what it can import, tool dispatch, auth, or any dependency version. The worst realistic failure is a less helpful or wrong hint string (e.g. the advertised module list drifting from Monty after an upgrade), which a test that imports every listed module through the real sandbox guards against. A bug that raised inside the formatter would turn a ToolError into a different error on an already-failing call, which the unit tests on the branch cover. Rollback is a single-commit revert with no data or schema involved.",
+  "factors": [
+    "blast radius: only Code Mode execute calls that already failed with 'No module named ...'; successful executes and all non-Code-Mode tools are untouched",
+    "reversibility: trivial; one commit revert, no migrations, config or dependency changes",
+    "security/data surface: none touched; no auth, PII, or writes. The hint deliberately omits sandboxed sys/os so it doesn't advertise them, and existing sandbox-isolation tests stay as they are",
+    "prod-critical path: on the hosted MCP server's execute error path only, which runs after the failure; the happy path and latency are unchanged"
+  ]
+}
