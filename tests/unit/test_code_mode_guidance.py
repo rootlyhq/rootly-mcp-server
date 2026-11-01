@@ -19,6 +19,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools.function_tool import FunctionTool
 
 from rootly_mcp_server.code_mode import (
+    _SANDBOX_MODULES,
     EXECUTE_DESCRIPTION,
     _format_execute_exception,
     build_code_mode_transform,
@@ -417,6 +418,41 @@ async def test_sandbox_has_no_host_filesystem_or_environment(
 
     assert is_error
     assert expected in text
+
+
+async def test_import_ast_points_to_json_and_parsed_results(client: Client):
+    # ROOTLY-MCP-2WP: Monty has no ast module, so ast.literal_eval on a
+    # call_tool result fails; the hint must name what to use instead.
+    text = await _run(client, "import ast\nreturn ast.literal_eval('[1]')")
+
+    assert "No module named 'ast'" in text
+    assert "ast is not available in the sandbox" in text
+    assert "call_tool already returns parsed dicts and lists" in text
+    assert "json.loads" in text
+
+
+async def test_import_zoneinfo_points_to_datetime_timezone(client: Client):
+    text = await _run(client, "import zoneinfo\nreturn 1")
+
+    assert "No module named 'zoneinfo'" in text
+    assert "datetime.timezone.utc" in text
+    assert "datetime.timezone(datetime.timedelta(hours=" in text
+
+
+async def test_missing_module_error_lists_importable_modules(client: Client):
+    text = await _run(client, "import statistics\nreturn 1")
+
+    assert ", ".join(_SANDBOX_MODULES) in text
+    assert "(json, datetime, re, asyncio, ...)" not in text
+
+
+@pytest.mark.parametrize("module", _SANDBOX_MODULES)
+async def test_advertised_sandbox_modules_import(client: Client, module: str):
+    # The missing-module hint lists these as importable; a Monty upgrade that
+    # drops one must fail here rather than mislead the model.
+    is_error, text = await _execute(client, {"code": f"import {module}\nreturn 1"})
+
+    assert not is_error, text
 
 
 @pytest.mark.parametrize(

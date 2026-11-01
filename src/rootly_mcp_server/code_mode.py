@@ -100,6 +100,39 @@ _JSON_ENCODER_ERROR = re.compile(
     r"JSONEncoder\.__init__\(\) got an unexpected keyword argument"
     r"|is not JSON serializable"
 )
+# The top-level module of a failed import, so `urllib.parse` reports `urllib`.
+_MISSING_MODULE = re.compile(r"No module named '([^'.]+)")
+# Standard-library modules Monty imports; sys and os are left out because the
+# sandbox stubs them. tests/unit/test_code_mode_guidance.py imports each one.
+_SANDBOX_MODULES = (
+    "asyncio",
+    "base64",
+    "bisect",
+    "collections",
+    "copy",
+    "dataclasses",
+    "datetime",
+    "functools",
+    "hashlib",
+    "itertools",
+    "json",
+    "math",
+    "random",
+    "re",
+    "time",
+    "typing",
+)
+# ROOTLY-MCP-2WP: modules scripts reach for that Monty lacks, with what to use.
+_MODULE_REPLACEMENTS = {
+    "ast": (
+        "ast is not available in the sandbox. call_tool already returns parsed dicts "
+        "and lists, so there is nothing to literal_eval; use json.loads for JSON text."
+    ),
+    "zoneinfo": (
+        "zoneinfo is not available in the sandbox. Use datetime.timezone.utc, or "
+        "datetime.timezone(datetime.timedelta(hours=N)) for a fixed offset."
+    ),
+}
 _RESULT_SHAPE_HINT = (
     "call_tool returns the tool's result directly, with no 'result' wrapper: a dict "
     "such as the JSON:API body {'data': [...], 'meta': {...}} for API tools, or the "
@@ -458,9 +491,12 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
         )
 
     if isinstance(exc, ModuleNotFoundError) or "No module named" in message:
+        missing_module = _MISSING_MODULE.search(message)
+        replacement = _MODULE_REPLACEMENTS.get(missing_module.group(1)) if missing_module else None
         return (
-            f"{message}. Code Mode runs in a sandbox with part of the standard library "
-            "(json, datetime, re, asyncio, ...) and no third-party packages, network or "
+            f"{message}. {replacement + ' ' if replacement else ''}Code Mode runs in a "
+            "sandbox whose importable standard-library modules are: "
+            f"{', '.join(_SANDBOX_MODULES)}. There are no third-party packages, network or "
             "filesystem. Use `await call_tool(name, params)` for Rootly operations."
         )
 

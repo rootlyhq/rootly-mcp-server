@@ -232,6 +232,14 @@ def test_format_execute_exception_returns_friendlier_messages():
     )
     assert missing_import is not None
     assert "no third-party packages, network or filesystem" in missing_import
+    assert "call_tool" in missing_import
+    assert "is not available in the sandbox" not in missing_import
+
+    missing_submodule = _format_execute_exception(
+        Exception("ModuleNotFoundError: No module named 'urllib.parse'")
+    )
+    assert missing_submodule is not None
+    assert "no third-party packages, network or filesystem" in missing_submodule
 
     parser_error = _format_execute_exception(Exception("Expected name, got Subscript(...)"))
     assert parser_error is not None
