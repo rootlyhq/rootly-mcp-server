@@ -487,11 +487,44 @@ def _jsonapi_data_schema(schema: Mapping[str, Any] | None) -> tuple[str | None, 
     data_properties = _properties(data)
     type_enum = (data_properties.get("type") or {}).get("enum") or []
     resource_type = type_enum[0] if len(type_enum) == 1 else None
-    return resource_type, _properties(data_properties.get("attributes"))
+    return resource_type, _attribute_properties(data_properties.get("attributes"))
+
+
+def _attribute_properties(attributes: Any) -> dict[str, Any]:
+    """Every property ``data.attributes`` may carry, across its anyOf/oneOf branches.
+
+    Some bodies vary by kind -- ``create_workflow_run`` has one branch per
+    trigger (incident_id, post_mortem_id, action_item_id, ...) -- and declare
+    nothing at the top level. Reading only ``properties`` there found no
+    attributes, so the envelope repair never ran for them.
+    """
+    if not isinstance(attributes, dict):
+        return {}
+    merged = dict(_properties(attributes))
+    for keyword in ("anyOf", "oneOf", "allOf"):
+        branches = attributes.get(keyword)
+        if not isinstance(branches, list):
+            continue
+        for branch in branches:
+            for name, prop in _properties(branch).items():
+                merged.setdefault(name, prop)
+    return merged
+
+
+def _json_kind(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, (int, float)):
+        return "a number"
+    if isinstance(value, list):
+        return f"an array of {len(value)} items"
+    return f"a {type(value).__name__}"
 
 
 class MalformedJsonApiBody(ValueError):
-    """A write tool's ``data`` arrived as a string that does not parse as JSON."""
+    """A write tool's ``data`` is not a JSON object and cannot be made into one."""
 
 
 def repair_jsonapi_body(
@@ -526,15 +559,22 @@ def repair_jsonapi_body(
                 f"valid JSON ({exc.msg} at character {exc.pos} of {len(data)}). Pass "
                 f"`data` as an object rather than a string, e.g. {example}."
             ) from None
-        if not isinstance(parsed, dict):
-            return result, rewrites
         data = parsed
-        rewrites.append("data:json->object")
+        rewrites.append("data:json->object" if isinstance(parsed, dict) else "data:json->value")
     if isinstance(data, dict) and set(data) == {"data"} and isinstance(data["data"], dict):
         data = data["data"]
         rewrites.append("data.data->data")
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        # A single resource sent as a one-item array: Rootly answers
+        # "data: Expected hash" without saying the array was the problem.
+        data = data[0]
+        rewrites.append("data:[object]->object")
     if not isinstance(data, dict):
-        return result, rewrites
+        example = json.dumps({"type": resource_type or "<type>", "attributes": {}})
+        raise MalformedJsonApiBody(
+            f"`data` must be a single JSON object, but it arrived as "
+            f"{_json_kind(data)}. Pass one object, e.g. {example}."
+        )
 
     misplaced = [key for key in data if key not in _JSONAPI_ENVELOPE_KEYS]
     attributes = data.get("attributes")

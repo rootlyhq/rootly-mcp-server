@@ -1240,6 +1240,7 @@ class AuthenticatedHTTPXClient:
         response = self._maybe_annotate_404_response(method, url, response)
         response = self._maybe_annotate_alert_routing_deprecation(method, url, response)
         response = self._maybe_annotate_offset_pagination_limit(method, url, response)
+        response = self._maybe_annotate_unsortable_field(response)
 
         return response
 
@@ -1475,6 +1476,62 @@ class AuthenticatedHTTPXClient:
                     "each response's cursor. Filters are preserved across "
                     "cursor pages. Note that a cursor walk restarts from the "
                     "beginning; it cannot resume at the page you stopped on."
+                ),
+            },
+        )
+        try:
+            response._content = json.dumps(body).encode()  # noqa: SLF001
+        except Exception:  # nosec B110 - best-effort annotation
+            return response
+        return response
+
+    @staticmethod
+    def _maybe_annotate_unsortable_field(response: httpx2.Response) -> httpx2.Response:
+        """Explain a 400 caused by sorting on a field the search index lacks.
+
+        Search-backed list endpoints (action items, post-mortems, alert routes,
+        ...) sort in Elasticsearch, which can only order by fields the index
+        stores. `updated_at` is missing from several of those indexes, so the
+        natural `sort=-updated_at` comes back as the generic "Invalid search
+        query or sort parameter" -- 113 times on action items in one month.
+        Nothing in that title says the sort was the problem, so the model
+        retries the same call. The hint names the value and the way out.
+        """
+        if response.status_code != 400:
+            return response
+        try:
+            sort = response.request.url.params.get("sort")
+        except Exception:  # nosec B110 - no request attached
+            return response
+        if not sort:
+            return response
+        try:
+            body = response.json()
+        except Exception:  # nosec B110 - best-effort annotation
+            return response
+        if not isinstance(body, dict):
+            return response
+        errors = body.get("errors")
+        first_title = ""
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            first_title = str(errors[0].get("title", ""))
+        if "invalid search query or sort parameter" not in first_title.lower():
+            return response
+        body.setdefault(
+            "_sort_hint",
+            {
+                "rejected_sort": sort,
+                "reason": (
+                    f"This endpoint cannot sort by {sort!r}: it sorts in a search "
+                    "index that only orders by the fields it stores, and updated_at "
+                    "is not stored on every endpoint. Retrying with the same sort "
+                    "will keep failing."
+                ),
+                "how": (
+                    "Retry without `sort` to get the endpoint's default order "
+                    "(newest first by created_at), or sort by created_at / "
+                    "-created_at. To find recently changed records, filter on a "
+                    "created_at or due-date range instead."
                 ),
             },
         )
@@ -1786,6 +1843,7 @@ class AuthenticatedHTTPXClient:
         response = self._maybe_annotate_offset_pagination_limit(
             request.method, str(request.url), response
         )
+        response = self._maybe_annotate_unsortable_field(response)
         return response
 
     async def __aenter__(self):

@@ -122,3 +122,50 @@ class TestClientRetriesOn429:
         assert returned.status_code == 503
         assert client.client.request.await_count == 1
         sleep.assert_not_awaited()
+
+
+class TestUnsortableFieldHint:
+    """A sort on a field the search index lacks gets a structured hint (ROOTLY-MCP-65)."""
+
+    @staticmethod
+    def _bad_sort(url: str) -> httpx2.Response:
+        return httpx2.Response(
+            400,
+            request=httpx2.Request("GET", url),
+            json={"errors": [{"title": "Invalid search query or sort parameter", "status": "400"}]},
+        )
+
+    @pytest.mark.asyncio
+    async def test_request_path_names_the_rejected_sort(self):
+        client = _client()
+        client.client.request = AsyncMock(
+            return_value=self._bad_sort("https://api.rootly.com/v1/action_items?sort=-updated_at")
+        )
+        returned = await client.request("GET", "/v1/action_items", params={"sort": "-updated_at"})
+        hint = returned.json()["_sort_hint"]
+        assert hint["rejected_sort"] == "-updated_at"
+        assert "Retry without `sort`" in hint["how"]
+
+    @pytest.mark.asyncio
+    async def test_send_path_names_the_rejected_sort(self):
+        client = _client()
+        client.client.send = AsyncMock(
+            return_value=self._bad_sort("https://api.rootly.com/v1/action_items?sort=-updated_at")
+        )
+        request = httpx2.Request("GET", "https://api.rootly.com/v1/action_items?sort=-updated_at")
+        returned = await client.send(request)
+        assert returned.json()["_sort_hint"]["rejected_sort"] == "-updated_at"
+
+    def test_no_sort_parameter_no_hint(self):
+        response = self._bad_sort("https://api.rootly.com/v1/action_items?filter[search]=x")
+        annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_unsortable_field(response)
+        assert "_sort_hint" not in annotated.json()
+
+    def test_other_400_no_hint(self):
+        response = httpx2.Response(
+            400,
+            request=httpx2.Request("GET", "https://api.rootly.com/v1/action_items?sort=x"),
+            json={"errors": [{"title": "Something else", "status": "400"}]},
+        )
+        annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_unsortable_field(response)
+        assert "_sort_hint" not in annotated.json()
