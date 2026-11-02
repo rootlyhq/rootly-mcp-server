@@ -5,6 +5,31 @@ This module defines specific exception types for better error handling
 and debugging throughout the application.
 """
 
+from fastmcp.exceptions import ToolError
+
+
+class GuidedToolError(ToolError):
+    """A tool call the server rejected with instructions for retrying it.
+
+    Raised where the server answers a mistake it anticipated -- an argument the
+    tool does not take, a required one left empty -- with a message that tells
+    the model what to send instead. The call failed as designed, so telemetry
+    publishes it as a non-error (see telemetry_scrubber.mark_expected_tool_errors).
+    """
+
+
+class GuidedScriptError(ValueError):
+    """A Code Mode script failure the server explained in place of the raw error.
+
+    A ValueError, as the unexplained sandbox errors are, so the client sees the
+    same shape either way.
+    """
+
+
+# agentcat records exception types by name only, so these are what telemetry
+# matches against.
+GUIDED_ERROR_TYPE_NAMES = frozenset({GuidedToolError.__name__, GuidedScriptError.__name__})
+
 
 class RootlyMCPError(Exception):
     """Base exception for all Rootly MCP Server errors."""

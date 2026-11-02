@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .exceptions import GUIDED_ERROR_TYPE_NAMES
+
 REDACTED = "[redacted]"
 
 # Values that describe a state rather than carry a credential, so that
@@ -308,6 +310,44 @@ def scrub_event_arguments(event: Any) -> Any:
     if getattr(event, "user_intent", None) is not None:
         event.user_intent = None
     return event
+
+
+def is_guided_error(error: Any) -> bool:
+    """Whether an AgentCat error payload is one of the server's guided answers.
+
+    Guided answers are raised as GuidedToolError or GuidedScriptError
+    (exceptions.py). AgentCat records the raised type and its cause chain by
+    name; a guided error re-raised by a wrapper -- fastmcp's "Error calling
+    tool" ToolError, or Code Mode's call_tool failure -- shows up in the chain.
+    """
+    if not isinstance(error, dict):
+        return False
+    if error.get("type") in GUIDED_ERROR_TYPE_NAMES:
+        return True
+    chain = error.get("chained_errors")
+    return isinstance(chain, list) and any(
+        isinstance(link, dict) and link.get("type") in GUIDED_ERROR_TYPE_NAMES for link in chain
+    )
+
+
+def mark_expected_tool_errors(event: Any) -> Any:
+    """Publish guided tool errors as non-errors so they open no Sentry issue.
+
+    A guided error is the server answering a mistake it anticipated, with a
+    message telling the model how to retry; as Sentry issues these bury real
+    failures. AgentCat's Sentry exporter creates an issue for every event with
+    `is_error` set and the SDK offers no per-exporter filter, so the flag is
+    cleared on the event itself. `error` is left in place: the Sentry log and
+    transaction still carry the message for anyone looking.
+    """
+    if getattr(event, "is_error", False) and is_guided_error(getattr(event, "error", None)):
+        event.is_error = False
+    return event
+
+
+def prepare_telemetry_event(event: Any) -> Any:
+    """AgentCat `redact_event` hook: scrub arguments, then mark guided errors."""
+    return mark_expected_tool_errors(scrub_event_arguments(event))
 
 
 class TelemetryScrubber:

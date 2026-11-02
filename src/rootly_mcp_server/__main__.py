@@ -47,8 +47,8 @@ from .sse_deprecation import (
     with_sse_deprecation_instructions,
 )
 from .telemetry_scrubber import (
+    prepare_telemetry_event,
     redact_agentcat_telemetry_text,
-    scrub_event_arguments,
 )
 from .transport import _session_auth_token, get_hosted_authenticated_user
 
@@ -191,7 +191,7 @@ def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging
         # passing an unknown option raises TypeError, and the except below
         # would turn that into telemetry being switched off entirely.
         if agentcat_options_supports(agentcat_types.AgentCatOptions, "redact_event"):
-            options_kwargs["redact_event"] = scrub_event_arguments
+            options_kwargs["redact_event"] = prepare_telemetry_event
         else:
             # Say so rather than degrade quietly. The scrubber being silently
             # inactive is how the SENTRY_DSN gap went unnoticed for months.
