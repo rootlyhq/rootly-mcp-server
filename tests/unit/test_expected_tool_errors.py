@@ -32,7 +32,11 @@ def _captured(exc: BaseException) -> dict[str, Any]:
     while current is not None:
         chain.append({"message": str(current), "type": type(current).__name__})
         current = current.__cause__ or current.__context__
-    payload: dict[str, Any] = {"message": str(exc), "type": type(exc).__name__, "platform": "python"}
+    payload: dict[str, Any] = {
+        "message": str(exc),
+        "type": type(exc).__name__,
+        "platform": "python",
+    }
     if chain:
         payload["chained_errors"] = chain
     return payload
