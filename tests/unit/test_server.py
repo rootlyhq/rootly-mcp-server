@@ -412,6 +412,8 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "get_catalog_entity_property" in tool_names
         assert "list_causes" in tool_names
         assert "get_cause" in tool_names
+        assert "list_dashboard_panels" in tool_names
+        assert "get_dashboard_panel" in tool_names
 
         # The full write-enabled surface should include non-destructive alert,
         # form, and workflow writes, while destructive deletes remain excluded.
@@ -438,9 +440,12 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "update_catalog_property" in tool_names
         assert "create_catalog_entity_property" in tool_names
         assert "update_catalog_entity_property" in tool_names
+        assert "create_dashboard_panel" in tool_names
+        assert "update_dashboard_panel" in tool_names
         assert "delete_alert_event" not in tool_names
         assert "delete_catalog_property" not in tool_names
         assert "delete_catalog_entity_property" not in tool_names
+        assert "delete_dashboard_panel" not in tool_names
 
     async def test_enable_write_tools_exposes_curated_generated_write_tools(
         self, mock_environment_token

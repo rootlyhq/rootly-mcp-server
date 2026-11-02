@@ -67,6 +67,7 @@ class TestServerDefaultsModule:
         assert "/catalog_entity_properties/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/causes" in DEFAULT_ALLOWED_PATHS
         assert "/causes/{id}" in DEFAULT_ALLOWED_PATHS
+        assert "/dashboards/{dashboard_id}/panels" in DEFAULT_ALLOWED_PATHS
         assert "/shifts" in DEFAULT_ALLOWED_PATHS
         assert "/on_call_roles" in DEFAULT_ALLOWED_PATHS
         assert "/meeting_recordings" in DEFAULT_ALLOWED_PATHS
@@ -191,7 +192,6 @@ class TestAllowedPathsMatchTheApi:
             "/communications_types",
             "/communications_types/{id}",
             "/custom_field_options",
-            "/dashboard_panels",
             "/form_field_placement_conditions",
             "/form_field_placements",
             "/form_set_conditions",

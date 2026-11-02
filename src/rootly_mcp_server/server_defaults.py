@@ -405,7 +405,7 @@ DEFAULT_ALLOWED_PATHS = [
     # Dashboards and analytics
     "/dashboards",
     "/dashboards/{id}",
-    "/dashboard_panels",
+    "/dashboards/{dashboard_id}/panels",
     "/dashboard_panels/{id}",
     # Playbooks and runbooks
     "/playbooks",
