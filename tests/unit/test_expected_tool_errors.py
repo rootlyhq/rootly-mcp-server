@@ -6,6 +6,7 @@ should not; everything else must keep opening issues.
 """
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastmcp.exceptions import ToolError
@@ -24,14 +25,14 @@ from rootly_mcp_server.telemetry_scrubber import (
 )
 
 
-def _captured(exc: BaseException) -> dict:
+def _captured(exc: BaseException) -> dict[str, Any]:
     """The fields of agentcat's capture_exception payload that the hook reads."""
-    chain = []
+    chain: list[dict[str, Any]] = []
     current = exc.__cause__ or exc.__context__
     while current is not None:
         chain.append({"message": str(current), "type": type(current).__name__})
         current = current.__cause__ or current.__context__
-    payload = {"message": str(exc), "type": type(exc).__name__, "platform": "python"}
+    payload: dict[str, Any] = {"message": str(exc), "type": type(exc).__name__, "platform": "python"}
     if chain:
         payload["chained_errors"] = chain
     return payload
