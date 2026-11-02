@@ -31,6 +31,18 @@ class GuidedScriptError(ValueError):
 GUIDED_ERROR_TYPE_NAMES = frozenset({GuidedToolError.__name__, GuidedScriptError.__name__})
 
 
+def is_guided_exception(exc: BaseException) -> bool:
+    """Whether ``exc`` or anything in its cause/context chain is a guided error."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, (GuidedToolError, GuidedScriptError)):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
 class RootlyMCPError(Exception):
     """Base exception for all Rootly MCP Server errors."""
 

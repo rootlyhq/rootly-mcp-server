@@ -32,7 +32,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 from pydantic import ValidationError as PydanticValidationError
 
-from .exceptions import GuidedScriptError, GuidedToolError
+from .exceptions import GuidedScriptError, GuidedToolError, is_guided_exception
 from .server import create_rootly_mcp_server
 from .spec_transform import to_snake_case
 from .tool_arguments import suggest_parameter, valid_parameters_line
@@ -517,6 +517,10 @@ class RootlyCodeMode(CodeMode):
             # tools and unknown names -- the same semantics as fastmcp's own
             # execute, which counts before resolving the name.
             call_count = 0
+            # Rejections this execute() explained to the script. Monty re-raises
+            # a host function's exception as MontyRuntimeError, dropping its
+            # type, so a script that dies of one is re-tagged as guided below.
+            guided_rejections: list[str] = []
 
             async def call_tool(tool_name: str, params: dict[str, Any] | None = None) -> Any:
                 nonlocal call_count
@@ -535,7 +539,10 @@ class RootlyCodeMode(CodeMode):
                 try:
                     result = await ctx.fastmcp.call_tool(resolution.tool.name, params or {})
                 except (ToolError, ValidationError) as exc:
-                    raise ToolError(_legible_call_error(tool_name, resolution.tool, exc)) from exc
+                    failure = ToolError(_legible_call_error(tool_name, resolution.tool, exc))
+                    if is_guided_exception(exc):
+                        guided_rejections.append(str(failure))
+                    raise failure from exc
                 return _unwrap_tool_result(result)
 
             def bare_tool_function(tool: Tool) -> Callable[..., Any]:
@@ -544,11 +551,13 @@ class RootlyCodeMode(CodeMode):
                 async def tool_function(*args: Any, **kwargs: Any) -> Any:
                     if len(args) > 1 or (args and not isinstance(args[0], dict)):
                         example = _example_arguments(tool)
-                        raise TypeError(
+                        message = (
                             f"{name}() takes one params dict or keyword arguments, e.g. "
                             f"`await {name}({example})` or "
                             f"`await call_tool('{name}', {example})`."
                         )
+                        guided_rejections.append(message)
+                        raise TypeError(message)
                     return await call_tool(name, {**(args[0] if args else {}), **kwargs})
 
                 return tool_function
@@ -572,9 +581,15 @@ class RootlyCodeMode(CodeMode):
                 )
             except Exception as exc:
                 friendly_message = _format_execute_exception(exc, tools)
-                if friendly_message is None:
-                    raise
-                raise GuidedScriptError(friendly_message) from exc
+                if friendly_message is not None:
+                    raise GuidedScriptError(friendly_message) from exc
+                # The script died of a rejection it was already told how to fix.
+                # Same text, so the client sees no change; only the type, which
+                # telemetry reads, says it was explained.
+                message = str(exc)
+                if any(rejection in message for rejection in guided_rejections):
+                    raise GuidedScriptError(message) from exc
+                raise
 
         return Tool.from_function(
             fn=execute,
