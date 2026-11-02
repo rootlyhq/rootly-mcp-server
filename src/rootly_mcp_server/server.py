@@ -28,7 +28,7 @@ from . import (
     tool_arguments,
     transport,
 )
-from .exceptions import RootlyAuthenticationError
+from .exceptions import GuidedToolError, RootlyAuthenticationError
 from .landing_page import landing_page
 from .mcp_error import MCPError
 from .security import mask_sensitive_data, sanitize_error_message
@@ -806,7 +806,7 @@ class PathArgumentValidationMiddleware(fastmcp_middleware.Middleware):
             )
         example = ", ".join(f'"{name}": "<value>"' for name in missing)
         message += f" Retry with {{{example}}}."
-        raise ToolError(message)
+        raise GuidedToolError(message)
 
 
 class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
@@ -987,7 +987,7 @@ class ToolArgumentAliasMiddleware(fastmcp_middleware.Middleware):
             if bucket is not None:
                 bucket.extend(normalized.rewrites)
         if normalized.unknown:
-            raise ToolError(
+            raise GuidedToolError(
                 tool_arguments.unknown_arguments_message(tool_name, schema, normalized.unknown)
             )
         # Again on the rewritten names: a null inside `filters={...}` or a range
@@ -1005,7 +1005,7 @@ def _drop_null_arguments(
         plural = len(empty_required) > 1
         listed = ", ".join(f"'{name}'" for name in empty_required)
         example = ", ".join(f'"{name}": "<value>"' for name in empty_required)
-        raise ToolError(
+        raise GuidedToolError(
             f"{tool_name} requires the argument{'s' if plural else ''} {listed}, but got "
             f"{tool_arguments.describe_received(empty_required, args)} -- a placeholder, "
             f"not a value. Retry with {{{example}}}."

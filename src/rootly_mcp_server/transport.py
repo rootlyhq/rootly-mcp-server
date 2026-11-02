@@ -11,7 +11,9 @@ import os
 import re
 import ssl
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import certifi
@@ -871,6 +873,62 @@ _ALERT_ROUTE_REPLACEMENTS: dict[tuple[str, bool], tuple[str, str]] = {
 }
 
 
+# A 429 is retried once, in place, when Rootly asks for a short wait. A burst
+# that trips the limiter usually clears within a second or two, and absorbing
+# it here keeps the model from seeing (and re-planning around) a transient
+# error. A longer Retry-After is surfaced straight away: holding a tool call
+# open for longer than this reads as a hang to the client.
+_RATE_LIMIT_MAX_RETRY_WAIT_SECONDS = 5.0
+_RATE_LIMIT_DEFAULT_RETRY_WAIT_SECONDS = 1.0
+
+
+def _rate_limit_retry_delay(response: httpx2.Response) -> float | None:
+    """Seconds to wait before retrying a 429, or None when it should not be retried.
+
+    Honors Retry-After in both its forms (delta-seconds and HTTP-date). A
+    missing or unparseable header falls back to a short default wait.
+    """
+    if response.status_code != 429:
+        return None
+    raw = response.headers.get("retry-after", "").strip()
+    if not raw:
+        return _RATE_LIMIT_DEFAULT_RETRY_WAIT_SECONDS
+    try:
+        delay = float(raw)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            return _RATE_LIMIT_DEFAULT_RETRY_WAIT_SECONDS
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        delay = (retry_at - datetime.now(UTC)).total_seconds()
+    if delay != delay:  # NaN
+        return _RATE_LIMIT_DEFAULT_RETRY_WAIT_SECONDS
+    delay = max(delay, 0.0)
+    if delay > _RATE_LIMIT_MAX_RETRY_WAIT_SECONDS:
+        return None
+    return delay
+
+
+async def _send_with_rate_limit_retry(
+    send: Callable[[], Awaitable[httpx2.Response]], method: str, url: Any
+) -> httpx2.Response:
+    """Run ``send``; on a short-wait 429, sleep for Retry-After and run it once more.
+
+    A 429 means the request was rejected before Rootly acted on it, so the
+    retry is safe for writes as well as reads.
+    """
+    response = await send()
+    delay = _rate_limit_retry_delay(response)
+    if delay is None:
+        return response
+    logger.info(f"HTTP 429 for {method} {url}; retrying once in {delay:.2f}s")
+    await response.aclose()
+    await asyncio.sleep(delay)
+    return await send()
+
+
 class AuthenticatedHTTPXClient:
     """An HTTPX client wrapper that handles Rootly API authentication and parameter transformation."""
 
@@ -1147,7 +1205,9 @@ class AuthenticatedHTTPXClient:
         logger.debug(f"Request: {method} {url}")
 
         try:
-            response = await self.client.request(method, url, **kwargs)
+            response = await _send_with_rate_limit_retry(
+                lambda: self.client.request(method, url, **kwargs), method, url
+            )
         except Exception as exc:
             _record_upstream_exception_context(method, url, exc)
             raise
@@ -1696,7 +1756,9 @@ class AuthenticatedHTTPXClient:
         self._check_shift_date_range(request.method, request.url, None)
 
         try:
-            response = await self.client.send(request, **kwargs)
+            response = await _send_with_rate_limit_retry(
+                lambda: self.client.send(request, **kwargs), request.method, request.url
+            )
         except Exception as exc:
             _record_upstream_exception_context(request.method, request.url, exc)
             raise

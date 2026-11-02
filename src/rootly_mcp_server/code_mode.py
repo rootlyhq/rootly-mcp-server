@@ -32,6 +32,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 from pydantic import ValidationError as PydanticValidationError
 
+from .exceptions import GuidedScriptError, GuidedToolError
 from .server import create_rootly_mcp_server
 from .spec_transform import to_snake_case
 from .tool_arguments import suggest_parameter, valid_parameters_line
@@ -573,7 +574,7 @@ class RootlyCodeMode(CodeMode):
                 friendly_message = _format_execute_exception(exc, tools)
                 if friendly_message is None:
                     raise
-                raise ValueError(friendly_message) from exc
+                raise GuidedScriptError(friendly_message) from exc
 
         return Tool.from_function(
             fn=execute,
@@ -650,7 +651,7 @@ def execute_code_for_call_shape(arguments: dict[str, Any]) -> str:
     tool = arguments.get(tool_key) if tool_key else None
     if not isinstance(tool, str) or not tool.strip():
         keys = ", ".join(sorted(arguments)) or "none"
-        raise ToolError(
+        raise GuidedToolError(
             "execute takes one argument, `code`: an async Python block that calls "
             f"Rootly tools with `await call_tool(name, params)`, e.g. {_EXECUTE_EXAMPLE}. "
             f"Got arguments: {keys}."
@@ -673,13 +674,13 @@ def execute_code_for_call_shape(arguments: dict[str, Any]) -> str:
 
     example = f"return await call_tool({tool!r}, {{...}})"
     if params_key is not None and rest:
-        raise ToolError(
+        raise GuidedToolError(
             f"execute got both {params_key!r} and other arguments "
             f"({', '.join(sorted(rest))}); pass a single `code` argument instead, "
             f"e.g. {{'code': {example!r}}}."
         )
     if not isinstance(params, dict) or not _is_literal_value(params):
-        raise ToolError(
+        raise GuidedToolError(
             f"execute could not read the arguments for {tool!r}: pass them as a JSON "
             f"object, or pass a single `code` argument, e.g. {{'code': {example!r}}}."
         )
