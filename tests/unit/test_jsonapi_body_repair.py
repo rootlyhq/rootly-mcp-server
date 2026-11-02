@@ -150,3 +150,78 @@ def test_tools_without_a_jsonapi_body_are_untouched():
 
     assert repaired == arguments
     assert rewrites == []
+
+
+# create_workflow_run: data.attributes is an anyOf (one branch per trigger kind)
+# with no top-level properties, so the repair used to find no attributes and
+# skip the tool entirely (ROOTLY-MCP-2XG).
+
+WORKFLOW_ID = "5f0c8a1e-2b3d-4e5f-9a0b-1c2d3e4f5a6b"
+
+
+def _sent_workflow_run_body(sent: list[httpx2.Request]) -> dict[str, Any]:
+    requests = [r for r in sent if r.url.path == f"/v1/workflows/{WORKFLOW_ID}/workflow_runs"]
+    assert requests, [str(r.url) for r in sent]
+    return json.loads(requests[-1].content)
+
+
+async def test_workflow_run_attributes_on_data_are_nested(server, sent):
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "create_workflow_run",
+            {"workflow_id": WORKFLOW_ID, "data": {"incident_id": INCIDENT_ID, "immediate": True}},
+            raise_on_error=False,
+        )
+    assert not result.is_error, _text(result)
+    assert _sent_workflow_run_body(sent) == {
+        "data": {
+            "type": "workflow_runs",
+            "attributes": {"incident_id": INCIDENT_ID, "immediate": True},
+        }
+    }
+
+
+async def test_workflow_run_unknown_key_is_left_for_the_api(server, sent):
+    # Only keys some anyOf branch declares are moved.
+    async with Client(server) as client:
+        await client.call_tool(
+            "create_workflow_run",
+            {"workflow_id": WORKFLOW_ID, "data": {"incident_id": INCIDENT_ID, "bogus": 1}},
+            raise_on_error=False,
+        )
+    assert _sent_workflow_run_body(sent)["data"] == {"incident_id": INCIDENT_ID, "bogus": 1}
+
+
+# A single resource sent as a one-item array reached Rootly unchanged and came
+# back as the opaque "data: Expected hash" (ROOTLY-MCP-1FE).
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        [{"type": "alerts", "attributes": {"alert_ids": ["a1", "a2"]}}],
+        json.dumps([{"type": "alerts", "attributes": {"alert_ids": ["a1", "a2"]}}]),
+        [{"alert_ids": ["a1", "a2"]}],
+    ],
+)
+async def test_one_item_array_is_unwrapped(server, sent, data):
+    result = await _attach(server, data)
+    assert not result.is_error, _text(result)
+    assert _sent_body(sent) == EXPECTED_BODY
+
+
+@pytest.mark.parametrize(
+    ("data", "kind"),
+    [
+        ([{"alert_ids": ["a1"]}, {"alert_ids": ["a2"]}], "an array of 2 items"),
+        ("[]", "an array of 0 items"),
+        ("42", "a number"),
+    ],
+)
+async def test_non_object_data_is_rejected_before_the_api(server, sent, data, kind):
+    result = await _attach(server, data)
+    assert result.is_error
+    text = _text(result)
+    assert "must be a single JSON object" in text
+    assert kind in text
+    assert sent == []

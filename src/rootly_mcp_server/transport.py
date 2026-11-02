@@ -1240,6 +1240,7 @@ class AuthenticatedHTTPXClient:
         response = self._maybe_annotate_404_response(method, url, response)
         response = self._maybe_annotate_alert_routing_deprecation(method, url, response)
         response = self._maybe_annotate_offset_pagination_limit(method, url, response)
+        response = self._maybe_annotate_unsortable_field(response)
 
         return response
 
@@ -1475,6 +1476,71 @@ class AuthenticatedHTTPXClient:
                     "each response's cursor. Filters are preserved across "
                     "cursor pages. Note that a cursor walk restarts from the "
                     "beginning; it cannot resume at the page you stopped on."
+                ),
+            },
+        )
+        try:
+            response._content = json.dumps(body).encode()  # noqa: SLF001
+        except Exception:  # nosec B110 - best-effort annotation
+            return response
+        return response
+
+    @staticmethod
+    def _maybe_annotate_unsortable_field(response: httpx2.Response) -> httpx2.Response:
+        """Point at the sort when Rootly's search-or-sort 400 may be caused by it.
+
+        Search-backed list endpoints (action items, post-mortems, alert routes,
+        ...) sort in Elasticsearch, which can only order by fields the index
+        stores. `updated_at` is missing from several of those indexes, so the
+        natural `sort=-updated_at` comes back as the generic "Invalid search
+        query or sort parameter" -- 113 times on action items in one month.
+        The title cannot tell a bad sort from a bad search query, so the hint
+        does not claim the sort is wrong: it names the value and says how to
+        tell the two apart, and that no date filter stands in for update time.
+        """
+        if response.status_code != 400:
+            return response
+        try:
+            sort = response.request.url.params.get("sort")
+        except Exception:  # nosec B110 - no request attached
+            return response
+        if not sort:
+            return response
+        try:
+            body = response.json()
+        except Exception:  # nosec B110 - best-effort annotation
+            return response
+        if not isinstance(body, dict):
+            return response
+        errors = body.get("errors")
+        first_title = ""
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            first_title = str(errors[0].get("title", ""))
+        if "invalid search query or sort parameter" not in first_title.lower():
+            return response
+        body.setdefault(
+            "_sort_hint",
+            {
+                "sort_sent": sort,
+                "reason": (
+                    "Rootly returns this error for a malformed search query and for "
+                    f"a sort it cannot apply, so {sort!r} may be the cause. "
+                    "Search-backed endpoints can only sort by fields their search "
+                    "index stores, and updated_at is not stored on every endpoint."
+                ),
+                "how": (
+                    "Retry once without `sort`, keeping every other argument. If "
+                    "that succeeds, this endpoint cannot sort by that field; if it "
+                    "fails the same way, the problem is in the filters or search "
+                    "query instead. Without `sort` the endpoint uses its default "
+                    "order (newest created first)."
+                ),
+                "caveat": (
+                    "If the goal was the most recently updated records: created_at "
+                    "ordering and created_at or due-date filters do not track "
+                    "edits, so they will miss records created earlier and changed "
+                    "recently. When this endpoint cannot sort by updated_at, fetch "
+                    "the records and compare their updated_at attribute instead."
                 ),
             },
         )
@@ -1786,6 +1852,7 @@ class AuthenticatedHTTPXClient:
         response = self._maybe_annotate_offset_pagination_limit(
             request.method, str(request.url), response
         )
+        response = self._maybe_annotate_unsortable_field(response)
         return response
 
     async def __aenter__(self):

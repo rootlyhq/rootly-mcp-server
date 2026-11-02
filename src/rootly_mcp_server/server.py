@@ -17,7 +17,6 @@ from typing import Any
 import fastmcp.server.middleware as fastmcp_middleware
 import mcp.types as mt
 from fastmcp import FastMCP
-from fastmcp.exceptions import ToolError
 
 from . import (
     audit,
@@ -841,7 +840,7 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
                 args, getattr(tool, "parameters", None)
             )
         except tool_arguments.MalformedJsonApiBody as exc:
-            raise ToolError(f"{context.message.name}: {exc}") from None
+            raise GuidedToolError(f"{context.message.name}: {exc}") from None
         if rewrites:
             bucket = _tool_argument_rewrites.get()
             if bucket is not None:
