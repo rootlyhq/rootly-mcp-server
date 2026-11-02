@@ -1487,15 +1487,16 @@ class AuthenticatedHTTPXClient:
 
     @staticmethod
     def _maybe_annotate_unsortable_field(response: httpx2.Response) -> httpx2.Response:
-        """Explain a 400 caused by sorting on a field the search index lacks.
+        """Point at the sort when Rootly's search-or-sort 400 may be caused by it.
 
         Search-backed list endpoints (action items, post-mortems, alert routes,
         ...) sort in Elasticsearch, which can only order by fields the index
         stores. `updated_at` is missing from several of those indexes, so the
         natural `sort=-updated_at` comes back as the generic "Invalid search
         query or sort parameter" -- 113 times on action items in one month.
-        Nothing in that title says the sort was the problem, so the model
-        retries the same call. The hint names the value and the way out.
+        The title cannot tell a bad sort from a bad search query, so the hint
+        does not claim the sort is wrong: it names the value and says how to
+        tell the two apart, and that no date filter stands in for update time.
         """
         if response.status_code != 400:
             return response
@@ -1520,18 +1521,26 @@ class AuthenticatedHTTPXClient:
         body.setdefault(
             "_sort_hint",
             {
-                "rejected_sort": sort,
+                "sort_sent": sort,
                 "reason": (
-                    f"This endpoint cannot sort by {sort!r}: it sorts in a search "
-                    "index that only orders by the fields it stores, and updated_at "
-                    "is not stored on every endpoint. Retrying with the same sort "
-                    "will keep failing."
+                    "Rootly returns this error for a malformed search query and for "
+                    f"a sort it cannot apply, so {sort!r} may be the cause. "
+                    "Search-backed endpoints can only sort by fields their search "
+                    "index stores, and updated_at is not stored on every endpoint."
                 ),
                 "how": (
-                    "Retry without `sort` to get the endpoint's default order "
-                    "(newest first by created_at), or sort by created_at / "
-                    "-created_at. To find recently changed records, filter on a "
-                    "created_at or due-date range instead."
+                    "Retry once without `sort`, keeping every other argument. If "
+                    "that succeeds, this endpoint cannot sort by that field; if it "
+                    "fails the same way, the problem is in the filters or search "
+                    "query instead. Without `sort` the endpoint uses its default "
+                    "order (newest created first)."
+                ),
+                "caveat": (
+                    "If the goal was the most recently updated records: created_at "
+                    "ordering and created_at or due-date filters do not track "
+                    "edits, so they will miss records created earlier and changed "
+                    "recently. When this endpoint cannot sort by updated_at, fetch "
+                    "the records and compare their updated_at attribute instead."
                 ),
             },
         )

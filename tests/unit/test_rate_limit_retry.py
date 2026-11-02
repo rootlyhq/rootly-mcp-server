@@ -143,8 +143,8 @@ class TestUnsortableFieldHint:
         )
         returned = await client.request("GET", "/v1/action_items", params={"sort": "-updated_at"})
         hint = returned.json()["_sort_hint"]
-        assert hint["rejected_sort"] == "-updated_at"
-        assert "Retry without `sort`" in hint["how"]
+        assert hint["sort_sent"] == "-updated_at"
+        assert "Retry once without `sort`" in hint["how"]
 
     @pytest.mark.asyncio
     async def test_send_path_names_the_rejected_sort(self):
@@ -154,7 +154,7 @@ class TestUnsortableFieldHint:
         )
         request = httpx2.Request("GET", "https://api.rootly.com/v1/action_items?sort=-updated_at")
         returned = await client.send(request)
-        assert returned.json()["_sort_hint"]["rejected_sort"] == "-updated_at"
+        assert returned.json()["_sort_hint"]["sort_sent"] == "-updated_at"
 
     def test_no_sort_parameter_no_hint(self):
         response = self._bad_sort("https://api.rootly.com/v1/action_items?filter[search]=x")
@@ -169,3 +169,23 @@ class TestUnsortableFieldHint:
         )
         annotated = transport.AuthenticatedHTTPXClient._maybe_annotate_unsortable_field(response)
         assert "_sort_hint" not in annotated.json()
+
+    def test_hint_does_not_claim_the_sort_is_wrong(self):
+        # The same 400 covers a malformed search query sent alongside a valid
+        # sort; the hint must leave room for that and say how to tell them apart.
+        response = self._bad_sort(
+            "https://api.rootly.com/v1/action_items?sort=-created_at&filter[search]=%22unclosed"
+        )
+        hint = transport.AuthenticatedHTTPXClient._maybe_annotate_unsortable_field(response).json()[
+            "_sort_hint"
+        ]
+        assert "may be the cause" in hint["reason"]
+        assert "the problem is in the filters or search query" in hint["how"]
+
+    def test_hint_does_not_offer_created_at_as_update_time(self):
+        response = self._bad_sort("https://api.rootly.com/v1/action_items?sort=-updated_at")
+        hint = transport.AuthenticatedHTTPXClient._maybe_annotate_unsortable_field(response).json()[
+            "_sort_hint"
+        ]
+        assert "do not track edits" in hint["caveat"]
+        assert "compare their updated_at attribute" in hint["caveat"]
