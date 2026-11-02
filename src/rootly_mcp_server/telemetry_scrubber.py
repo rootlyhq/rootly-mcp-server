@@ -60,6 +60,13 @@ CREDENTIAL_KEY_SUBSTRINGS = (
     "apikey",
     "accesstoken",
     "refreshtoken",
+    # "token" alone is too common to match as a substring ("prompt_tokens"),
+    # so each credential-bearing compound is listed.
+    "apitoken",
+    "authtoken",
+    "bearertoken",
+    "sessiontoken",
+    "privatetoken",
     "privatekey",
     "credentials",
     "authorization",

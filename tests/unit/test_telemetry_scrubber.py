@@ -38,6 +38,16 @@ class TestIsCredentialKey:
             "my_password_field",
             "db_conn_password",
             "filter[api_key_id]",
+            # Token compounds: "token" is exact-match only, so these need
+            # their own entries.
+            "api_token",
+            "ROOTLY_API_TOKEN",
+            "apiToken",
+            "auth_token",
+            "oauth_token",
+            "bearer_token",
+            "session_token",
+            "private_token",
         ],
     )
     def test_credential_keys(self, key):
@@ -52,6 +62,8 @@ class TestIsCredentialKey:
             # Contains "token" but counts things.
             "tokens",
             "prompt_tokens",
+            "max_tokens",
+            "token_count",
             # AgentCat's correlation key. Losing it is what made the incident
             # behind this module hard to trace.
             "session_id",
@@ -72,6 +84,10 @@ class TestScrubbing:
             ("aws_secret_access_key=wJalrXUtnFEMI/K7MDENG", "wJalrXUtnFEMI"),
             ("my_password_field=x1", "x1"),
             ("db_conn_password: p@ss", "p@ss"),
+            ("api_token=abc123def", "abc123def"),
+            ("auth_token: xyz789", "xyz789"),
+            ('{"api_token": "hunter2"}', "hunter2"),
+            ("ROOTLY_API_TOKEN=rootly_9f8e7d", "rootly_9f8e7d"),
         ],
     )
     def test_prefixed_credential_keys_are_scrubbed(self, value, secret):
