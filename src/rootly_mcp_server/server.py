@@ -824,8 +824,8 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
         context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
         call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
     ) -> Any:
-        args = context.message.arguments
-        if not args or "data" not in args or context.fastmcp_context is None:
+        args = context.message.arguments or {}
+        if context.fastmcp_context is None:
             return await call_next(context)
         try:
             tool = await context.fastmcp_context.fastmcp.get_tool(context.message.name)

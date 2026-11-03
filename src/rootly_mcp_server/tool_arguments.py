@@ -520,7 +520,31 @@ def _json_kind(value: Any) -> str:
         return "a number"
     if isinstance(value, list):
         return f"an array of {len(value)} items"
+    if isinstance(value, str):
+        return "a string (JSON encoded more than once?)"
     return f"a {type(value).__name__}"
+
+
+def _collect_flat_body(
+    arguments: dict[str, Any], schema: Mapping[str, Any] | None, attribute_properties: dict
+) -> tuple[dict[str, Any], list[str]]:
+    """Gather a body sent as top-level arguments into ``data``.
+
+    FastMCP drops arguments the tool does not declare, so ``create_alerts_source(
+    name=..., source_type=...)`` or ``(attributes={...})`` went upstream with an
+    empty body and came back as "data: Expected hash" (ROOTLY-MCP-1BM). Keys are
+    moved only when every undeclared one is a JSON:API envelope key or a
+    declared attribute; the result then goes through the usual ``data`` repair.
+    """
+    declared = _properties(schema)
+    flat = [key for key in arguments if key not in declared]
+    if not flat or not all(
+        key in _JSONAPI_ENVELOPE_KEYS or key in attribute_properties for key in flat
+    ):
+        return arguments, []
+    result = {key: value for key, value in arguments.items() if key not in flat}
+    result["data"] = {key: arguments[key] for key in flat}
+    return result, [f"{key}->data.{key}" for key in flat]
 
 
 class MalformedJsonApiBody(ValueError):
@@ -547,6 +571,23 @@ def repair_jsonapi_body(
         return dict(arguments), []
     result = dict(arguments)
     rewrites: list[str] = []
+    if "data" not in result:
+        result, rewrites = _collect_flat_body(result, schema, attribute_properties)
+        if "data" not in result:
+            if "data" not in ((schema or {}).get("required") or []):
+                return result, rewrites
+            example = json.dumps({"type": resource_type or "<type>", "attributes": {}})
+            stray = sorted(key for key in result if key not in _properties(schema))
+            got = (
+                f" Got {', '.join(repr(key) for key in stray)} as top-level arguments, "
+                "which this tool does not accept."
+                if stray
+                else ""
+            )
+            raise MalformedJsonApiBody(
+                f"the request body goes in `data`, which was not provided, so nothing "
+                f"would be sent.{got} Pass it as `data`, e.g. {example}."
+            )
     data = result.get("data")
 
     if isinstance(data, str):
