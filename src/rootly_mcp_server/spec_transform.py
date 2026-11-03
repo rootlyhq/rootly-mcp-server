@@ -233,6 +233,24 @@ def _fetch_swagger_from_url(url: str = SWAGGER_URL) -> dict[str, Any]:
         raise Exception(f"Failed to parse Swagger specification: {e}")
 
 
+def _drop_duplicate_update_verb(path_item: dict[str, Any]) -> None:
+    """Drop PUT when a path documents PATCH as the update and PUT separately.
+
+    The ``/v1/ai/*`` resources publish ``Update…`` (PATCH) and ``Put…`` (PUT)
+    for the same update, which would surface as two tools for one action
+    (``update_ai_skill`` and ``put_ai_skill``). Paths where PUT carries the
+    ``update…`` name (``/v1/alert_routes/{id}``) are left as they are, so no
+    existing tool disappears.
+    """
+
+    def _is_update(method: str) -> bool:
+        operation_id = str(path_item[method].get("operationId", ""))
+        return operation_id.lower().startswith("update")
+
+    if _is_update("patch") and not _is_update("put"):
+        path_item.pop("put")
+
+
 def _filter_openapi_spec(
     spec: dict[str, Any],
     allowed_paths: list[str],
@@ -293,6 +311,8 @@ def _filter_openapi_spec(
             path_item.pop("post", None)
             path_item.pop("put", None)
             path_item.pop("patch", None)
+        elif "patch" in path_item and "put" in path_item:
+            _drop_duplicate_update_verb(path_item)
 
         allow_delete = path in delete_allowed_set or (
             _normalize_path_template(path) in delete_allowed_normalized_paths

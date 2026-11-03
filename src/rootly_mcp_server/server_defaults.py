@@ -478,6 +478,21 @@ DEFAULT_ALLOWED_PATHS = [
     "/sub_statuses/{id}",
     "/incident_sub_statuses",
     "/incident_sub_statuses/{id}",
+    # AI automations and skills (``/v1/ai/``). Read tools cover definitions,
+    # runs, skill versions and the Slack/trigger option lookups an automation
+    # needs; the webhook-secret rotation is excluded below.
+    "/ai/automations",
+    "/ai/automations/{id}",
+    "/ai/automations/{ai_automation_id}/runs",
+    "/ai/automation_runs/{id}",
+    "/ai/automations/slack_channels",
+    "/ai/automations/slack_users",
+    "/ai/automations/slack_user_groups",
+    "/ai/automations/trigger_options",
+    "/ai/skills",
+    "/ai/skills/{id}",
+    "/ai/skills/{ai_skill_id}/versions",
+    "/ai/skills/{ai_skill_id}/versions/{version}",
 ]
 
 # Paths explicitly excluded for security reasons - these contain sensitive operations
@@ -509,6 +524,8 @@ SECURITY_EXCLUDED_PATHS = [
     "/on_call_pay_reports/{id}",
     # Global configuration that could affect system behavior
     "/retrospective_configurations",
+    # Returns a freshly minted webhook signing secret
+    "/ai/automations/{id}/triggers/{trigger_id}/webhook_secret",
 ]
 
 # Non-destructive write operations are only exposed for these path families when
@@ -671,6 +688,12 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     # Status page templates
     "/status_page_templates",
     "/status_page_templates/{id}",
+    # AI automations and skills - create, update, run now
+    "/ai/automations",
+    "/ai/automations/{id}",
+    "/ai/automations/{ai_automation_id}/runs",
+    "/ai/skills",
+    "/ai/skills/{id}",
 ]
 
 # DELETE operations are only exposed for these high-priority screenshot families.
