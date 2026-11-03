@@ -225,3 +225,77 @@ async def test_non_object_data_is_rejected_before_the_api(server, sent, data, ki
     assert "must be a single JSON object" in text
     assert kind in text
     assert sent == []
+
+
+# A body sent without `data` was dropped by FastMCP (undeclared arguments are
+# ignored), so the request went upstream empty and came back as Rails'
+# "data: Expected hash" (ROOTLY-MCP-1BM).
+
+
+async def _attach_args(server: FastMCP, arguments: dict[str, Any]) -> Any:
+    async with Client(server) as client:
+        return await client.call_tool(
+            "attach_alert", {"incident_id": INCIDENT_ID, **arguments}, raise_on_error=False
+        )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"alert_ids": ["a1", "a2"]}, id="flat-attributes"),
+        pytest.param({"attributes": {"alert_ids": ["a1", "a2"]}}, id="top-level-attributes"),
+        pytest.param(
+            {"type": "alerts", "attributes": {"alert_ids": ["a1", "a2"]}}, id="top-level-envelope"
+        ),
+    ],
+)
+async def test_body_sent_without_data_is_gathered_into_data(server, sent, arguments):
+    result = await _attach_args(server, arguments)
+
+    assert not result.is_error, _text(result)
+    assert _sent_body(sent) == EXPECTED_BODY
+
+
+@pytest.mark.parametrize(
+    ("arguments", "named"),
+    [
+        pytest.param({}, None, id="nothing"),
+        pytest.param({"alert_ids": ["a1"], "bogus": 1}, "'alert_ids', 'bogus'", id="unmappable"),
+    ],
+)
+async def test_missing_required_data_is_rejected_before_the_api(server, sent, arguments, named):
+    result = await _attach_args(server, arguments)
+
+    assert result.is_error
+    text = _text(result)
+    assert "the request body goes in `data`, which was not provided" in text
+    if named:
+        assert f"Got {named} as top-level arguments" in text
+    assert sent == []
+
+
+def test_optional_body_without_data_is_left_alone():
+    schema = {
+        "type": "object",
+        "properties": {
+            "data": {
+                "type": "object",
+                "properties": {
+                    "type": {"enum": ["runs"]},
+                    "attributes": {"type": "object", "properties": {"note": {}}},
+                },
+            }
+        },
+    }
+
+    assert repair_jsonapi_body({}, schema) == ({}, [])
+
+
+async def test_double_encoded_data_says_so(server, sent):
+    data = json.dumps(json.dumps(EXPECTED_BODY["data"]))
+
+    result = await _attach(server, data)
+
+    assert result.is_error
+    assert "a string (JSON encoded more than once?)" in _text(result)
+    assert sent == []
