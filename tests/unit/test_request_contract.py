@@ -538,11 +538,11 @@ def _stub_response(request: httpx2.Request, template: str | None) -> httpx2.Resp
                 "attributes": {"short_id": "PhIQtP", "summary": "Disk full"},
             }
         }
-    elif template == "/v1/investigations":
+    elif template == "/v1/ai/investigations":
         body = _list([_investigation()])
-    elif template == "/v1/investigations/{id}":
+    elif template == "/v1/ai/investigations/{id}":
         body = {"data": _investigation()}
-    elif template == "/v1/investigations/{id}/progress":
+    elif template == "/v1/ai/investigations/{id}/progress":
         body = {
             "data": {
                 "id": INVESTIGATION_UUID,

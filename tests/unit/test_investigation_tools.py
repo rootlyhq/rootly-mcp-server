@@ -113,7 +113,7 @@ async def test_list_investigations_sends_filters_and_flattens():
 
     request.assert_awaited_once_with(
         "GET",
-        "/v1/investigations",
+        "/v1/ai/investigations",
         params={
             "page[size]": 10,
             "page[number]": 1,
@@ -140,7 +140,7 @@ async def test_get_investigation_resolves_latest_for_alert():
     result = await tools["get_investigation"](alert_id="alert-1")
 
     assert request.await_count == 2
-    assert request.await_args_list[1].args == ("GET", "/v1/investigations/inv-9")
+    assert request.await_args_list[1].args == ("GET", "/v1/ai/investigations/inv-9")
     assert result["investigation"]["summary"] == "Disk full"
 
 
@@ -262,7 +262,7 @@ async def test_start_investigation_posts_json_api_payload():
 
     request.assert_awaited_once_with(
         "POST",
-        "/v1/investigations",
+        "/v1/ai/investigations",
         json={
             "data": {
                 "type": "investigations",

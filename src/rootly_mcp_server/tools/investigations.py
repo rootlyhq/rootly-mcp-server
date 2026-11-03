@@ -1,4 +1,4 @@
-"""Curated tools for Rootly AI SRE investigations (``/v1/investigations``)."""
+"""Curated tools for Rootly AI SRE investigations (``/v1/ai/investigations``)."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def register_investigation_tools(
     async def _fetch_progress(investigation_id: str, after_cursor: str | None) -> dict[str, Any]:
         params = {"after": after_cursor} if after_cursor else None
         body = await _request(
-            "GET", f"/v1/investigations/{investigation_id}/progress", params=params
+            "GET", f"/v1/ai/investigations/{investigation_id}/progress", params=params
         )
         attributes: dict[str, Any] = body["data"]["attributes"]
         return attributes
@@ -139,7 +139,7 @@ def register_investigation_tools(
             if value:
                 params[f"filter[{key}]"] = value
         try:
-            body = await _request("GET", "/v1/investigations", params=params)
+            body = await _request("GET", "/v1/ai/investigations", params=params)
         except Exception as exc:
             return _error(exc)
         return {
@@ -180,7 +180,7 @@ def register_investigation_tools(
                 if not latest["investigations"]:
                     return mcp_error.tool_error("No investigation found.", "not_found")
                 investigation_id = str(latest["investigations"][0]["id"])
-            body = await _request("GET", f"/v1/investigations/{investigation_id}")
+            body = await _request("GET", f"/v1/ai/investigations/{investigation_id}")
             return {"investigation": _flatten(body["data"])}
         except Exception as exc:
             return _error(exc)
@@ -271,7 +271,7 @@ def register_investigation_tools(
         try:
             body = await _request(
                 "POST",
-                "/v1/investigations",
+                "/v1/ai/investigations",
                 json={"data": {"type": "investigations", "attributes": attributes}},
             )
         except Exception as exc:
@@ -296,7 +296,7 @@ def register_investigation_tools(
         try:
             body = await _request(
                 "POST",
-                f"/v1/investigations/{investigation_id}/cancel",
+                f"/v1/ai/investigations/{investigation_id}/cancel",
                 json={"data": {"type": "investigations", "attributes": {}}},
             )
         except Exception as exc:
