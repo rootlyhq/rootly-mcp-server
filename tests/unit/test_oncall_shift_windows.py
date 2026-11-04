@@ -1273,6 +1273,51 @@ class TestDateArgumentAliases:
         assert recorded[0]["from"] == "2026-08-01T00:00:00Z"
 
     @pytest.mark.asyncio
+    async def test_list_shifts_without_a_range_covers_the_next_week(self):
+        # "Who is on call?" arrives with no dates; that used to fail pydantic
+        # validation ("from_date: Missing required argument") on every call.
+        from datetime import UTC, datetime, timedelta
+
+        responder, recorded = _responder(
+            lambda _p: _ok({"data": [_shift("S1")], "meta": {"total_pages": 1}})
+        )
+        mcp = self._server(responder)
+        before = datetime.now(UTC).replace(microsecond=0)
+        result = await mcp.call_tool("list_shifts", {})
+        after = datetime.now(UTC)
+
+        start = _parse_iso_datetime(recorded[0]["from"])
+        end = _parse_iso_datetime(recorded[-1]["to"])
+        assert start is not None and end is not None
+        assert before <= start <= after
+        assert end - start == timedelta(days=7)
+        assert result.structured_content is not None
+        assert "next 7 days" in result.structured_content["period"]["defaulted"]
+
+    @pytest.mark.asyncio
+    async def test_list_shifts_with_half_a_range_is_still_an_error(self):
+        responder, recorded = _responder()
+        mcp = self._server(responder)
+        result = await mcp.call_tool("list_shifts", {"from_date": "2026-08-01T00:00:00Z"})
+
+        assert "to_date is empty" in str(result.structured_content)
+        assert recorded == []
+
+    @pytest.mark.asyncio
+    async def test_list_shifts_with_a_range_reports_no_default(self):
+        responder, _ = _responder(
+            lambda _p: _ok({"data": [_shift("S1")], "meta": {"total_pages": 1}})
+        )
+        mcp = self._server(responder)
+        result = await mcp.call_tool(
+            "list_shifts",
+            {"from_date": "2026-08-01T00:00:00Z", "to_date": "2026-08-02T00:00:00Z"},
+        )
+
+        assert result.structured_content is not None
+        assert "defaulted" not in result.structured_content["period"]
+
+    @pytest.mark.asyncio
     async def test_the_schema_advertises_the_majority_convention(self):
         # Five of the on-call tools name these start_date/end_date. Only the
         # advertised name teaches a caller which to reach for.
