@@ -122,6 +122,19 @@ def _split_date_windows(
 SHIFTS_FUTURE_HORIZON_DAYS = 31
 
 
+DEFAULT_SHIFT_RANGE = timedelta(days=7)
+
+
+def _default_shift_range() -> tuple[str, str]:
+    """``(now, now + 7 days)`` in UTC, as ISO 8601 with a ``Z`` suffix."""
+    start = datetime.now(UTC).replace(microsecond=0)
+    end = start + DEFAULT_SHIFT_RANGE
+    return (
+        start.isoformat().replace("+00:00", "Z"),
+        end.isoformat().replace("+00:00", "Z"),
+    )
+
+
 def _date_argument_error(dates: dict[str, Any], *, required: bool) -> str | None:
     """Message naming the date arguments that cannot be used, else ``None``.
 
@@ -2195,21 +2208,28 @@ def register_oncall_tools(
         from_date: Annotated[
             str,
             Field(
-                description="Start date/time for shift query (ISO 8601 format, e.g., '2026-02-09T00:00:00Z')",
+                description=(
+                    "Start date/time for shift query (ISO 8601 format, e.g., "
+                    "'2026-02-09T00:00:00Z'). Omit both from_date and to_date for "
+                    "the next 7 days starting now."
+                ),
                 # Most on-call tools name this start_date/end_date. Accepting
                 # both means a caller that reaches for the other convention --
                 # having just called one of those tools -- is not turned away
                 # over the spelling.
                 validation_alias=AliasChoices("from_date", "start_date"),
             ),
-        ],
+        ] = "",
         to_date: Annotated[
             str,
             Field(
-                description="End date/time for shift query (ISO 8601 format, e.g., '2026-02-15T23:59:59Z')",
+                description=(
+                    "End date/time for shift query (ISO 8601 format, e.g., "
+                    "'2026-02-15T23:59:59Z'). Required when from_date is given."
+                ),
                 validation_alias=AliasChoices("to_date", "end_date"),
             ),
-        ],
+        ] = "",
         user_ids: Annotated[
             str,
             Field(
@@ -2269,6 +2289,13 @@ def register_oncall_tools(
                     "validation_error",
                     details={"page_number": page_number},
                 )
+            # "Who is on call" is usually asked without a range. Both bounds
+            # omitted means the next week from now, said so in the response;
+            # one bound alone is still an error, since half a range is a
+            # question about some other period.
+            range_defaulted = not from_date.strip() and not to_date.strip()
+            if range_defaulted:
+                from_date, to_date = _default_shift_range()
             date_error = _date_argument_error(
                 {"from_date": from_date, "to_date": to_date}, required=True
             )
@@ -2401,8 +2428,14 @@ def register_oncall_tools(
             has_more = end_index < total_matching_shifts
             horizon_note = _shifts_future_horizon_note(to_date)
 
+            period: dict[str, Any] = {"from": from_date, "to": to_date}
+            if range_defaulted:
+                period["defaulted"] = (
+                    "No from_date/to_date given, so this is the next 7 days from "
+                    "now. Pass both for a different period."
+                )
             return {
-                "period": {"from": from_date, "to": to_date},
+                "period": period,
                 "total_shifts": total_matching_shifts,
                 "returned_shifts": len(paginated_shifts),
                 "filters_applied": {
