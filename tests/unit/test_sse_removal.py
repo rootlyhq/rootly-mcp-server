@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import httpx2 as httpx
@@ -146,6 +146,36 @@ async def test_custom_sse_paths_are_honored(json_log):
     assert (await _request(middleware, "POST", "/legacy-msg/?session_id=x")).status_code == 410
 
 
+@pytest.mark.parametrize(
+    ("live", "path"),
+    [("/sse", "/sse"), ("/messages", "/messages/?session_id=x"), ("/messages", "/messages")],
+)
+async def test_a_live_mcp_path_is_never_answered_gone(json_log, live, path):
+    # A self-hosted server may serve Streamable HTTP at an old SSE path
+    # (FASTMCP_STREAMABLE_HTTP_PATH=/sse); that endpoint must keep working.
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"live"})
+
+    middleware = SSEGoneMiddleware(app, live_paths=(live, None))
+
+    response = await _request(middleware, "POST", path)
+    assert response.status_code == 200
+    assert response.text == "live"
+    json_log.assert_not_called()
+
+
+def test_dual_app_serving_streamable_http_at_sse_keeps_it_live():
+    import fastmcp
+
+    server = FastMCP("Rootly test")
+    with patch.object(fastmcp.settings, "streamable_http_path", "/sse"):
+        app = build_dual_http_app(server)
+
+    gone = next(m for m in app.user_middleware if m.cls is SSEGoneMiddleware)
+    assert "/sse" in cast(tuple[str, ...], gone.kwargs["live_paths"])
+
+
 def test_dual_app_no_longer_advertises_sse(dual_app):
     assert "/sse" not in dual_app.state.path
     assert dual_app.state.mcp_endpoints.streamable == "/mcp"
@@ -208,4 +238,6 @@ def test_self_hosted_streamable_http_answers_gone_on_sse_paths():
 
     run_kwargs = main_server.run.call_args.kwargs
     assert run_kwargs["transport"] == "streamable-http"
-    assert [m.cls for m in run_kwargs["middleware"]] == [SSEGoneMiddleware]
+    [gone] = run_kwargs["middleware"]
+    assert gone.cls is SSEGoneMiddleware
+    assert gone.kwargs["live_paths"] == ("/mcp",)

@@ -728,7 +728,12 @@ def build_dual_http_app(
     # Outermost of ours, so a client stuck on the removed SSE paths gets the
     # 410 rather than a 401. A fresh list: create_base_app mutates it.
     app_middleware = [
-        Middleware(SSEGoneMiddleware, sse_path=sse_path, message_path=message_path),
+        Middleware(
+            SSEGoneMiddleware,
+            sse_path=sse_path,
+            message_path=message_path,
+            live_paths=(streamable_path, code_mode_path),
+        ),
         *cast(list[Middleware], middleware or []),
     ]
     app = create_base_app(
@@ -887,6 +892,7 @@ def run_profiled_streamable_http_server(
             SSEGoneMiddleware,
             sse_path=fastmcp.settings.sse_path,
             message_path=fastmcp.settings.message_path,
+            live_paths=(streamable_path,),
         ),
         *cast(list[Middleware], middleware or []),
     ]
@@ -1095,6 +1101,7 @@ def main():
                         SSEGoneMiddleware,
                         sse_path=fastmcp.settings.sse_path,
                         message_path=fastmcp.settings.message_path,
+                        live_paths=(fastmcp.settings.streamable_http_path,),
                     ),
                     *(get_hosted_auth_middleware() or []),
                 ]

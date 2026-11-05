@@ -14,7 +14,9 @@ reached.
 from __future__ import annotations
 
 import json
+import logging
 import os
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from email.utils import format_datetime
 from typing import Any
@@ -105,17 +107,32 @@ class SSEGoneMiddleware:
     Place it outermost, ahead of the auth middleware: an unauthenticated
     client stuck on ``/sse`` should learn the endpoint is gone, not that its
     token is missing.
+
+    ``live_paths`` are the MCP endpoints the server actually mounts. A path in
+    it is never answered 410, so a self-hosted server that serves Streamable
+    HTTP at ``/sse`` (``FASTMCP_STREAMABLE_HTTP_PATH=/sse``) keeps working.
     """
 
-    def __init__(self, app, sse_path: str | None = None, message_path: str | None = None):
+    def __init__(
+        self,
+        app,
+        sse_path: str | None = None,
+        message_path: str | None = None,
+        live_paths: Iterable[str | None] = (),
+    ):
         self.app = app
         self._sse_path = _normalize_path(sse_path or os.getenv("FASTMCP_SSE_PATH") or "/sse")
         self._message_path = _normalize_path(
             message_path or os.getenv("FASTMCP_MESSAGE_PATH") or "/messages"
         )
+        self._live_paths = {_normalize_path(path) for path in live_paths if path}
 
     def _is_sse_path(self, path: str) -> bool:
         normalized = _normalize_path(path)
+        if any(
+            normalized == live or normalized.startswith(live + "/") for live in self._live_paths
+        ):
+            return False
         return normalized in {self._sse_path, self._message_path} or normalized.startswith(
             self._message_path + "/"
         )
@@ -127,6 +144,6 @@ class SSEGoneMiddleware:
         try:
             log_sse_removed_request(scope)
         except Exception:  # pragma: no cover - logging must never break the response
-            pass
+            logging.getLogger(__name__).debug("Failed to log SSE removal event", exc_info=True)
         await send({"type": "http.response.start", "status": 410, "headers": _GONE_HEADERS})
         await send({"type": "http.response.body", "body": _GONE_BODY})
