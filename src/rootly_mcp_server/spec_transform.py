@@ -1065,3 +1065,77 @@ def compact_large_unions(
     for schema in schemas.values():
         visit(schema)
     return found
+
+
+# Property descriptions that mark a field the API ignores or no longer wants.
+# The field is left out of the tool schema; a client that still sends it is
+# unaffected (attributes pass through and the API ignores or derives them).
+_IGNORED_PROPERTY_PREFIXES = (
+    "accepted for json:api client compatibility, but ignored",
+    "deprecated.",
+    "[deprecated]",
+)
+
+# An enum this long is a reference list, not a choice a model makes from the
+# schema: the IANA time zone list (~308 names) appeared 8 times, ~36k chars.
+_LONG_ENUM_MIN_VALUES = 100
+_TIME_ZONE_HINT = "IANA time zone name, e.g. 'America/New_York' or 'Europe/Paris'."
+
+
+def _is_time_zone_enum(values: list[Any]) -> bool:
+    return (
+        len(values) >= _LONG_ENUM_MIN_VALUES
+        and {"America/New_York", "Etc/UTC"} & set(map(str, values)) != set()
+    )
+
+
+def trim_tool_schemas(spec: dict[str, Any]) -> dict[str, Any]:
+    """Drop schema detail that costs context and tells a model nothing, in place.
+
+    * properties the API documents as ignored or deprecated (the JSON:API
+      ``data.id`` on updates, ``slug`` derived from ``name``, ...);
+    * the IANA time zone enum, replaced by a string with an example.
+
+    Returns counts of what was trimmed and ``removed_property_names``: body
+    repair still treats those as known attributes, so a caller that sends
+    ``slug`` in a flat body is repaired as before rather than refused.
+    """
+    counts: dict[str, Any] = {"ignored_properties": 0, "time_zone_enums": 0}
+    removed: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                visit(item)
+            return
+        if not isinstance(node, dict):
+            return
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            ignored = [
+                name
+                for name, prop in properties.items()
+                if isinstance(prop, dict)
+                and str(prop.get("description", "")).lower().startswith(_IGNORED_PROPERTY_PREFIXES)
+            ]
+            for name in ignored:
+                del properties[name]
+            if ignored and isinstance(node.get("required"), list):
+                node["required"] = [name for name in node["required"] if name not in ignored]
+                if not node["required"]:
+                    del node["required"]
+            counts["ignored_properties"] += len(ignored)
+            removed.update(ignored)
+        values = node.get("enum")
+        if isinstance(values, list) and _is_time_zone_enum(values):
+            del node["enum"]
+            description = str(node.get("description", "")).strip()
+            node["description"] = f"{description} {_TIME_ZONE_HINT}".strip()
+            counts["time_zone_enums"] += 1
+        for value in node.values():
+            visit(value)
+
+    visit(spec.get("paths", {}))
+    visit(spec.get("components", {}).get("schemas", {}))
+    counts["removed_property_names"] = frozenset(removed)
+    return counts

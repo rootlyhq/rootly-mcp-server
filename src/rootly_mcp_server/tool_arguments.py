@@ -19,7 +19,7 @@ import difflib
 import json
 import re
 import typing
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -552,7 +552,9 @@ class MalformedJsonApiBody(ValueError):
 
 
 def repair_jsonapi_body(
-    arguments: Mapping[str, Any], schema: Mapping[str, Any] | None
+    arguments: Mapping[str, Any],
+    schema: Mapping[str, Any] | None,
+    hidden_attributes: Collection[str] = (),
 ) -> tuple[dict[str, Any], list[str]]:
     """Fix unambiguous JSON:API envelope mistakes in an OpenAPI write tool's ``data``.
 
@@ -565,10 +567,22 @@ def repair_jsonapi_body(
     A ``data`` string that is not valid JSON raises ``MalformedJsonApiBody``:
     Rootly's 400 for it ("data: Expected hash") echoes the whole string back
     without saying where it broke.
+
+    ``hidden_attributes`` are attribute names trimmed from the advertised
+    schema (``spec_transform.trim_tool_schemas``) that a caller may still send;
+    they count as attributes so the rest of the body is still repaired.
     """
     resource_type, attribute_properties = _jsonapi_data_schema(schema)
     if not attribute_properties:
         return dict(arguments), []
+    attribute_properties = {
+        **{
+            name: {}
+            for name in hidden_attributes
+            if name not in _JSONAPI_ENVELOPE_KEYS and name not in _properties(schema)
+        },
+        **attribute_properties,
+    }
     result = dict(arguments)
     rewrites: list[str] = []
     if "data" not in result:

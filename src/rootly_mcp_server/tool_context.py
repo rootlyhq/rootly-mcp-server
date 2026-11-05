@@ -89,11 +89,15 @@ async def measure_surface(surface: str) -> list[ToolSize]:
     from fastmcp import Client
 
     saved = {name: os.environ.pop(name) for name in _TOOL_LIST_ENV_VARS if name in os.environ}
+    previous = os.environ.get("ROOTLY_API_TOKEN")
     os.environ.setdefault("ROOTLY_API_TOKEN", "rootly_tool_context_measurement")
     try:
         server = _build_surface(surface)
     finally:
         os.environ.update(saved)
+        if previous is None:
+            # Leave no placeholder behind: callers (tests) decide on it.
+            os.environ.pop("ROOTLY_API_TOKEN", None)
     async with Client(server) as client:
         tools = await client.list_tools()
     return sorted(
