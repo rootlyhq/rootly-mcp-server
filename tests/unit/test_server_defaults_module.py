@@ -280,9 +280,8 @@ def test_deprecated_operations_are_never_tools():
     assert set(filtered["paths"]["/v1/things"]) == {"get"}
 
 
-async def test_bundled_spec_exposes_no_deprecated_operation():
+async def test_bundled_spec_exposes_no_deprecated_operation(monkeypatch):
     import json
-    import os
     from pathlib import Path
 
     from fastmcp import Client
@@ -303,7 +302,7 @@ async def test_bundled_spec_exposes_no_deprecated_operation():
     }
     assert deprecated, "the bundled spec should still contain deprecated operations to filter"
 
-    os.environ.setdefault("ROOTLY_API_TOKEN", "rootly_test")
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
     async with Client(create_rootly_mcp_server(hosted=False, enable_write_tools=True)) as client:
         names = {tool.name for tool in await client.list_tools()}
 
