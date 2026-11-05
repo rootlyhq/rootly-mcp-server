@@ -1119,6 +1119,8 @@ def create_rootly_mcp_server(
     # Before tool generation: the 153-type task_params union would otherwise be
     # inlined into each workflow task write tool (~32k tokens apiece).
     union_variants = spec_transform.compact_large_unions(filtered_spec)
+    trimmed = spec_transform.trim_tool_schemas(filtered_spec)
+    logger.debug("Trimmed tool schemas: %s", trimmed)
 
     # NOTE: autogen tools whose name collides with a curated `@mcp.tool` are
     # removed AFTER registration by `_remove_autogen_tools_shadowed_by_curated`,
