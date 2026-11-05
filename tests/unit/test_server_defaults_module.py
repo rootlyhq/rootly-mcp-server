@@ -63,8 +63,6 @@ class TestServerDefaultsModule:
         assert "/catalog_entities/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/catalogs/{catalog_id}/properties" in DEFAULT_ALLOWED_PATHS
         assert "/catalog_properties/{id}" in DEFAULT_ALLOWED_PATHS
-        assert "/catalog_entities/{catalog_entity_id}/properties" in DEFAULT_ALLOWED_PATHS
-        assert "/catalog_entity_properties/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/causes" in DEFAULT_ALLOWED_PATHS
         assert "/causes/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/dashboards/{dashboard_id}/panels" in DEFAULT_ALLOWED_PATHS
@@ -191,7 +189,6 @@ class TestAllowedPathsMatchTheApi:
             "/communications_templates/{id}",
             "/communications_types",
             "/communications_types/{id}",
-            "/custom_field_options",
             "/form_field_placement_conditions",
             "/form_field_placements",
             "/form_set_conditions",
@@ -261,3 +258,52 @@ class TestAllowedPathsMatchTheApi:
         from rootly_mcp_server.server_defaults import DEFAULT_WRITE_ALLOWED_PATHS
 
         assert "/post_mortems/{id}" not in DEFAULT_WRITE_ALLOWED_PATHS
+
+
+def test_deprecated_operations_are_never_tools():
+    """Operations the API marks deprecated are filtered even when allowlisted."""
+    from rootly_mcp_server.spec_transform import _filter_openapi_spec
+
+    spec = {
+        "paths": {
+            "/v1/things": {
+                "get": {"operationId": "listThings"},
+                "post": {"operationId": "createThing", "deprecated": True},
+            },
+            "/v1/old_things": {"get": {"operationId": "listOldThings", "deprecated": True}},
+        }
+    }
+
+    filtered = _filter_openapi_spec(spec, ["/v1/things", "/v1/old_things"])
+
+    assert set(filtered["paths"]) == {"/v1/things"}
+    assert set(filtered["paths"]["/v1/things"]) == {"get"}
+
+
+async def test_bundled_spec_exposes_no_deprecated_operation(monkeypatch):
+    import json
+    from pathlib import Path
+
+    from fastmcp import Client
+
+    from rootly_mcp_server.server import create_rootly_mcp_server
+    from rootly_mcp_server.spec_transform import to_snake_case
+
+    spec = json.loads(
+        (
+            Path(__file__).resolve().parents[2] / "src/rootly_mcp_server/data/swagger.json"
+        ).read_text()
+    )
+    deprecated = {
+        to_snake_case(op["operationId"])
+        for item in spec["paths"].values()
+        for op in item.values()
+        if isinstance(op, dict) and op.get("deprecated") is True and op.get("operationId")
+    }
+    assert deprecated, "the bundled spec should still contain deprecated operations to filter"
+
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    async with Client(create_rootly_mcp_server(hosted=False, enable_write_tools=True)) as client:
+        names = {tool.name for tool in await client.list_tools()}
+
+    assert names.isdisjoint(deprecated), sorted(names & deprecated)
