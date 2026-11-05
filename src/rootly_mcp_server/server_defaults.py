@@ -81,6 +81,7 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_shift_incidents",
         "get_team",
         "get_user",
+        "get_workflow_task_params_schema",
         "list_alert_events",
         "list_alert_routes",
         "list_alert_routing_rules",

@@ -38,6 +38,7 @@ from .tools.incidents import register_incident_tools
 from .tools.investigations import register_investigation_tools
 from .tools.oncall import register_oncall_tools
 from .tools.resources import register_resource_handlers
+from .tools.workflow_tasks import register_workflow_task_tools
 from .transport import upstream_client
 from .utils import (
     OAUTH_AUTHORIZATION_SERVER_PATH,
@@ -1059,6 +1060,10 @@ def create_rootly_mcp_server(
         enabled_tools = server_defaults.enabled_tools_from_env(hosted=hosted)
     if enabled_tools:
         enabled_tools = server_defaults.canonicalize_tool_names(enabled_tools)
+        # The workflow task write tools describe task_params by type name only
+        # and point at this lookup for the fields, so it comes with them.
+        if enabled_tools & {"create_workflow_task", "update_workflow_task"}:
+            enabled_tools = enabled_tools | {spec_transform.WORKFLOW_TASK_PARAMS_SCHEMA_TOOL}
     if delete_allowed_paths is None:
         delete_allowed_paths = []
     if write_allowed_paths is None:
@@ -1111,6 +1116,9 @@ def create_rootly_mcp_server(
         enable_write_tools=enable_write_tools,
         enabled_operation_ids=autogen_allowlist,
     )
+    # Before tool generation: the 153-type task_params union would otherwise be
+    # inlined into each workflow task write tool (~32k tokens apiece).
+    union_variants = spec_transform.compact_large_unions(filtered_spec)
 
     # NOTE: autogen tools whose name collides with a curated `@mcp.tool` are
     # removed AFTER registration by `_remove_autogen_tools_shadowed_by_curated`,
@@ -1445,6 +1453,8 @@ def create_rootly_mcp_server(
         make_authenticated_request=make_authenticated_request,
         mcp_error=MCPError,
     )
+
+    register_workflow_task_tools(mcp, union_variants.get("task_type", {}))
 
     register_investigation_tools(
         mcp=mcp,

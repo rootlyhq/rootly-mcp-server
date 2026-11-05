@@ -921,3 +921,136 @@ def _patch_broken_refs(schema_def: dict[str, Any]) -> dict[str, Any]:
         else:
             result[key] = value
     return result
+
+
+# A request-body union larger than this (serialized, with $refs resolved) is
+# replaced in the tool schema by its discriminator enum. Workflow task_params
+# (153 task types, ~131k chars) is the only union over it today; the
+# escalation-rule and workflow-trigger unions (10-15k) stay inline, since a
+# model writes those in one call and the lookup round trip would cost more.
+LARGE_UNION_MAX_CHARS = 40_000
+
+WORKFLOW_TASK_PARAMS_SCHEMA_TOOL = "get_workflow_task_params_schema"
+
+# Discriminator -> the tool that serves one variant of a compacted union. A
+# union is only compacted when its discriminator has a lookup tool here, so a
+# compacted schema always names a tool that exists.
+UNION_LOOKUP_TOOLS: dict[str, str] = {"task_type": WORKFLOW_TASK_PARAMS_SCHEMA_TOOL}
+
+
+def _single_value_discriminator(variants: list[dict[str, Any]]) -> str | None:
+    """The property every variant pins to one enum value, e.g. ``task_type``."""
+    common: set[str] | None = None
+    for variant in variants:
+        pinned = {
+            name
+            for name, prop in (variant.get("properties") or {}).items()
+            if isinstance(prop, dict)
+            and isinstance(prop.get("enum"), list)
+            and len(prop["enum"]) == 1
+        }
+        common = pinned if common is None else common & pinned
+        if not common:
+            return None
+    return sorted(common)[0] if common else None
+
+
+def _merge_variants(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """One schema accepting either variant's fields."""
+    merged = deepcopy(first)
+    merged["properties"] = {**(second.get("properties") or {}), **(first.get("properties") or {})}
+    required = set(first.get("required") or []) & set(second.get("required") or [])
+    if required:
+        merged["required"] = sorted(required)
+    else:
+        merged.pop("required", None)
+    return merged
+
+
+def compact_large_unions(
+    spec: dict[str, Any], *, max_chars: int = LARGE_UNION_MAX_CHARS
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Replace oversized discriminated unions in request schemas, in place.
+
+    ``task_params`` on the workflow task write tools is a oneOf/anyOf of 153
+    task types, inlined into each tool's input schema: about 32k tokens per
+    tool, sent to every client on every ``tools/list``. The union becomes an
+    open object whose discriminator is an enum of the variant names, and the
+    variants are returned (``{discriminator: {value: schema}}``) so a lookup
+    tool can serve one at a time.
+
+    Only unions whose every variant pins the same property to a single enum
+    value are compacted; anything else is left untouched.
+    """
+    schemas = spec.get("components", {}).get("schemas", {})
+
+    def resolve(node: Any) -> Any:
+        if isinstance(node, dict) and isinstance(node.get("$ref"), str):
+            target = schemas.get(node["$ref"].split("/")[-1])
+            return deepcopy(target) if isinstance(target, dict) else node
+        return node
+
+    found: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def visit(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                visit(item)
+            return
+        if not isinstance(node, dict):
+            return
+        for key in ("oneOf", "anyOf"):
+            raw = node.get(key)
+            if not isinstance(raw, list) or len(raw) < 2:
+                continue
+            # A broken $ref was already patched to a bare open object (see
+            # _patch_broken_refs); it names no fields, so it is not a variant.
+            variants = [
+                resolved
+                for resolved in (resolve(item) for item in raw)
+                if resolved != {"type": "object", "additionalProperties": True}
+            ]
+            if not all(isinstance(item, dict) for item in variants):
+                continue
+            if len(json.dumps(variants)) <= max_chars:
+                continue
+            discriminator = _single_value_discriminator(variants)
+            if discriminator is None or discriminator not in UNION_LOOKUP_TOOLS:
+                continue
+            by_value: dict[str, dict[str, Any]] = {}
+            for variant in variants:
+                value = str(variant["properties"][discriminator]["enum"][0])
+                existing = by_value.get(value)
+                # The spec reuses a value across variants (e.g. Quip and
+                # Google Docs both declare create_google_docs_page): keep every
+                # field, require only what all of them require.
+                by_value[value] = (
+                    variant if existing is None else _merge_variants(existing, variant)
+                )
+            found.setdefault(discriminator, {}).update(by_value)
+            description = node.get("description")
+            node.clear()
+            node.update(
+                {
+                    "type": "object",
+                    "description": (
+                        (f"{description.rstrip('.')}. " if isinstance(description, str) else "")
+                        + f"Set `{discriminator}` to one of the {len(by_value)} values below. "
+                        "Each takes its own fields, which this schema leaves out to keep the "
+                        f"tool small: call {UNION_LOOKUP_TOOLS[discriminator]}"
+                        f"({discriminator}=...) for them before writing."
+                    ),
+                    "properties": {
+                        discriminator: {"type": "string", "enum": sorted(by_value)},
+                    },
+                    "additionalProperties": True,
+                }
+            )
+            return
+        for value in node.values():
+            visit(value)
+
+    visit(spec.get("paths", {}))
+    for schema in schemas.values():
+        visit(schema)
+    return found
