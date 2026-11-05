@@ -88,3 +88,10 @@ async def test_measurement_ignores_tool_list_settings_in_the_environment(monkeyp
     assert [s.name for s in sizes] == [s.name for s in measured["hosted_full"]]
     # Restored after measuring.
     assert os.environ["ROOTLY_MCP_ENABLED_TOOLS"] == "get_user"
+
+
+def test_core_toolset_is_small(measured):
+    # ?toolsets=core is the small surface we recommend; keep it small.
+    chars = sum(s.chars for s in measured["hosted_core"])
+    assert chars < 60_000, f"core toolset is {chars:,} chars"
+    assert len(measured["hosted_core"]) <= 35

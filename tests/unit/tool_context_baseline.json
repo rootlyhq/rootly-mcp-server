@@ -1,4 +1,8 @@
 {
+  "hosted_core": {
+    "tools": 29,
+    "chars": 40770
+  },
   "hosted_full": {
     "tools": 279,
     "chars": 501603

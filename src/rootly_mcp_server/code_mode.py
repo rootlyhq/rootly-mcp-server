@@ -33,9 +33,10 @@ from pydantic import Field
 from pydantic import ValidationError as PydanticValidationError
 
 from .exceptions import GuidedScriptError, GuidedToolError, is_guided_exception
-from .server import create_rootly_mcp_server
+from .server import ToolSelectionMiddleware, create_rootly_mcp_server
 from .spec_transform import to_snake_case
 from .tool_arguments import suggest_parameter, valid_parameters_line
+from .toolsets import ALL
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -813,9 +814,22 @@ def create_rootly_codemode_server(
         transport="streamable-http",
         enable_write_tools=enable_write_tools,
         enabled_tools=enabled_tools,
+        # Code Mode already lists five meta-tools; its catalog is the whole surface.
+        tool_selection=False,
     )
     transform = build_code_mode_transform()
     mcp.add_transform(transform)
+    # ?readonly=true holds in Code Mode too: `execute` is let through and each
+    # tool it calls is checked, so a read-only script cannot reach a write.
+    mcp.add_middleware(
+        ToolSelectionMiddleware(
+            {},
+            frozenset({ALL}),
+            toolsets_apply=False,
+            filter_list=False,
+            exempt={transform.execute_tool_name},
+        )
+    )
     mcp.add_middleware(ExecuteCallShapeMiddleware(transform.execute_tool_name))
     mcp.add_middleware(GetSchemaArgumentShapeMiddleware())
     return mcp

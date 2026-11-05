@@ -109,6 +109,7 @@ def test_variants_sharing_a_value_are_merged_not_dropped():
 @pytest.fixture
 async def client(monkeypatch):
     monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    monkeypatch.setenv("ROOTLY_MCP_TOOLSETS", "all")
     async with Client(create_rootly_mcp_server(hosted=True)) as c:
         yield c
 
@@ -148,6 +149,7 @@ async def test_lookup_suggests_close_task_types(client):
 @pytest.mark.parametrize("allowlisted", ["create_workflow_task", "update_workflow_task"])
 async def test_lookup_comes_with_a_workflow_task_tool_allowlist(monkeypatch, allowlisted):
     monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    monkeypatch.setenv("ROOTLY_MCP_TOOLSETS", "all")
     server = create_rootly_mcp_server(hosted=True, enabled_tools={allowlisted, "get_user"})
     async with Client(server) as c:
         names = {t.name for t in await c.list_tools()}
@@ -157,6 +159,7 @@ async def test_lookup_comes_with_a_workflow_task_tool_allowlist(monkeypatch, all
 
 async def test_lookup_absent_without_workflow_task_tools(monkeypatch):
     monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    monkeypatch.setenv("ROOTLY_MCP_TOOLSETS", "all")
     server = create_rootly_mcp_server(hosted=True, enabled_tools={"get_user"})
     async with Client(server) as c:
         names = {t.name for t in await c.list_tools()}

@@ -84,6 +84,7 @@ def test_time_zone_enum_becomes_a_string_with_an_example():
 
 async def test_bundled_tools_carry_no_time_zone_list_or_ignored_fields(monkeypatch):
     monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    monkeypatch.setenv("ROOTLY_MCP_TOOLSETS", "all")
     server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
     async with Client(server) as client:
         listed = await client.list_tools_mcp()
@@ -100,6 +101,7 @@ async def test_bundled_tools_carry_no_time_zone_list_or_ignored_fields(monkeypat
 async def test_update_still_sends_a_data_id_the_caller_passes(monkeypatch):
     # data.id left the schema; a client that sends it must still get it through.
     monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    monkeypatch.setenv("ROOTLY_MCP_TOOLSETS", "all")
     sent: list = []
 
     from rootly_mcp_server.transport import AuthenticatedHTTPXClient
@@ -150,6 +152,7 @@ async def test_a_trimmed_field_does_not_stop_body_repair(monkeypatch, arguments)
     # slug left the advertised schema; a caller still sending it must get the
     # same repair as before (fields gathered into data.attributes), not a refusal.
     monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    monkeypatch.setenv("ROOTLY_MCP_TOOLSETS", "all")
     sent = _capture_sends(monkeypatch)
     server = create_rootly_mcp_server(hosted=False, enable_write_tools=True)
     async with Client(server) as client:

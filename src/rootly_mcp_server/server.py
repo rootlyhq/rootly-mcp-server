@@ -25,6 +25,7 @@ from . import (
     server_defaults,
     spec_transform,
     tool_arguments,
+    toolsets,
     transport,
 )
 from .exceptions import GuidedToolError, RootlyAuthenticationError
@@ -809,6 +810,104 @@ class PathArgumentValidationMiddleware(fastmcp_middleware.Middleware):
         raise GuidedToolError(message)
 
 
+def _read_only_hint(tool: Any) -> bool | None:
+    annotations = getattr(tool, "annotations", None)
+    if annotations is None:
+        return None
+    for attr in ("read_only_hint", "readOnlyHint"):
+        value = getattr(annotations, attr, None)
+        if value is not None:
+            return bool(value)
+    return None
+
+
+class ToolSelectionMiddleware(fastmcp_middleware.Middleware):
+    """Shows and allows only the toolsets a request selected (see ``toolsets``).
+
+    ``tools/list`` is filtered; a ``tools/call`` to a tool outside the
+    selection is refused with the toolset that holds it, so a model (or a
+    user) learns the one-word fix rather than "unknown tool".
+    """
+
+    def __init__(
+        self,
+        tool_toolsets: Mapping[str, str | None],
+        default: frozenset[str],
+        *,
+        toolsets_apply: bool = True,
+        filter_list: bool = True,
+        exempt: Collection[str] = (),
+    ):
+        self.tool_toolsets = dict(tool_toolsets)
+        self.default = default
+        # False under an explicit allowlist (slim, ROOTLY_MCP_ENABLED_TOOLS):
+        # it already fixes which tools exist, so only ?readonly= still applies.
+        self.toolsets_apply = toolsets_apply
+        # Code Mode: its tools/list is five meta-tools and is never filtered;
+        # `execute` is exempt, and the tools it calls are checked one by one.
+        self.filter_list = filter_list
+        self.exempt = frozenset(exempt)
+
+    def _selection(self) -> toolsets.ToolSelection:
+        requested = toolsets.requested_selection.get()
+        readonly = requested.readonly if requested is not None else False
+        if not self.toolsets_apply:
+            return toolsets.ToolSelection(frozenset({toolsets.ALL}), readonly)
+        if requested is None:
+            return toolsets.ToolSelection(self.default)
+        if not requested.toolsets:
+            # ?readonly=true alone: read-only view of the default toolsets.
+            return toolsets.ToolSelection(self.default, readonly)
+        return requested
+
+    def _allows(self, selection: toolsets.ToolSelection, tool: Any) -> bool:
+        name = getattr(tool, "name", "")
+        return selection.allows(name, self.tool_toolsets.get(name), _read_only_hint(tool))
+
+    async def on_list_tools(self, context, call_next):
+        tools = await call_next(context)
+        selection = self._selection()
+        if selection.everything or not self.filter_list:
+            return tools
+        return [tool for tool in tools if self._allows(selection, tool)]
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        selection = self._selection()
+        if selection.everything or context.fastmcp_context is None:
+            return await call_next(context)
+        name = context.message.name
+        if name in self.exempt:
+            return await call_next(context)
+        try:
+            tool = await context.fastmcp_context.fastmcp.get_tool(name)
+        except Exception:
+            tool = None
+        if tool is None and not selection.readonly:
+            return await call_next(context)
+        if tool is not None and self._allows(selection, tool):
+            return await call_next(context)
+        if selection.readonly and (tool is None or _read_only_hint(tool) is not True):
+            # Adding a toolset would not help: the read-only flag still refuses it.
+            raise GuidedToolError(
+                f"{name} is not available here: it writes, and this connection is "
+                "read-only. Remove readonly=true from the server URL (or the "
+                "X-MCP-Readonly header) and reconnect to use it."
+            )
+        toolset = self.tool_toolsets.get(name)
+        enable = sorted({*selection.toolsets, toolset or toolsets.ALL} - {toolsets.ALL}) or [
+            toolsets.ALL
+        ]
+        raise GuidedToolError(
+            f"{name} is not available here: it is in the '{toolset}' toolset, which this "
+            f"connection did not select. Reconnect with ?toolsets={','.join(enable)} on the "
+            "server URL (or the X-MCP-Toolsets header) to use it."
+        )
+
+
 class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
     """Repairs unambiguous JSON:API envelope mistakes in autogen write tool bodies.
 
@@ -1032,6 +1131,7 @@ def create_rootly_mcp_server(
     enable_write_tools: bool | None = None,
     write_allowed_paths: list[str] | None = None,
     enabled_tools: set[str] | None = None,
+    tool_selection: bool = True,
 ) -> FastMCP:
     """
     Create a Rootly MCP Server using FastMCP's OpenAPI integration.
@@ -1062,6 +1162,11 @@ def create_rootly_mcp_server(
         enable_write_tools = server_defaults.write_tools_enabled_from_env(default=True)
     if enabled_tools is None:
         enabled_tools = server_defaults.enabled_tools_from_env(hosted=hosted)
+    # Toolsets apply to the open surface only: an explicit allowlist (the env
+    # var, the slim profile, a caller's set) already says exactly what to show.
+    # ?readonly= still applies to it.
+    toolsets_apply = enabled_tools is None
+    default_selection = toolsets.default_toolsets(hosted=hosted)
     if enabled_tools:
         enabled_tools = server_defaults.canonicalize_tool_names(enabled_tools)
         # The workflow task write tools describe task_params by type name only
@@ -1184,10 +1289,25 @@ def create_rootly_mcp_server(
         client=http_client,  # type: ignore[arg-type]
         name=name,
         tags={"rootly", "incident-management"},
+        # Only when the default hides tools: then a model can tell the user how
+        # to load the toolset it needs instead of concluding Rootly cannot do it.
+        instructions=(
+            toolsets.server_instructions(default_selection)
+            if tool_selection and toolsets_apply and toolsets.ALL not in default_selection
+            else None
+        ),
     )
     # Alias middleware runs first so the historical camelCase names are rewritten
     # to snake_case before usage logging records the (canonical) tool name.
     mcp.add_middleware(CamelCaseAliasMiddleware(camel_to_snake_aliases))
+    # After alias rewriting (so a camelCase call is checked under its real
+    # name), before everything else: a hidden tool is refused before any work.
+    tool_selection_middleware: ToolSelectionMiddleware | None = None
+    if tool_selection:
+        tool_selection_middleware = ToolSelectionMiddleware(
+            {}, default_selection, toolsets_apply=toolsets_apply
+        )
+        mcp.add_middleware(tool_selection_middleware)
     mcp.add_middleware(ArgumentNormalizationMiddleware())
     mcp.add_middleware(LegacyContextArgumentMiddleware())
     mcp.add_middleware(InjectedToolAnnotationMiddleware())
@@ -1478,6 +1598,25 @@ def create_rootly_mcp_server(
     # autogen tools based on HTTP method. Curated tools set their own annotations
     # via @mcp.tool(annotations=...) at registration time.
     _apply_annotations_to_autogen_tools(mcp, filtered_spec)
+
+    if tool_selection_middleware is not None:
+        operation_tags = {
+            spec_transform.to_snake_case(operation["operationId"]): (
+                operation.get("tags") or [None]
+            )[0]
+            for path_item in filtered_spec.get("paths", {}).values()
+            for method, operation in path_item.items()
+            if method.lower() in {"get", "post", "put", "patch", "delete"}
+            and isinstance(operation, dict)
+            and operation.get("operationId")
+        }
+        curated_names, _, autogen_names = _provider_tool_inventory(mcp)
+        tool_selection_middleware.tool_toolsets.update(
+            {
+                tool_name: toolsets.toolset_for(tool_name, operation_tags.get(tool_name))
+                for tool_name in curated_names | autogen_names
+            }
+        )
 
     # Validate the allowlist against the fully-registered tool set (autogen + curated).
     # This must happen after all register_*_tools() calls so curated tool names — which

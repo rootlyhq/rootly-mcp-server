@@ -24,6 +24,7 @@ from .exceptions import RootlyValidationError
 from .security import mask_sensitive_data
 from .utils import (
     OAUTH_PROTECTED_RESOURCE_PATH,
+    _fingerprint_auth_header,
     _sanitize_log_excerpt,
     auth_header_state,
     resolve_mcp_server_url,
@@ -419,6 +420,28 @@ class AuthCaptureMiddleware:
 
             request = Request(scope)
             headers = _normalize_headers(dict(request.headers))
+            # Toolsets / read-only chosen by this request (?toolsets=, headers);
+            # read by ToolSelectionMiddleware for tools/list and tools/call.
+            from urllib.parse import parse_qsl
+
+            from .toolsets import (
+                log_tool_profile_deprecated,
+                requested_selection,
+                selection_from_request,
+                tool_profile_in_request,
+            )
+
+            query = dict(parse_qsl((scope.get("query_string") or b"").decode("latin-1")))
+            requested_selection.set(selection_from_request(query, headers))
+            if legacy_profile := tool_profile_in_request(query, headers):
+                try:
+                    log_tool_profile_deprecated(
+                        *legacy_profile,
+                        headers,
+                        _fingerprint_auth_header(headers.get("authorization", "")),
+                    )
+                except Exception:  # pragma: no cover - logging must never break a request
+                    logger.debug("Failed to log tool_profile deprecation", exc_info=True)
             effective_transport = _infer_transport_from_path(
                 path,
                 self._sse_path,
