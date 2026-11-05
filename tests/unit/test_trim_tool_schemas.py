@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
 
+import pytest
 from fastmcp import Client
 
 from rootly_mcp_server.server import create_rootly_mcp_server
@@ -82,8 +82,8 @@ def test_time_zone_enum_becomes_a_string_with_an_example():
     ]
 
 
-async def test_bundled_tools_carry_no_time_zone_list_or_ignored_fields():
-    os.environ.setdefault("ROOTLY_API_TOKEN", "rootly_test")
+async def test_bundled_tools_carry_no_time_zone_list_or_ignored_fields(monkeypatch):
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
     server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
     async with Client(server) as client:
         listed = await client.list_tools_mcp()
@@ -99,7 +99,7 @@ async def test_bundled_tools_carry_no_time_zone_list_or_ignored_fields():
 
 async def test_update_still_sends_a_data_id_the_caller_passes(monkeypatch):
     # data.id left the schema; a client that sends it must still get it through.
-    os.environ.setdefault("ROOTLY_API_TOKEN", "rootly_test")
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
     sent: list = []
 
     from rootly_mcp_server.transport import AuthenticatedHTTPXClient
@@ -120,3 +120,40 @@ async def test_update_still_sends_a_data_id_the_caller_passes(monkeypatch):
 
     assert sent and sent[0]["data"]["id"] == "t1"
     assert sent[0]["data"]["attributes"]["name"] == "SRE"
+
+
+def _capture_sends(monkeypatch) -> list:
+    from rootly_mcp_server.transport import AuthenticatedHTTPXClient
+
+    sent: list = []
+
+    async def fake_send(self, request, **kwargs):
+        import httpx2 as httpx
+
+        sent.append(json.loads(request.content or b"{}"))
+        return httpx.Response(201, json={"data": {}}, request=request)
+
+    monkeypatch.setattr(AuthenticatedHTTPXClient, "send", fake_send, raising=False)
+    return sent
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        # Flat arguments, no data at all.
+        {"name": "SRE", "slug": "sre"},
+        # Attributes put straight on data.
+        {"data": {"type": "groups", "name": "SRE", "slug": "sre"}},
+    ],
+)
+async def test_a_trimmed_field_does_not_stop_body_repair(monkeypatch, arguments):
+    # slug left the advertised schema; a caller still sending it must get the
+    # same repair as before (fields gathered into data.attributes), not a refusal.
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    sent = _capture_sends(monkeypatch)
+    server = create_rootly_mcp_server(hosted=False, enable_write_tools=True)
+    async with Client(server) as client:
+        result = await client.call_tool("create_team", arguments, raise_on_error=False)
+
+    assert not result.is_error, result.content
+    assert sent[0]["data"]["attributes"] == {"name": "SRE", "slug": "sre"}

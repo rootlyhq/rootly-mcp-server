@@ -1089,16 +1089,19 @@ def _is_time_zone_enum(values: list[Any]) -> bool:
     )
 
 
-def trim_tool_schemas(spec: dict[str, Any]) -> dict[str, int]:
+def trim_tool_schemas(spec: dict[str, Any]) -> dict[str, Any]:
     """Drop schema detail that costs context and tells a model nothing, in place.
 
     * properties the API documents as ignored or deprecated (the JSON:API
       ``data.id`` on updates, ``slug`` derived from ``name``, ...);
     * the IANA time zone enum, replaced by a string with an example.
 
-    Returns counts of what was trimmed, for logging and tests.
+    Returns counts of what was trimmed and ``removed_property_names``: body
+    repair still treats those as known attributes, so a caller that sends
+    ``slug`` in a flat body is repaired as before rather than refused.
     """
-    counts = {"ignored_properties": 0, "time_zone_enums": 0}
+    counts: dict[str, Any] = {"ignored_properties": 0, "time_zone_enums": 0}
+    removed: set[str] = set()
 
     def visit(node: Any) -> None:
         if isinstance(node, list):
@@ -1122,6 +1125,7 @@ def trim_tool_schemas(spec: dict[str, Any]) -> dict[str, int]:
                 if not node["required"]:
                     del node["required"]
             counts["ignored_properties"] += len(ignored)
+            removed.update(ignored)
         values = node.get("enum")
         if isinstance(values, list) and _is_time_zone_enum(values):
             del node["enum"]
@@ -1133,4 +1137,5 @@ def trim_tool_schemas(spec: dict[str, Any]) -> dict[str, int]:
 
     visit(spec.get("paths", {}))
     visit(spec.get("components", {}).get("schemas", {}))
+    counts["removed_property_names"] = frozenset(removed)
     return counts

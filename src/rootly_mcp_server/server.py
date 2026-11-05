@@ -820,6 +820,10 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
     that does not map cleanly reaches the API unchanged.
     """
 
+    def __init__(self, hidden_attributes: Collection[str] = ()) -> None:
+        # Attribute names trimmed from the advertised schemas; still accepted.
+        self.hidden_attributes = frozenset(hidden_attributes)
+
     async def on_call_tool(
         self,
         context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
@@ -838,7 +842,7 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
 
         try:
             repaired, rewrites = tool_arguments.repair_jsonapi_body(
-                args, getattr(tool, "parameters", None)
+                args, getattr(tool, "parameters", None), self.hidden_attributes
             )
         except tool_arguments.MalformedJsonApiBody as exc:
             raise GuidedToolError(f"{context.message.name}: {exc}") from None
@@ -1193,7 +1197,7 @@ def create_rootly_mcp_server(
     # the curated tools once they are registered, below.
     argument_alias_middleware = ToolArgumentAliasMiddleware()
     mcp.add_middleware(argument_alias_middleware)
-    mcp.add_middleware(JsonApiBodyRepairMiddleware())
+    mcp.add_middleware(JsonApiBodyRepairMiddleware(trimmed["removed_property_names"]))
     # Innermost, so usage logging still records the rejected call and its arg keys.
     mcp.add_middleware(PathArgumentValidationMiddleware())
 
