@@ -111,7 +111,6 @@ dev = [
     "pytest-asyncio>=0.23.0", # Async testing support
     "pytest-mock>=3.12.0", # Mocking utilities
     "pytest-timeout>=2.2.0", # Test timeout handling
-    "sseclient-py>=1.8.0", # Server-Sent Events client for remote tests
     "bandit>=1.7.0", # Security linter
     "pip-audit>=2.7.0", # Dependency vulnerability checker
     # Pulled in transitively by pip-audit via pip-api. Floor raised to clear

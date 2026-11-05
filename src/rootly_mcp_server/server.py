@@ -1039,7 +1039,7 @@ def create_rootly_mcp_server(
             If None, destructive delete tools remain disabled by default.
         hosted: Whether the server is hosted (affects authentication).
         base_url: Base URL for Rootly API. If None, uses ROOTLY_BASE_URL env var or default.
-        transport: Transport protocol (stdio, sse, or streamable-http).
+        transport: Transport protocol (stdio, streamable-http, or both).
         enable_write_tools: Whether non-destructive write tools are exposed.
             If None, uses ROOTLY_MCP_ENABLE_WRITE_TOOLS.
         write_allowed_paths: Path templates where POST/PUT/PATCH operations are exposed
