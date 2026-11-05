@@ -66,8 +66,18 @@ def register_workflow_task_tools(mcp: Any, task_params_variants: dict[str, JsonD
                 ),
                 "task_types": task_types,
             }
-        return {
+        result: JsonDict = {
             "task_type": key,
             "required": list(schema.get("required") or []),
             "fields": schema.get("properties") or {},
         }
+        # Cross-field rules (e.g. add_slack_bookmark: title and link, or
+        # playbook_id) live in anyOf/oneOf/allOf next to the properties.
+        rules = {
+            name: value
+            for name, value in schema.items()
+            if name not in {"type", "properties", "required", "description"}
+        }
+        if rules:
+            result["rules"] = rules
+        return result

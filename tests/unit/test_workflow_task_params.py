@@ -163,3 +163,15 @@ async def test_lookup_absent_without_workflow_task_tools():
         names = {t.name for t in await c.list_tools()}
 
     assert WORKFLOW_TASK_PARAMS_SCHEMA_TOOL not in names
+
+
+async def test_lookup_keeps_cross_field_rules(client):
+    # add_slack_bookmark needs title and link, or playbook_id: an anyOf beside
+    # the properties, which a fields-only answer would lose.
+    result = await client.call_tool(
+        WORKFLOW_TASK_PARAMS_SCHEMA_TOOL, {"task_type": "add_slack_bookmark"}
+    )
+
+    rules = result.structured_content["rules"]
+    assert "anyOf" in rules
+    assert "playbook_id" in json.dumps(rules["anyOf"])

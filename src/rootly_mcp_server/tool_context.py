@@ -55,21 +55,32 @@ def tool_definition_chars(tool: Any) -> int:
     )
 
 
+# Settings that change which tools a server registers. Measurements clear
+# them so a surface always means its shipped default, whatever the shell has.
+_TOOL_LIST_ENV_VARS = (
+    "ROOTLY_MCP_ENABLED_TOOLS",
+    "ROOTLY_MCP_ENABLE_WRITE_TOOLS",
+    "ROOTLY_MCP_HOSTED_TOOL_PROFILE",
+)
+
+
 def _build_surface(surface: str) -> Any:
     from .code_mode import create_rootly_codemode_server
     from .server import create_rootly_mcp_server
     from .server_defaults import DEFAULT_HOSTED_ENABLED_TOOLS
 
     if surface == "hosted_full":
-        return create_rootly_mcp_server(hosted=True)
+        return create_rootly_mcp_server(hosted=True, enable_write_tools=True)
     if surface == "hosted_slim":
         return create_rootly_mcp_server(
-            hosted=True, enabled_tools=set(DEFAULT_HOSTED_ENABLED_TOOLS)
+            hosted=True,
+            enable_write_tools=True,
+            enabled_tools=set(DEFAULT_HOSTED_ENABLED_TOOLS),
         )
     if surface == "self_hosted":
-        return create_rootly_mcp_server(hosted=False)
+        return create_rootly_mcp_server(hosted=False, enable_write_tools=True)
     if surface == "code_mode":
-        return create_rootly_codemode_server(hosted=True)
+        return create_rootly_codemode_server(hosted=True, enable_write_tools=True)
     raise ValueError(f"unknown surface {surface!r}")
 
 
@@ -77,8 +88,13 @@ async def measure_surface(surface: str) -> list[ToolSize]:
     """Tool sizes for one surface, largest first."""
     from fastmcp import Client
 
+    saved = {name: os.environ.pop(name) for name in _TOOL_LIST_ENV_VARS if name in os.environ}
     os.environ.setdefault("ROOTLY_API_TOKEN", "rootly_tool_context_measurement")
-    async with Client(_build_surface(surface)) as client:
+    try:
+        server = _build_surface(surface)
+    finally:
+        os.environ.update(saved)
+    async with Client(server) as client:
         tools = await client.list_tools()
     return sorted(
         (ToolSize(tool.name, tool_definition_chars(tool)) for tool in tools),

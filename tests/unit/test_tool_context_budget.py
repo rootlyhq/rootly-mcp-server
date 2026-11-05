@@ -16,6 +16,7 @@ baseline, so the increase is visible in review.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -74,3 +75,16 @@ def test_workflow_task_tools_list_task_types_not_their_fields(measured):
     assert sizes["create_workflow_task"] < 10_000
     assert sizes["update_workflow_task"] < 10_000
     assert "get_workflow_task_params_schema" in sizes
+
+
+async def test_measurement_ignores_tool_list_settings_in_the_environment(monkeypatch, measured):
+    from rootly_mcp_server.tool_context import measure_surface
+
+    monkeypatch.setenv("ROOTLY_MCP_ENABLE_WRITE_TOOLS", "false")
+    monkeypatch.setenv("ROOTLY_MCP_ENABLED_TOOLS", "get_user")
+
+    sizes = await measure_surface("hosted_full")
+
+    assert [s.name for s in sizes] == [s.name for s in measured["hosted_full"]]
+    # Restored after measuring.
+    assert os.environ["ROOTLY_MCP_ENABLED_TOOLS"] == "get_user"
