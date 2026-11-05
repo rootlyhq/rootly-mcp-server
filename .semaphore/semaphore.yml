@@ -17,6 +17,8 @@ agent:
 blocks:
   - name: 'Build'
     dependencies: []
+    run:
+      when: "branch = 'main' OR branch = 'staging'"
     task:
       secrets:
         - name: 'AWS Credentials'
