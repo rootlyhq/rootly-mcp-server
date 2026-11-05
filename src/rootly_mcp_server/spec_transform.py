@@ -146,6 +146,38 @@ def snakecase_operation_ids(spec: dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
+_DEPRECATION_PREFIX = re.compile(
+    r"^\s*(?:\[deprecated\]|\*\*deprecated:?\*\*:?|deprecated[.:])\s*", re.IGNORECASE
+)
+
+
+def deprecated_operation_guidance(spec: dict[str, Any]) -> dict[str, str]:
+    """Map each operation the API marks deprecated to what replaces it.
+
+    `_filter_openapi_spec` never makes these tools, so a client with a cached
+    tool list that still calls one would only hear "Unknown tool". The spec's
+    own description names the replacement; this keeps it so the server can say
+    so. Run after `snakecase_operation_ids`: keys are the tool names.
+    """
+    guidance: dict[str, str] = {}
+    for path_item in spec.get("paths", {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for method, op in path_item.items():
+            if method.lower() not in _OPENAPI_METHODS or not isinstance(op, dict):
+                continue
+            op_id = op.get("operationId")
+            if not op_id or op.get("deprecated") is not True:
+                continue
+            description = _DEPRECATION_PREFIX.sub("", op.get("description") or "")
+            # The first sentence names the replacement; the rest restates the
+            # operation ("List Custom fields").
+            first_line = description.strip().split("\n", 1)[0]
+            sentence, dot, _ = first_line.partition(". ")
+            guidance[op_id] = (sentence + dot).strip()
+    return guidance
+
+
 def _load_swagger_spec(swagger_path: str | None = None) -> dict[str, Any]:
     """
     Load the Swagger specification from a file or URL.
