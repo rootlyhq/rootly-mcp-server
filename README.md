@@ -43,7 +43,7 @@ Every client loads the whole tool list into the model's context: the full surfac
 
 - **Pick toolsets:** `https://mcp.rootly.com/mcp?toolsets=core,workflows`, or send `X-MCP-Toolsets: core,workflows`
 - **Everything:** `?toolsets=all` (about 280 tools)
-- **Read-only:** add `readonly=true` (or `X-MCP-Readonly: true`), e.g. `?toolsets=all&readonly=true`
+- **Read-only:** add `readonly=true` (or `X-MCP-Readonly: true`), e.g. `?toolsets=all&readonly=true`. Any value other than `false`/`0`/`no`/`off` turns it on. Write tools are hidden and refused, and the server also refuses any non-GET request to the Rootly API on that connection. It is a per-connection guard; for a hard guarantee, connect with a Rootly API key whose role cannot write
 - **Deprecated: `?tool_profile=` and `X-Rootly-Tool-Profile`.** They still work (`full`/`all` mean `?toolsets=all`; `slim` keeps its fixed ~85-tool list) and will be removed; switch to `?toolsets=`. Each use is logged so remaining clients can be found
 - **Server-wide default:** `ROOTLY_MCP_TOOLSETS=core,alerts` sets what a client gets with no selection (default `all`); `ROOTLY_MCP_HOSTED_TOOL_PROFILE=slim` makes slim the default instead
 - **Exact custom override:** `ROOTLY_MCP_ENABLED_TOOLS=...` replaces toolsets entirely

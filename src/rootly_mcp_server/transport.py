@@ -1178,8 +1178,28 @@ class AuthenticatedHTTPXClient:
                 logger.debug(f"Transformed parameter: '{key}' -> '{original_key}'")
         return transformed
 
+    @staticmethod
+    def _refuse_writes_when_readonly(method: str) -> None:
+        """Second line of read-only defence, below the tool layer.
+
+        ToolSelectionMiddleware hides and refuses write tools on a read-only
+        connection; this refuses any non-GET request to the Rootly API on one,
+        so a read-only connection cannot write even through a tool whose
+        annotation is wrong. (Every curated tool that sends POST/PUT is a
+        write tool, so no read path is affected.)
+        """
+        from .toolsets import requested_selection
+
+        selection = requested_selection.get()
+        if selection is not None and selection.readonly and method.upper() not in {"GET", "HEAD"}:
+            raise RootlyValidationError(
+                f"Refused {method.upper()} to the Rootly API: this connection is read-only "
+                "(readonly=true / X-MCP-Readonly). Remove it and reconnect to make changes."
+            )
+
     async def request(self, method: str, url: str, **kwargs):
         """Override request to transform parameters and ensure correct headers."""
+        self._refuse_writes_when_readonly(method)
         self._check_for_unfilled_path_params(method, url)
         # Transform query parameters
         if "params" in kwargs:
@@ -1799,6 +1819,7 @@ class AuthenticatedHTTPXClient:
         Headers are enforced by the event hook, so we just delegate to the inner client.
         Alert response stripping is also applied here for forward compatibility.
         """
+        self._refuse_writes_when_readonly(request.method)
         self._check_for_unfilled_path_params(request.method, request.url)
         # In hosted mode, ensure Authorization header is present in the request.
         # The _session_auth_token ContextVar is set by AuthCaptureMiddleware

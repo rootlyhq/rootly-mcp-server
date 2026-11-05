@@ -364,3 +364,43 @@ async def test_tool_profile_request_logs_a_deprecation_event(token, monkeypatch)
     assert event["source"] == "header" and event["tool_profile"] == "slim"
     assert event["user_agent"] == "legacy-client/1"
     assert event["token_fingerprint"] and "rootly_test" not in line
+
+
+@pytest.mark.parametrize(
+    ("value", "readonly"),
+    [
+        ("true", True),
+        ("1", True),
+        ("YES", True),
+        # Fail closed: anything that is not an explicit "off" is read-only.
+        ("enabled", True),
+        ("readonly", True),
+        ("false", False),
+        ("0", False),
+        (" Off ", False),
+        ("n", False),
+        ("", False),
+    ],
+)
+def test_readonly_values_fail_closed(value, readonly):
+    selection = selection_from_request({"readonly": value}, {})
+    assert (selection is not None and selection.readonly) is readonly
+    header = selection_from_request({}, {"x-mcp-readonly": value})
+    assert (header is not None and header.readonly) is readonly
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+async def test_transport_refuses_writes_on_a_read_only_connection(method):
+    # Defence in depth: even a tool whose read-only annotation were wrong
+    # could not write on a read-only connection.
+    from rootly_mcp_server.exceptions import RootlyValidationError
+    from rootly_mcp_server.transport import AuthenticatedHTTPXClient
+
+    reset = toolsets.requested_selection.set(ToolSelection(frozenset(), readonly=True))
+    try:
+        with pytest.raises(RootlyValidationError, match="read-only"):
+            AuthenticatedHTTPXClient._refuse_writes_when_readonly(method)
+        AuthenticatedHTTPXClient._refuse_writes_when_readonly("GET")
+    finally:
+        toolsets.requested_selection.reset(reset)
+    AuthenticatedHTTPXClient._refuse_writes_when_readonly(method)

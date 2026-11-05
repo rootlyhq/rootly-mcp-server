@@ -272,8 +272,13 @@ def parse_toolsets(raw: str | None) -> frozenset[str] | None:
     return frozenset(known) or None
 
 
-def _truthy(raw: str | None) -> bool:
-    return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
+# Fail closed, as GitHub's X-MCP-Readonly does: only an explicit "off" value
+# (or absence) leaves writes on, so a typo like readonly=enabled is read-only.
+_READONLY_OFF = frozenset({"", "false", "f", "no", "n", "0", "off"})
+
+
+def _readonly_requested(raw: str | None) -> bool:
+    return raw is not None and raw.strip().lower() not in _READONLY_OFF
 
 
 def default_toolsets(*, hosted: bool) -> frozenset[str]:
@@ -304,7 +309,7 @@ def selection_from_request(
             query_params.get(TOOL_PROFILE_QUERY_PARAM) or headers.get(TOOL_PROFILE_HEADER) or ""
         )
         toolsets = PROFILE_TOOLSETS.get(profile.strip().lower())
-    readonly = _truthy(query_params.get(READONLY_QUERY_PARAM)) or _truthy(
+    readonly = _readonly_requested(query_params.get(READONLY_QUERY_PARAM)) or _readonly_requested(
         headers.get(READONLY_HEADER)
     )
     if toolsets is None and not readonly:
