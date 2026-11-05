@@ -1,11 +1,15 @@
 """Calls to tools removed with their deprecated endpoints name the replacement."""
 
+from types import SimpleNamespace
+
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
-from rootly_mcp_server.server import create_rootly_mcp_server
+from rootly_mcp_server import toolsets
+from rootly_mcp_server.server import RemovedToolMiddleware, create_rootly_mcp_server
 from rootly_mcp_server.spec_transform import deprecated_operation_guidance
+from rootly_mcp_server.toolsets import ToolSelection
 
 
 def test_guidance_keeps_only_the_replacement_sentence():
@@ -35,10 +39,14 @@ def test_guidance_keeps_only_the_replacement_sentence():
     }
 
 
-@pytest.mark.asyncio
-async def test_removed_tool_call_names_the_replacement(monkeypatch):
+@pytest.fixture
+def mcp(monkeypatch):
     monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test_value")
-    mcp = create_rootly_mcp_server()
+    return create_rootly_mcp_server()
+
+
+@pytest.mark.asyncio
+async def test_removed_tool_call_names_the_replacement(mcp):
     async with Client(mcp) as client:
         names = {tool.name for tool in await client.list_tools()}
         assert "list_custom_fields" not in names
@@ -50,3 +58,31 @@ async def test_removed_tool_call_names_the_replacement(monkeypatch):
 
         with pytest.raises(ToolError, match="Unknown tool: 'not_a_tool'"):
             await client.call_tool("not_a_tool", {})
+
+
+@pytest.mark.asyncio
+async def test_read_only_connection_gets_the_replacement_not_a_read_only_refusal(mcp):
+    reset = toolsets.requested_selection.set(ToolSelection(frozenset(), readonly=True))
+    try:
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError) as excinfo:
+                await client.call_tool("list_custom_fields", {})
+    finally:
+        toolsets.requested_selection.reset(reset)
+    assert "form field endpoints" in str(excinfo.value)
+    assert "readonly" not in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_a_registered_tool_is_never_shadowed():
+    middleware = RemovedToolMiddleware({"list_things": "Use other things.", "gone": ""})
+    middleware.exclude({"list_things"})
+    context = SimpleNamespace(message=SimpleNamespace(name="list_things"))
+
+    async def call_next(_context):
+        return "called"
+
+    assert await middleware.on_call_tool(context, call_next) == "called"  # type: ignore[arg-type]
+    context.message.name = "gone"
+    with pytest.raises(ToolError, match="Tool 'gone' was removed"):
+        await middleware.on_call_tool(context, call_next)  # type: ignore[arg-type]
