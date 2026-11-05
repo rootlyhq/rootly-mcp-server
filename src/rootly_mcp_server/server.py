@@ -17,6 +17,7 @@ from typing import Any
 import fastmcp.server.middleware as fastmcp_middleware
 import mcp.types as mt
 from fastmcp import FastMCP
+from fastmcp.exceptions import NotFoundError
 
 from . import (
     audit,
@@ -454,6 +455,37 @@ class CamelCaseAliasMiddleware(fastmcp_middleware.Middleware):
         return await call_next(context)
 
 
+class RemovedToolMiddleware(fastmcp_middleware.Middleware):
+    """Answers a call to a tool removed with its deprecated API endpoint.
+
+    Deprecated operations are never registered (see `_filter_openapi_spec`),
+    but clients that cached an older tool list keep calling them. Without this
+    they get a bare "Unknown tool" and no idea what replaced it.
+    """
+
+    def __init__(self, guidance: Mapping[str, str]) -> None:
+        self._guidance = dict(guidance)
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        try:
+            return await call_next(context)
+        except NotFoundError:
+            name = context.message.name
+            if name not in self._guidance:
+                raise
+            hint = self._guidance[name]
+            message = (
+                f"Tool '{name}' was removed: the Rootly API deprecated its endpoint."
+                + (f" {hint}" if hint else "")
+                + " Refresh the tool list to see the tools that replace it."
+            )
+            raise GuidedToolError(message) from None
+
+
 _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
     "collect_incidents": {
         "end": "started_before",
@@ -511,6 +543,19 @@ _LIST_TO_CSV_ARGS: dict[str, set[str]] = {
         "incident_type_ids",
         "functionality_ids",
     },
+    # The API splits a comma-separated filter value into a list, so a list of
+    # statuses or severities joined here filters on any of them.
+    **dict.fromkeys(
+        ("list_incidents", "collect_incidents"),
+        {
+            "teams",
+            "team_ids",
+            "service_ids",
+            "severity",
+            "status",
+            "custom_field_selected_option_ids",
+        },
+    ),
 }
 
 
@@ -1202,6 +1247,7 @@ def create_rootly_mcp_server(
     # The returned camelCase->snake_case map feeds the alias middleware so the
     # historical camelCase names stay callable (but hidden from tools/list).
     camel_to_snake_aliases = snakecase_operation_ids(swagger_spec)
+    removed_tool_guidance = spec_transform.deprecated_operation_guidance(swagger_spec)
     logger.info(f"Normalized {len(camel_to_snake_aliases)} operationIds to snake_case")
 
     # When an allowlist is provided, build the subset that matches real OpenAPI
@@ -1300,6 +1346,9 @@ def create_rootly_mcp_server(
     # Alias middleware runs first so the historical camelCase names are rewritten
     # to snake_case before usage logging records the (canonical) tool name.
     mcp.add_middleware(CamelCaseAliasMiddleware(camel_to_snake_aliases))
+    # Inside the alias rewrite, so a camelCase name of a removed tool is
+    # recognised too.
+    mcp.add_middleware(RemovedToolMiddleware(removed_tool_guidance))
     # After alias rewriting (so a camelCase call is checked under its real
     # name), before everything else: a hidden tool is refused before any work.
     tool_selection_middleware: ToolSelectionMiddleware | None = None
