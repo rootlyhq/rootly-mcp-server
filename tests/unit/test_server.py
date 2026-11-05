@@ -408,8 +408,6 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "get_catalog_entity" in tool_names
         assert "list_catalog_properties" in tool_names
         assert "get_catalog_property" in tool_names
-        assert "list_catalog_entity_properties" in tool_names
-        assert "get_catalog_entity_property" in tool_names
         assert "list_causes" in tool_names
         assert "get_cause" in tool_names
         assert "list_dashboard_panels" in tool_names
@@ -438,8 +436,6 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "update_workflow_form_field_condition" in tool_names
         assert "create_catalog_property" in tool_names
         assert "update_catalog_property" in tool_names
-        assert "create_catalog_entity_property" in tool_names
-        assert "update_catalog_entity_property" in tool_names
         assert "create_dashboard_panel" in tool_names
         assert "update_dashboard_panel" in tool_names
         assert "delete_alert_event" not in tool_names

@@ -319,6 +319,17 @@ def _filter_openapi_spec(
         )
         if not allow_delete:
             path_item.pop("delete", None)
+        # Operations the API marks deprecated are never tools: they cost every
+        # client context for endpoints with a supported replacement, and an
+        # allowlist entry or a spec refresh must not bring them back.
+        for method in [
+            method
+            for method, operation in path_item.items()
+            if method.lower() in _OPENAPI_METHODS
+            and isinstance(operation, dict)
+            and operation.get("deprecated") is True
+        ]:
+            path_item.pop(method)
         if not any(method.lower() in _OPENAPI_METHODS for method in path_item):
             paths_to_remove.append(path)
     for path in paths_to_remove:
