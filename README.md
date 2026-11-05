@@ -22,13 +22,33 @@ Use the hosted MCP server. No local installation required.
 > [!WARNING]
 > **SSE is deprecated.** The hosted `https://mcp.rootly.com/sse` endpoint and the self-hosted `--transport sse` option will be removed after **2026-11-20**. Switch your client to Streamable HTTP (`https://mcp.rootly.com/mcp`) or Code Mode (`https://mcp.rootly.com/mcp-codemode`); for most clients that means changing the URL and, if your client config has one, setting the transport to `http`/`streamable-http`. SSE responses now carry `Deprecation`, `Sunset` and `Link: rel="successor-version"` headers.
 
-Hosted tool profiles:
+### Toolsets
 
-- **Full (default):** use the URLs above as-is
-- **Slim (~70 tools):** add `?tool_profile=slim` to the hosted URL, for example `https://mcp.rootly.com/mcp?tool_profile=slim`
-- **Header alternative:** send `X-Rootly-Tool-Profile: slim`
-- **Server-wide default:** set `ROOTLY_MCP_HOSTED_TOOL_PROFILE=full|slim`
-- **Exact custom override:** set `ROOTLY_MCP_ENABLED_TOOLS=...`
+Every client loads the whole tool list into the model's context: the full surface is about 125k tokens. Tools are grouped into **toolsets** (the same model as GitHub's and Datadog's MCP servers) so a client can load only what it needs. **Recommended: `?toolsets=core`**, about 29 tools and 10k tokens. Without a selection you still get every tool, so existing configurations keep working.
+
+| Toolset | What it covers |
+|---|---|
+| `core` (recommended) | Everyday incident response: find and update incidents, alerts, who is on call (~29 tools) |
+| `incidents` | Action items, events, roles, retrospectives, form field selections, meeting recordings |
+| `alerts` | Alerts, alert sources, routes and routing rules, urgencies, heartbeats, live call routers |
+| `oncall` | Schedules, rotations, shifts, overrides, escalation policies and paths |
+| `workflows` | Workflows, workflow tasks and runs, playbooks |
+| `catalog` | Services, functionalities, teams, environments, catalogs |
+| `status_pages` | Status pages, templates, pulses |
+| `config` | Severities, causes, incident types, forms, retrospective processes, dashboards |
+| `users` | Users, notification rules, contact methods |
+| `ai` | AI SRE investigations, AI automations and skills |
+| `observability` | Rootly Observability logs and patterns |
+| `audit` | Audit log |
+
+- **Pick toolsets:** `https://mcp.rootly.com/mcp?toolsets=core,workflows`, or send `X-MCP-Toolsets: core,workflows`
+- **Everything:** `?toolsets=all` (about 280 tools)
+- **Read-only:** add `readonly=true` (or `X-MCP-Readonly: true`), e.g. `?toolsets=all&readonly=true`. Any value other than `false`/`0`/`no`/`off` turns it on. Write tools are hidden and refused, and the server also refuses any non-GET request to the Rootly API on that connection. It is a per-connection guard; for a hard guarantee, connect with a Rootly API key whose role cannot write
+- **Deprecated: `?tool_profile=` and `X-Rootly-Tool-Profile`.** They still work (`full`/`all` mean `?toolsets=all`; `slim` keeps its fixed ~85-tool list) and will be removed; switch to `?toolsets=`. Each use is logged so remaining clients can be found
+- **Server-wide default:** `ROOTLY_MCP_TOOLSETS=core,alerts` sets what a client gets with no selection (default `all`); `ROOTLY_MCP_HOSTED_TOOL_PROFILE=slim` makes slim the default instead
+- **Exact custom override:** `ROOTLY_MCP_ENABLED_TOOLS=...` replaces toolsets entirely
+
+A tool outside the selection is refused with the toolset that holds it (`list_workflows is not available here: it is in the 'workflows' toolset ... Reconnect with ?toolsets=core,workflows`), and the server instructions list every toolset, so an assistant can tell you the exact change. Code Mode (`/mcp-codemode`) always has the full catalog; `readonly=true` applies there too, to every tool a script calls. `readonly` also applies under the slim profile and `ROOTLY_MCP_ENABLED_TOOLS`.
 
 ### General Remote Setup
 
@@ -391,15 +411,13 @@ Choose one transport per server process:
 - **SSE (deprecated, removed after 2026-11-20)** endpoint path: `/sse`. `--transport sse` logs a deprecation warning at startup; use `--transport streamable-http` instead.
 - **Code Mode (experimental)** endpoint path: `/mcp-codemode` in hosted dual-transport mode. One `execute` call may make at most 50 tool calls; set `ROOTLY_CODE_MODE_MAX_TOOL_CALLS` to a positive integer to change that.
 
-Hosted and self-hosted deployments now both expose the full tool surface by default.
-
-- Hosted default: full surface
-- Hosted slim profile: about 70 high-usage tools via `?tool_profile=slim`
-- Self-hosted default: full surface
+- Hosted default: full surface; `?toolsets=core` for the recommended small one (see [Toolsets](#toolsets))
+- Hosted slim profile (deprecated): about 85 high-usage tools via `?tool_profile=slim`
+- Self-hosted default: full surface (`ROOTLY_MCP_TOOLSETS` narrows it)
 
 To restrict either deployment to read-only tools, start the server with `--no-enable-write-tools` or set `ROOTLY_MCP_ENABLE_WRITE_TOOLS=false`.
 
-For hosted clients that want the smaller remote profile, append `?tool_profile=slim` to the MCP URL or send `X-Rootly-Tool-Profile: slim`.
+For hosted clients, choose toolsets with `?toolsets=` on the MCP URL or the `X-MCP-Toolsets` header (see [Toolsets](#toolsets)).
 
 ### AgentCat and Sentry telemetry
 
@@ -521,7 +539,7 @@ docker run -p 8000:8000 \
 
 ## Workflow-Focused Tool Subsets
 
-The full hosted and self-hosted surface exposes 200+ tools. If you want tighter workflow-specific subsets, use `ROOTLY_MCP_ENABLED_TOOLS`:
+The full surface exposes about 280 tools. [Toolsets](#toolsets) cover most needs; for an exact list, use `ROOTLY_MCP_ENABLED_TOOLS`:
 
 ### 🚨 Incident Response (25 tools)
 *Essential tools for emergency responders and incident commanders*
@@ -619,9 +637,10 @@ You can run multiple MCP instances with different tool subsets:
 
 The default tool surface depends on deployment profile:
 
-- Hosted default: about **218 tools**
-- Hosted slim profile: about **70 tools**
-- Self-hosted default: about **218 tools**
+- Hosted default: about **280 tools**
+- Hosted `?toolsets=core` (recommended): about **29 tools**
+- Hosted slim profile (deprecated): about **85 tools**
+- Self-hosted default: about **280 tools**
 
 ### Custom Agentic Tools
 

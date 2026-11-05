@@ -23,6 +23,7 @@ from rootly_mcp_server.code_mode import (
     create_rootly_codemode_server,
     resolve_tool_name,
 )
+from rootly_mcp_server.server import ToolSelectionMiddleware
 
 
 def test_code_mode_enabled_from_env_defaults_true():
@@ -104,6 +105,7 @@ def test_create_rootly_codemode_server_adds_code_mode_transform():
     assert isinstance(server._transform, CodeMode)  # type: ignore[attr-defined]  # noqa: SLF001
     middleware = server._middleware  # type: ignore[attr-defined]  # noqa: SLF001
     assert [type(m) for m in middleware] == [
+        ToolSelectionMiddleware,
         ExecuteCallShapeMiddleware,
         GetSchemaArgumentShapeMiddleware,
     ]
@@ -116,6 +118,7 @@ def test_create_rootly_codemode_server_adds_code_mode_transform():
         transport="streamable-http",
         enable_write_tools=True,
         enabled_tools={"list_incidents", "getIncident"},
+        tool_selection=False,
     )
 
 

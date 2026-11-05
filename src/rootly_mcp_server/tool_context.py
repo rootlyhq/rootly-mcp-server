@@ -27,7 +27,9 @@ PER_TOOL_MAX_CHARS = 40_000
 # test fails. Re-record the baseline on purpose when growth is intended.
 SURFACE_GROWTH_TOLERANCE = 0.05
 
-SURFACES = ("hosted_full", "hosted_slim", "self_hosted", "code_mode")
+# hosted_core is ?toolsets=core, the recommended small surface; hosted_full is
+# what a client gets with no selection (everything).
+SURFACES = ("hosted_core", "hosted_full", "hosted_slim", "self_hosted", "code_mode")
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,7 @@ def tool_definition_chars(tool: Any) -> int:
 # Settings that change which tools a server registers. Measurements clear
 # them so a surface always means its shipped default, whatever the shell has.
 _TOOL_LIST_ENV_VARS = (
+    "ROOTLY_MCP_TOOLSETS",
     "ROOTLY_MCP_ENABLED_TOOLS",
     "ROOTLY_MCP_ENABLE_WRITE_TOOLS",
     "ROOTLY_MCP_HOSTED_TOOL_PROFILE",
@@ -69,6 +72,12 @@ def _build_surface(surface: str) -> Any:
     from .server import create_rootly_mcp_server
     from .server_defaults import DEFAULT_HOSTED_ENABLED_TOOLS
 
+    if surface == "hosted_core":
+        os.environ["ROOTLY_MCP_TOOLSETS"] = "core"
+        try:
+            return create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+        finally:
+            del os.environ["ROOTLY_MCP_TOOLSETS"]
     if surface == "hosted_full":
         return create_rootly_mcp_server(hosted=True, enable_write_tools=True)
     if surface == "hosted_slim":
