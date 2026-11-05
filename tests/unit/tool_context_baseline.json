@@ -1,0 +1,18 @@
+{
+  "hosted_full": {
+    "tools": 293,
+    "chars": 570759
+  },
+  "hosted_slim": {
+    "tools": 86,
+    "chars": 186835
+  },
+  "self_hosted": {
+    "tools": 294,
+    "chars": 572278
+  },
+  "code_mode": {
+    "tools": 5,
+    "chars": 4461
+  }
+}

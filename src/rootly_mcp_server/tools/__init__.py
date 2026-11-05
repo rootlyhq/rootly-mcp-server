@@ -6,6 +6,7 @@ from .incidents import register_incident_tools
 from .investigations import register_investigation_tools
 from .oncall import register_oncall_tools
 from .resources import register_resource_handlers
+from .workflow_tasks import register_workflow_task_tools
 
 __all__ = [
     "register_alert_tools",
@@ -14,4 +15,5 @@ __all__ = [
     "register_investigation_tools",
     "register_oncall_tools",
     "register_resource_handlers",
+    "register_workflow_task_tools",
 ]
