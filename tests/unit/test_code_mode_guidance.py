@@ -470,6 +470,16 @@ async def test_json_dumps_options_the_sandbox_supports_still_work(client: Client
     assert '"a": 2' in text
 
 
+async def test_missing_await_is_explained(client: Client):
+    # ROOTLY-MCP-1W0
+    code = "result = call_tool('list_incidents', {})\nreturn result.get('data')"
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert "'coroutine' object" in text
+    assert "await call_tool(name, params)" in text
+
+
 def test_format_execute_exception_leaves_call_tool_failures_alone():
     message = (
         "Exception: call_tool('list_incidents') failed: start_time: Unexpected keyword "
