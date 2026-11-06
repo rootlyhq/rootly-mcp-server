@@ -790,14 +790,15 @@ async def test_nulls_inside_filter_objects_mean_unset(server, sent, arguments):
 @pytest.mark.parametrize("value", [None, "null", "undefined", "None"])
 async def test_empty_required_argument_is_named(server, sent, value):
     # list_incident_roles(incident_id=null) got pydantic's
-    # "Input should be a valid string" 13 times in a week.
-    result = await _call(server, "list_incident_roles", {"incident_id": value})
+    # "Input should be a valid string" 13 times in a week. That argument is
+    # optional now, so the check runs on a tool where it is still required.
+    result = await _call(server, "get_incident_meeting_transcripts", {"incident_id": value})
 
     text = _text(result)
     assert result.is_error
     received = "incident_id=null" if value is None else f"incident_id={value!r}"
     assert (
-        f"list_incident_roles requires the argument 'incident_id', but got {received} "
+        f"get_incident_meeting_transcripts requires the argument 'incident_id', but got {received} "
         "-- a placeholder, not a value."
     ) in text
     assert 'Retry with {"incident_id": "<value>"}' in text

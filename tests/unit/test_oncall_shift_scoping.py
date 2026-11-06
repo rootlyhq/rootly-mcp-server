@@ -27,6 +27,7 @@ fail if the query or the scoping regresses.
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -311,6 +312,26 @@ class TestScheduleSummaryScoping:
         assert result["schedule_coverage"] == []
         assert result["responder_load"] == []
         assert result["total_schedules"] == 0
+
+    async def test_no_range_means_the_next_seven_days(self):
+        # Called without dates 179 times: "Missing required argument".
+        upstream = Upstream()
+        result = await _tools(upstream)["get_oncall_schedule_summary"]()
+
+        assert "next 7 days" in result["period"]["defaulted"]
+        start, end = result["period"]["start"], result["period"]["end"]
+        assert upstream.shift_queries[0]["from"] == start
+        span = datetime.fromisoformat(end) - datetime.fromisoformat(start)
+        assert span.days == 7
+
+    async def test_one_bound_alone_is_still_an_error(self):
+        upstream = Upstream()
+        result = await _tools(upstream)["get_oncall_schedule_summary"](start_date=START)
+
+        assert result["error"] is True
+        assert result["error_type"] == "validation_error"
+        assert "end_date" in result["message"]
+        assert not upstream.shift_queries
 
     async def test_a_team_filter_matching_nothing_says_so(self):
         upstream = Upstream()

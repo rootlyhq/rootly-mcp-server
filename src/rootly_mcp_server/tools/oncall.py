@@ -2497,12 +2497,17 @@ def register_oncall_tools(
     async def get_oncall_schedule_summary(
         start_date: Annotated[
             str,
-            Field(description="Start date (ISO 8601, e.g., '2026-02-09')"),
-        ],
+            Field(
+                description=(
+                    "Start date (ISO 8601, e.g., '2026-02-09'). Omit both dates for "
+                    "the next 7 days."
+                )
+            ),
+        ] = "",
         end_date: Annotated[
             str,
             Field(description="End date (ISO 8601, e.g., '2026-02-15')"),
-        ],
+        ] = "",
         schedule_ids: Annotated[
             str,
             Field(description="Comma-separated schedule IDs to filter (optional)"),
@@ -2538,6 +2543,18 @@ def register_oncall_tools(
             from collections import defaultdict
             from datetime import datetime
 
+            # Asked without a range, as "who is on call" usually is: the next
+            # week, said so in the response, as list_shifts does. One bound
+            # alone is still an error.
+            range_defaulted = not start_date.strip() and not end_date.strip()
+            if range_defaulted:
+                start_date, end_date = _default_shift_range()
+            period: dict[str, Any] = {"start": start_date, "end": end_date}
+            if range_defaulted:
+                period["defaulted"] = (
+                    "No start_date/end_date given, so this is the next 7 days from "
+                    "now. Pass both for a different period."
+                )
             date_error = _date_argument_error(
                 {"start_date": start_date, "end_date": end_date}, required=True
             )
@@ -2632,7 +2649,7 @@ def register_oncall_tools(
                     if given
                 )
                 return {
-                    "period": {"start": start_date, "end": end_date},
+                    "period": period,
                     "total_schedules": 0,
                     "total_responders": 0,
                     "schedule_coverage": [],
@@ -2822,7 +2839,7 @@ def register_oncall_tools(
 
             fetch_meta = _shift_fetch_meta(fetch_report, shift_params["to"])
             return {
-                "period": {"start": start_date, "end": end_date},
+                "period": period,
                 "total_schedules": len(formatted_coverage),
                 "total_responders": len(formatted_load),
                 "schedule_coverage": formatted_coverage,

@@ -731,11 +731,14 @@ class ExecuteCallShapeMiddleware(fastmcp_middleware.Middleware):
 
 
 _GET_SCHEMA_TOOL_NAME = "get_schema"
-_GET_SCHEMA_NAME_KEYS = ("tool_name", "name", "tool")
+_GET_SCHEMA_NAME_KEYS = ("tool_names", "names", "tool_name", "name", "tool")
 
 
 class GetSchemaArgumentShapeMiddleware(fastmcp_middleware.Middleware):
     """Accepts ``get_schema(tool_name="x")`` as ``get_schema(tools=["x"])``.
+
+    ``tool_names=[...]`` (the commonest wrong spelling) maps the same way, and
+    a call naming no tool at all is answered with how to find one.
 
     Models ask for one schema by name, the way they call ``execute``'s
     ``tool`` (see ExecuteCallShapeMiddleware), and get_schema's only required
@@ -753,6 +756,16 @@ class GetSchemaArgumentShapeMiddleware(fastmcp_middleware.Middleware):
         call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
     ) -> Any:
         arguments = context.message.arguments
+        if context.message.name == self._tool_name and not (arguments or {}).get("tools"):
+            if not arguments or _first_present(arguments, _GET_SCHEMA_NAME_KEYS) is None:
+                # Called with nothing to look up. Pydantic would answer
+                # "Missing required argument", which does not say where the
+                # names come from.
+                raise GuidedToolError(
+                    "get_schema needs the tools to describe: "
+                    'get_schema(tools=["list_incidents"]). Find tool names with '
+                    "tool_search or list_tools first."
+                )
         if context.message.name == self._tool_name and arguments:
             tools = arguments.get("tools")
             if isinstance(tools, str) and tools.strip():

@@ -1457,6 +1457,44 @@ def register_incident_tools(
         except Exception as e:
             return _reference_tool_error("Failed to list retrospectives", e)
 
+    async def _list_defined_incident_roles() -> JsonDict:
+        """The organization's incident role definitions, compacted."""
+        try:
+            response = await make_authenticated_request(
+                "GET", "/v1/incident_roles", params={"page[size]": 100}
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("data") if isinstance(payload, dict) else None
+            roles = [
+                {
+                    "role_id": row.get("id"),
+                    "name": (row.get("attributes") or {}).get("name"),
+                    "slug": (row.get("attributes") or {}).get("slug"),
+                    "summary": (row.get("attributes") or {}).get("summary"),
+                    "enabled": (row.get("attributes") or {}).get("enabled"),
+                    "optional": (row.get("attributes") or {}).get("optional"),
+                }
+                for row in rows or []
+                if isinstance(row, dict)
+            ]
+            meta = payload.get("meta") if isinstance(payload, dict) else None
+            total = (meta or {}).get("total_count", len(roles))
+            return cast(
+                JsonDict,
+                {
+                    "data": roles,
+                    "meta": {
+                        "scope": "organization role definitions",
+                        "total_count": total,
+                        "note": "Pass incident_id to list who holds each role on an incident.",
+                    },
+                },
+            )
+        except Exception as e:
+            error_type, error_message = mcp_error.categorize_error(e)
+            return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
+
     @mcp.tool(
         name="list_incident_roles",
         annotations=ToolAnnotations(
@@ -1472,12 +1510,16 @@ def register_incident_tools(
                 description=(
                     "Incident reference whose role assignments to list. "
                     "Accepts: UUID, bare sequential number (4460), "
-                    "#4460, or INC-4460."
+                    "#4460, or INC-4460. Omit to list the roles the "
+                    "organization defines instead."
                 )
             ),
-        ],
+        ] = "",
     ) -> JsonDict:
         """List role assignments for an incident (who is Commander, Scribe, etc.).
+
+        Without `incident_id`, lists the incident roles the organization
+        defines (name, slug, summary, enabled), for "what roles do we have?".
 
         Returns one entry per defined role with role metadata and the assigned
         user (or `user_id: null` for roles that are defined on the incident but
@@ -1489,6 +1531,11 @@ def register_incident_tools(
         and flattens the JSON:API `included` array of `incident_role_assignments`
         into a flat table so callers don't need to walk the relationships graph.
         """
+        if incident_id == "":
+            # This tool shadows the generated list_incident_roles, which lists
+            # the role definitions; a call without an incident gets those. A
+            # blank reference ("   ") is still a bad value, answered below.
+            return await _list_defined_incident_roles()
         try:
             resolved_incident_id = await _resolve_incident_reference_to_uuid(
                 incident_id, make_authenticated_request
