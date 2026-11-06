@@ -450,6 +450,12 @@ def _normalize_incident_reference(reference: str) -> tuple[str, str | int]:
     return ("direct", normalized)
 
 
+# list_incident_roles() without an incident: role definitions are a short
+# list, but follow pages so none is unreachable; the cap bounds a runaway.
+_ROLE_DEFINITIONS_PAGE_SIZE = 100
+_ROLE_DEFINITIONS_MAX_PAGES = 10
+
+
 async def _resolve_incident_reference_to_uuid(
     incident_reference: str,
     make_authenticated_request: MakeAuthenticatedRequest,
@@ -1457,6 +1463,61 @@ def register_incident_tools(
         except Exception as e:
             return _reference_tool_error("Failed to list retrospectives", e)
 
+    async def _list_defined_incident_roles() -> JsonDict:
+        """The organization's incident role definitions, compacted, every page."""
+        try:
+            rows: list[dict[str, Any]] = []
+            total: Any = None
+            page = 1
+            while True:
+                response = await make_authenticated_request(
+                    "GET",
+                    "/v1/incident_roles",
+                    params={"page[size]": _ROLE_DEFINITIONS_PAGE_SIZE, "page[number]": page},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    break
+                data = payload.get("data")
+                rows.extend(row for row in data or [] if isinstance(row, dict))
+                meta = payload.get("meta") or {}
+                total = meta.get("total_count", total)
+                total_pages = meta.get("total_pages")
+                more = (
+                    page < total_pages
+                    if isinstance(total_pages, int)
+                    else bool(meta.get("next_page"))
+                )
+                if not more or not data or page >= _ROLE_DEFINITIONS_MAX_PAGES:
+                    break
+                page += 1
+            roles = []
+            for row in rows:
+                attrs = row.get("attributes") or {}
+                roles.append(
+                    {
+                        "role_id": row.get("id"),
+                        "name": attrs.get("name"),
+                        "slug": attrs.get("slug"),
+                        "summary": attrs.get("summary"),
+                        "enabled": attrs.get("enabled"),
+                        "optional": attrs.get("optional"),
+                    }
+                )
+            total_count = total if isinstance(total, int) else len(roles)
+            meta_out: dict[str, Any] = {
+                "scope": "organization role definitions",
+                "total_count": total_count,
+                "note": "Pass incident_id to list who holds each role on an incident.",
+            }
+            if total_count > len(roles):
+                meta_out["truncated"] = f"Showing the first {len(roles)} of {total_count} roles."
+            return cast(JsonDict, {"data": roles, "meta": meta_out})
+        except Exception as e:
+            error_type, error_message = mcp_error.categorize_error(e)
+            return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
+
     @mcp.tool(
         name="list_incident_roles",
         annotations=ToolAnnotations(
@@ -1472,12 +1533,16 @@ def register_incident_tools(
                 description=(
                     "Incident reference whose role assignments to list. "
                     "Accepts: UUID, bare sequential number (4460), "
-                    "#4460, or INC-4460."
+                    "#4460, or INC-4460. Omit to list the roles the "
+                    "organization defines instead."
                 )
             ),
-        ],
+        ] = "",
     ) -> JsonDict:
         """List role assignments for an incident (who is Commander, Scribe, etc.).
+
+        Without `incident_id`, lists the incident roles the organization
+        defines (name, slug, summary, enabled), for "what roles do we have?".
 
         Returns one entry per defined role with role metadata and the assigned
         user (or `user_id: null` for roles that are defined on the incident but
@@ -1489,6 +1554,11 @@ def register_incident_tools(
         and flattens the JSON:API `included` array of `incident_role_assignments`
         into a flat table so callers don't need to walk the relationships graph.
         """
+        if incident_id == "":
+            # This tool shadows the generated list_incident_roles, which lists
+            # the role definitions; a call without an incident gets those. A
+            # blank reference ("   ") is still a bad value, answered below.
+            return await _list_defined_incident_roles()
         try:
             resolved_incident_id = await _resolve_incident_reference_to_uuid(
                 incident_id, make_authenticated_request

@@ -491,8 +491,18 @@ def test_format_execute_exception_leaves_call_tool_failures_alone():
         {"tool": "get_incident"},
         {"tools": "get_incident"},
         {"tool_name": ["get_incident"]},
+        {"tool_names": ["get_incident"]},
+        {"names": ["get_incident"]},
     ],
-    ids=["tool_name", "name", "tool", "tools-string", "tool_name-list"],
+    ids=[
+        "tool_name",
+        "name",
+        "tool",
+        "tools-string",
+        "tool_name-list",
+        "tool_names",
+        "names",
+    ],
 )
 async def test_get_schema_accepts_a_single_tool_name(client: Client, arguments: dict[str, Any]):
     result = await client.call_tool("get_schema", arguments, raise_on_error=False)
@@ -501,6 +511,18 @@ async def test_get_schema_accepts_a_single_tool_name(client: Client, arguments: 
     assert not result.is_error, text
     assert "get_incident" in text
     assert "incident_id" in text
+
+
+@pytest.mark.parametrize("arguments", [{}, {"tools": []}, {"detail": "full"}])
+async def test_get_schema_without_a_tool_says_how_to_find_one(
+    client: Client, arguments: dict[str, Any]
+):
+    result = await client.call_tool("get_schema", arguments, raise_on_error=False)
+    text = "\n".join(getattr(item, "text", "") for item in result.content)
+
+    assert result.is_error
+    assert "tool_search" in text
+    assert "Missing required argument" not in text
 
 
 async def test_get_schema_with_tools_ignores_the_alias_keys(client: Client):

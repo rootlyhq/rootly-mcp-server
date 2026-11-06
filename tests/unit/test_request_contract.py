@@ -752,6 +752,7 @@ SCENARIOS: list[tuple[str, str, dict[str, Any]] | tuple[str, str, dict[str, Any]
         },
     ),
     ("list_incident_roles", "list_incident_roles", {"incident_id": str(SEQUENTIAL_ID)}),
+    ("list_incident_roles/definitions", "list_incident_roles", {}),
     (
         "get_incident_meeting_transcripts",
         "get_incident_meeting_transcripts",
