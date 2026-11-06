@@ -423,6 +423,13 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
             )
         return _undefined_name_message(missing, tools)
 
+    if "'coroutine' object" in message:
+        return (
+            f"{message}. call_tool and the tool functions are async: write "
+            "`result = await call_tool(name, params)` (or `await list_incidents(...)`), "
+            "then read the result."
+        )
+
     if "object is not an iterator" in message:
         return (
             f"{message}. next() needs an iterator: use `next(iter(items), None)`, or "
