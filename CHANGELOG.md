@@ -48,6 +48,32 @@ that release appears directly below this section.
 - **`httpx` is no longer a dependency**: the hosted token check, the OAuth authorization-server metadata proxy and the On-Call Health client now use `httpx2`, like the Rootly API client already did, so `httpx` (and `httpcore`) are no longer installed. Outbound requests are unchanged byte for byte: the same headers in the same order (including the `python-httpx/0.28.1` User-Agent these clients sent before), the same trust roots and the same timeouts. Anything that imported `httpx` only because this package pulled it in needs to depend on it directly. The unused `respx` dev dependency is dropped with it.
 - **The on-call aggregating tools now filter shifts upstream**: the three tools above fetched the whole workspace's shifts and discarded the rows they could not use, spending a bounded page budget on shifts that were never eligible for the answer. `schedule_ids[]` and `user_ids[]` are now sent to `/v1/shifts`, so the budget is spent on shifts that can appear in the result — a candidate whose shifts previously fell past the last page fetched could be scored as free. (`check_responder_availability` already reads per-schedule shifts and rejects non-numeric IDs since #235, so it is unchanged here.)
 
+## [2.5.0](https://github.com/rootlyhq/rootly-mcp-server/compare/v2.4.0...v2.5.0) (2026-11-06)
+
+
+### Features
+
+* expose AI automations and skills tools (/v1/ai/) ([#301](https://github.com/rootlyhq/rootly-mcp-server/issues/301)) ([8dd9247](https://github.com/rootlyhq/rootly-mcp-server/commit/8dd924759865ef684abf1571c8f6719acc7aca1d))
+* expose dashboard panel create and list tools ([#299](https://github.com/rootlyhq/rootly-mcp-server/issues/299)) ([76955ff](https://github.com/rootlyhq/rootly-mcp-server/commit/76955ff26eb73fde603a96bbabf6186104810edb))
+* opt-in toolsets, per-request read-only, and deprecate tool_profile ([#310](https://github.com/rootlyhq/rootly-mcp-server/issues/310)) ([1e5343f](https://github.com/rootlyhq/rootly-mcp-server/commit/1e5343f2fb62574bbc4fca64a61cd748edb0bc44))
+
+
+### Bug Fixes
+
+* default list_shifts to the next 7 days when no range is given ([#304](https://github.com/rootlyhq/rootly-mcp-server/issues/304)) ([ecb40c1](https://github.com/rootlyhq/rootly-mcp-server/commit/ecb40c150cbcc8bae00a08a0358b902056b71e52))
+* default schedule summary range, list role definitions, guide get_schema ([#312](https://github.com/rootlyhq/rootly-mcp-server/issues/312)) ([4492694](https://github.com/rootlyhq/rootly-mcp-server/commit/44926940d3866dab7d6cafbf04e8fc20aff6b7e0))
+* explain a missing await in Code Mode scripts ([#313](https://github.com/rootlyhq/rootly-mcp-server/issues/313)) ([25f6565](https://github.com/rootlyhq/rootly-mcp-server/commit/25f6565568afdc43c110abf7ad19f006aba083ce))
+* explain calls to removed tools and accept list filters on incident lists ([#311](https://github.com/rootlyhq/rootly-mcp-server/issues/311)) ([68590fe](https://github.com/rootlyhq/rootly-mcp-server/commit/68590fedeeac56a1b6af2e7acce6352433b9735c))
+* gather write bodies sent without data; reject a missing required data ([#302](https://github.com/rootlyhq/rootly-mcp-server/issues/302)) ([4f596d1](https://github.com/rootlyhq/rootly-mcp-server/commit/4f596d1c16793dd305b598eb15fc43cb5a285d91))
+* refresh swagger and move investigation tools to /v1/ai/investigations ([#300](https://github.com/rootlyhq/rootly-mcp-server/issues/300)) ([5e8f3e7](https://github.com/rootlyhq/rootly-mcp-server/commit/5e8f3e7c92f87318f58cf131386a34bbb46d1986))
+* remove the deprecated custom field and catalog entity property tools ([#307](https://github.com/rootlyhq/rootly-mcp-server/issues/307)) ([f2dc805](https://github.com/rootlyhq/rootly-mcp-server/commit/f2dc8052f38bf2eec98aeeeb5b1995135e018375))
+* repair anyOf and array write bodies; explain unsortable sort fields ([#297](https://github.com/rootlyhq/rootly-mcp-server/issues/297)) ([61a887b](https://github.com/rootlyhq/rootly-mcp-server/commit/61a887b9f93352a1807759289ac48f30775abdb3))
+* retry short-wait 429s once; stop guided tool errors opening Sentry issues ([#293](https://github.com/rootlyhq/rootly-mcp-server/issues/293)) ([841ca53](https://github.com/rootlyhq/rootly-mcp-server/commit/841ca531cf7f70c1e9d5a8ab6befb552e7bd9a36))
+* scrub api_token and other token-compound keys from telemetry ([#294](https://github.com/rootlyhq/rootly-mcp-server/issues/294)) ([4875057](https://github.com/rootlyhq/rootly-mcp-server/commit/4875057930a427aecc7446160046a521a7c5194a))
+* shrink workflow task tools 96% and budget tool-list size in CI ([#306](https://github.com/rootlyhq/rootly-mcp-server/issues/306)) ([dfda5b2](https://github.com/rootlyhq/rootly-mcp-server/commit/dfda5b2677f723410c0910a195367b6bef138f50))
+* tag Code Mode scripts that die of an explained rejection as guided ([#296](https://github.com/rootlyhq/rootly-mcp-server/issues/296)) ([09abff8](https://github.com/rootlyhq/rootly-mcp-server/commit/09abff8ccbdb55bb79a3dbd0655c360a421f2efa))
+* trim ignored fields and the time zone list from tool schemas ([#309](https://github.com/rootlyhq/rootly-mcp-server/issues/309)) ([8d8be2d](https://github.com/rootlyhq/rootly-mcp-server/commit/8d8be2d0dcffada54d30f27a6483360ad26ec008))
+
 ## [2.4.0](https://github.com/rootlyhq/rootly-mcp-server/compare/v2.3.22...v2.4.0) (2026-10-31)
 
 
