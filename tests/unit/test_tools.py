@@ -435,7 +435,9 @@ class TestScopedIncidentUpdateTool:
 
         result = await tools["list_incident_roles"]()
 
-        request.assert_awaited_once_with("GET", "/v1/incident_roles", params={"page[size]": 100})
+        request.assert_awaited_once_with(
+            "GET", "/v1/incident_roles", params={"page[size]": 100, "page[number]": 1}
+        )
         assert result["data"] == [
             {
                 "role_id": "role-commander",
@@ -447,6 +449,27 @@ class TestScopedIncidentUpdateTool:
             }
         ]
         assert result["meta"]["total_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_list_incident_roles_definitions_follow_every_page(self):
+        tools, request = self._register_tools()
+
+        def page(number: int) -> Mock:
+            response = Mock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {
+                "data": [{"id": f"role-{number}", "attributes": {"name": f"R{number}"}}],
+                "meta": {"total_count": 2, "total_pages": 2},
+            }
+            return response
+
+        request.side_effect = [page(1), page(2)]
+
+        result = await tools["list_incident_roles"]()
+
+        assert [r["role_id"] for r in result["data"]] == ["role-1", "role-2"]
+        assert request.await_args_list[1].kwargs["params"]["page[number]"] == 2
+        assert "truncated" not in result["meta"]
 
     @pytest.mark.asyncio
     async def test_list_incident_roles_returns_flattened_assignments(self):

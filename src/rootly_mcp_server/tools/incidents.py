@@ -450,6 +450,12 @@ def _normalize_incident_reference(reference: str) -> tuple[str, str | int]:
     return ("direct", normalized)
 
 
+# list_incident_roles() without an incident: role definitions are a short
+# list, but follow pages so none is unreachable; the cap bounds a runaway.
+_ROLE_DEFINITIONS_PAGE_SIZE = 100
+_ROLE_DEFINITIONS_MAX_PAGES = 10
+
+
 async def _resolve_incident_reference_to_uuid(
     incident_reference: str,
     make_authenticated_request: MakeAuthenticatedRequest,
@@ -1458,39 +1464,56 @@ def register_incident_tools(
             return _reference_tool_error("Failed to list retrospectives", e)
 
     async def _list_defined_incident_roles() -> JsonDict:
-        """The organization's incident role definitions, compacted."""
+        """The organization's incident role definitions, compacted, every page."""
         try:
-            response = await make_authenticated_request(
-                "GET", "/v1/incident_roles", params={"page[size]": 100}
-            )
-            response.raise_for_status()
-            payload = response.json()
-            rows = payload.get("data") if isinstance(payload, dict) else None
-            roles = [
-                {
-                    "role_id": row.get("id"),
-                    "name": (row.get("attributes") or {}).get("name"),
-                    "slug": (row.get("attributes") or {}).get("slug"),
-                    "summary": (row.get("attributes") or {}).get("summary"),
-                    "enabled": (row.get("attributes") or {}).get("enabled"),
-                    "optional": (row.get("attributes") or {}).get("optional"),
-                }
-                for row in rows or []
-                if isinstance(row, dict)
-            ]
-            meta = payload.get("meta") if isinstance(payload, dict) else None
-            total = (meta or {}).get("total_count", len(roles))
-            return cast(
-                JsonDict,
-                {
-                    "data": roles,
-                    "meta": {
-                        "scope": "organization role definitions",
-                        "total_count": total,
-                        "note": "Pass incident_id to list who holds each role on an incident.",
-                    },
-                },
-            )
+            rows: list[dict[str, Any]] = []
+            total: Any = None
+            page = 1
+            while True:
+                response = await make_authenticated_request(
+                    "GET",
+                    "/v1/incident_roles",
+                    params={"page[size]": _ROLE_DEFINITIONS_PAGE_SIZE, "page[number]": page},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    break
+                data = payload.get("data")
+                rows.extend(row for row in data or [] if isinstance(row, dict))
+                meta = payload.get("meta") or {}
+                total = meta.get("total_count", total)
+                total_pages = meta.get("total_pages")
+                more = (
+                    page < total_pages
+                    if isinstance(total_pages, int)
+                    else bool(meta.get("next_page"))
+                )
+                if not more or not data or page >= _ROLE_DEFINITIONS_MAX_PAGES:
+                    break
+                page += 1
+            roles = []
+            for row in rows:
+                attrs = row.get("attributes") or {}
+                roles.append(
+                    {
+                        "role_id": row.get("id"),
+                        "name": attrs.get("name"),
+                        "slug": attrs.get("slug"),
+                        "summary": attrs.get("summary"),
+                        "enabled": attrs.get("enabled"),
+                        "optional": attrs.get("optional"),
+                    }
+                )
+            total_count = total if isinstance(total, int) else len(roles)
+            meta_out: dict[str, Any] = {
+                "scope": "organization role definitions",
+                "total_count": total_count,
+                "note": "Pass incident_id to list who holds each role on an incident.",
+            }
+            if total_count > len(roles):
+                meta_out["truncated"] = f"Showing the first {len(roles)} of {total_count} roles."
+            return cast(JsonDict, {"data": roles, "meta": meta_out})
         except Exception as e:
             error_type, error_message = mcp_error.categorize_error(e)
             return cast(JsonDict, mcp_error.tool_error(error_message, error_type))
