@@ -2334,7 +2334,6 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-timeout" },
     { name = "ruff" },
-    { name = "sseclient-py" },
     { name = "types-requests" },
 ]
 
@@ -2387,7 +2386,6 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.12.0" },
     { name = "pytest-timeout", specifier = ">=2.2.0" },
     { name = "ruff", specifier = ">=0.7.3" },
-    { name = "sseclient-py", specifier = ">=1.8.0" },
     { name = "types-requests", specifier = ">=2.32.0" },
 ]
 
@@ -2666,14 +2664,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/be/0123026f719d1a7936f214a88b553bb5701e04ff2511147c1dab0c5035eb/sse_starlette-3.5.0.tar.gz", hash = "sha256:75de713aa8a9441513cc283220826da079d982770965b951e9437720e8bafdb2", size = 36794, upload-time = "2026-09-28T17:48:14.7Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/be/e4/cdda14023c316d71493bc54fdffc3dd006631b88866145c9d3cc33e0f1df/sse_starlette-3.5.0-py3-none-any.whl", hash = "sha256:3e6e1070df3f0f5d9cea81496de92dbb72f6721871d99748ece67441dd8b7997", size = 17407, upload-time = "2026-09-28T17:48:13.228Z" },
-]
-
-[[package]]
-name = "sseclient-py"
-version = "1.9.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4d/2e/59920f7d66b7f9932a3d83dd0ec53fab001be1e058bf582606fe414a5198/sseclient_py-1.9.0-py3-none-any.whl", hash = "sha256:340062b1587fc2880892811e2ab5b176d98ef3eee98b3672ff3a3ba1e8ed0f6f", size = 8351, upload-time = "2026-01-02T23:39:30.995Z" },
 ]
 
 [[package]]

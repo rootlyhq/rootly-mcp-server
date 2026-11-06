@@ -17,10 +17,9 @@ Use the hosted MCP server. No local installation required.
 
 - **Streamable HTTP (recommended):** `https://mcp.rootly.com/mcp`
 - **Code Mode:** `https://mcp.rootly.com/mcp-codemode`
-- **SSE (deprecated, removed after 2026-11-20):** `https://mcp.rootly.com/sse`
 
 > [!WARNING]
-> **SSE is deprecated.** The hosted `https://mcp.rootly.com/sse` endpoint and the self-hosted `--transport sse` option will be removed after **2026-11-20**. Switch your client to Streamable HTTP (`https://mcp.rootly.com/mcp`) or Code Mode (`https://mcp.rootly.com/mcp-codemode`); for most clients that means changing the URL and, if your client config has one, setting the transport to `http`/`streamable-http`. SSE responses now carry `Deprecation`, `Sunset` and `Link: rel="successor-version"` headers.
+> **SSE was removed on 2026-11-20.** `https://mcp.rootly.com/sse` and `/messages/` now answer `410 Gone`, and the self-hosted `--transport sse` option is gone. Switch your client to Streamable HTTP (`https://mcp.rootly.com/mcp`) or Code Mode (`https://mcp.rootly.com/mcp-codemode`); for most clients that means changing the URL and, if your client config has one, setting the transport to `http`/`streamable-http`.
 
 ### Toolsets
 
@@ -93,7 +92,7 @@ Code Mode:
 }
 ```
 
-If your config still points at `https://mcp.rootly.com/sse`, replace it with `https://mcp.rootly.com/mcp` before 2026-11-20 (SSE is deprecated, see above).
+If your config still points at `https://mcp.rootly.com/sse`, replace it with `https://mcp.rootly.com/mcp` (SSE was removed, see above).
 
 ### Agent Setup
 
@@ -408,8 +407,7 @@ A **Global API Key** is recommended for organization-wide queries and for action
 Choose one transport per server process:
 
 - **Streamable HTTP** endpoint path: `/mcp`
-- **SSE (deprecated, removed after 2026-11-20)** endpoint path: `/sse`. `--transport sse` logs a deprecation warning at startup; use `--transport streamable-http` instead.
-- **Code Mode (experimental)** endpoint path: `/mcp-codemode` in hosted dual-transport mode. One `execute` call may make at most 50 tool calls; set `ROOTLY_CODE_MODE_MAX_TOOL_CALLS` to a positive integer to change that.
+- **Code Mode (experimental)** endpoint path: `/mcp-codemode` with `--transport both` in hosted mode. One `execute` call may make at most 50 tool calls; set `ROOTLY_CODE_MODE_MAX_TOOL_CALLS` to a positive integer to change that.
 
 - Hosted default: full surface; `?toolsets=core` for the recommended small one (see [Toolsets](#toolsets))
 - Hosted slim profile (deprecated): about 85 high-usage tools via `?tool_profile=slim`
@@ -519,16 +517,7 @@ docker run -p 8000:8000 \
   rootly-mcp-server
 ```
 
-Example Docker run (SSE, deprecated: removed after 2026-11-20, use Streamable HTTP above):
-
-```bash
-docker run -p 8000:8000 \
-  -e ROOTLY_TRANSPORT=sse \
-  -e ROOTLY_API_TOKEN=<YOUR_ROOTLY_API_TOKEN> \
-  rootly-mcp-server
-```
-
-Example Docker run (Dual transport + Code Mode; the `/sse` endpoint it also serves is deprecated):
+Example Docker run (Streamable HTTP + Code Mode):
 
 ```bash
 docker run -p 8000:8000 \
@@ -798,7 +787,7 @@ Delete operations remain disabled in the default tool surface.
 Integrates with [On-Call Health](https://oncallhealth.ai) to detect workload health risk in scheduled responders.
 
 `check_oncall_health_risk` is unavailable on the hosted MCP service, including
-the full and slim profiles, SSE, Streamable HTTP, and Code Mode. It is not
+the full and slim profiles, Streamable HTTP, and Code Mode. It is not
 registered in hosted mode, so an API key or `ROOTLY_MCP_ENABLED_TOOLS` allowlist
 cannot enable it. Ordinary on-call scheduling and incident tools remain available.
 

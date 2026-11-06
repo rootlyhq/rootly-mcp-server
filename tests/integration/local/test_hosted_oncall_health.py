@@ -16,7 +16,7 @@ HEALTH_TOOL = "check_oncall_health_risk"
 
 @pytest.mark.integration
 @pytest.mark.parametrize("profile", ["full", "slim", "custom-allowlist"])
-@pytest.mark.parametrize("surface", ["sse", "streamable-http", "code-mode"])
+@pytest.mark.parametrize("surface", ["streamable-http", "code-mode"])
 async def test_hosted_health_risk_tool_cannot_be_discovered_or_called(
     monkeypatch: pytest.MonkeyPatch, profile: str, surface: str
 ) -> None:

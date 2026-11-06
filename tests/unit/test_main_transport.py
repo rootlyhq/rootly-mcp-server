@@ -27,6 +27,7 @@ from rootly_mcp_server.__main__ import (
     run_profiled_streamable_http_server,
     streamable_http_stateless_enabled,
 )
+from rootly_mcp_server.sse_removal import SSEGoneMiddleware
 from rootly_mcp_server.telemetry_scrubber import redact_agentcat_telemetry_text
 
 
@@ -34,7 +35,6 @@ from rootly_mcp_server.telemetry_scrubber import redact_agentcat_telemetry_text
     ("value", "expected"),
     [
         ("stdio", "stdio"),
-        ("sse", "sse"),
         ("streamable-http", "streamable-http"),
         ("streamable", "streamable-http"),
         ("http", "streamable-http"),
@@ -964,7 +964,8 @@ def test_main_hosted_streamable_http_with_explicit_enabled_tools_skips_profiled_
     main_server.run.assert_called_once()
     assert main_server.run.call_args.kwargs["transport"] == "streamable-http"
     assert main_server.run.call_args.kwargs["stateless_http"] is True
-    assert main_server.run.call_args.kwargs["middleware"] == []
+    # Only the 410 for the removed SSE paths; no hosted auth here.
+    assert [m.cls for m in main_server.run.call_args.kwargs["middleware"]] == [SSEGoneMiddleware]
 
 
 def test_main_tracks_main_and_code_mode_servers_when_mcpcat_project_id_set():
@@ -1067,6 +1068,8 @@ async def test_run_profiled_streamable_http_server_routes_requests_by_profile():
     fake_fastmcp = cast(Any, ModuleType("fastmcp"))
     fake_fastmcp.settings = SimpleNamespace(
         streamable_http_path="/mcp",
+        sse_path="/sse",
+        message_path="/messages/",
         stateless_http=False,
         json_response=False,
         debug=False,

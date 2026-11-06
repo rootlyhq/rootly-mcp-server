@@ -135,7 +135,6 @@ button.copy:hover { background: #4A3E8A; }
 .endpoint p { margin: 0; color: var(--muted); }
 .endpoint code, p code, li code { font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--line); padding: 1px 6px; border-radius: 5px; }
 .tag { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #EBE5FF; color: #4A3E8A; white-space: nowrap; }
-.tag.old { background: #FFE9D6; color: #8A4A12; }
 ul.asks { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
 ul.asks li { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 ul.asks li::before { content: "\\201C"; color: var(--brand); font-weight: 700; margin-right: 2px; }
@@ -319,7 +318,6 @@ class McpEndpoints:
 
     code_mode: str | None = None
     streamable: str | None = None
-    sse: str | None = None
 
     @classmethod
     def from_app_state(cls, state: Any) -> McpEndpoints:
@@ -334,20 +332,17 @@ class McpEndpoints:
         path = getattr(state, "path", None)
         if not isinstance(path, str) or not path:
             return cls()
-        if getattr(state, "transport_type", "") == "sse":
-            return cls(sse=path)
         return cls(streamable=path)
 
 
 # The hosted production layout, for rendering the page outside a running app.
-HOSTED_ENDPOINTS = McpEndpoints(code_mode="/mcp-codemode", streamable="/mcp", sse="/sse")
+HOSTED_ENDPOINTS = McpEndpoints(code_mode="/mcp-codemode", streamable="/mcp")
 
 
-def _endpoint(url: str, tag: str, description: str, *, old: bool = False) -> str:
-    tag_class = "tag old" if old else "tag"
+def _endpoint(url: str, tag: str, description: str) -> str:
     return (
         '<div class="endpoint"><div class="endpoint-head">'
-        f'<code>{html.escape(url)}</code><span class="{tag_class}">{tag}</span></div>'
+        f'<code>{html.escape(url)}</code><span class="tag">{tag}</span></div>'
         f"<p>{description}</p></div>"
     )
 
@@ -383,20 +378,6 @@ def render_landing_page(base_url: str, endpoints: McpEndpoints) -> str:
                 " <code>?tool_profile=slim</code> for about 70 of them.",
             )
         )
-    if endpoints.sse:
-        rows.append(
-            _endpoint(
-                f"{base_url}{endpoints.sse}",
-                "Deprecated",
-                "Removed after 2026-11-20."
-                + (
-                    " Switch to the endpoint above; usually only the URL changes."
-                    if setup_url
-                    else ""
-                ),
-                old=True,
-            )
-        )
     both_note = (
         "<p>Connect Code Mode or Classic, not both. With both, assistants tend to call the"
         " classic tools directly and the full tool list loads anyway.</p>"
@@ -422,9 +403,8 @@ def render_landing_page(base_url: str, endpoints: McpEndpoints) -> str:
     else:
         tab_rules = terminal = ""
         connect = (
-            "<h2>Connect your client</h2><p>This server only serves the deprecated SSE"
-            " transport. Point your client at the SSE endpoint below, and plan to move to"
-            " streamable HTTP before 2026-11-20.</p>"
+            "<h2>Connect your client</h2><p>This server has no HTTP MCP endpoint. Run it"
+            " with <code>--transport streamable-http</code> to connect a remote client.</p>"
         )
     endpoints_section = (
         f'<h2>Endpoints</h2><div class="card">{"".join(rows)}</div>{both_note}' if rows else ""
