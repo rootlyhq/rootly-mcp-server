@@ -44,7 +44,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d # v7
 
       - name: Install dependencies
         run: uv sync --dev
@@ -66,7 +66,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d # v7
 
       - name: Install dependencies
         run: uv sync --dev

@@ -27,7 +27,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d # v7
 
       - name: Check lockfile is up to date
         # uv sync re-resolves silently, so a dependency bump that edits
@@ -71,7 +71,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d # v7
 
       - name: Install dependencies
         run: uv sync --dev
@@ -125,7 +125,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d # v7
 
       - name: Install dependencies
         run: uv sync --dev
@@ -198,7 +198,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d # v7
 
       - name: Install dependencies
         run: uv sync --dev
@@ -221,7 +221,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d # v7
 
       - name: Install security tools
         run: uv pip install --system bandit pip-audit
@@ -247,7 +247,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@7eb50e6e20e1e2009087999ba91242e80253875f # v7
+        uses: astral-sh/setup-uv@0a73d6eb01c0201c8fc84847d0f4425b704ad66d # v7
 
       - name: Build package
         run: uv build
