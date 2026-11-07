@@ -191,6 +191,9 @@ def test_code_mode_script_that_died_of_a_404_opens_no_issue():
         '{"errors": [{"title": "unknown attribute \'channel\'"}]}',
         "Error calling tool 'list_incidents': HTTP error 500: Internal Server Error",
         "Error calling tool 'list_incidents': HTTP error 503: Service Unavailable",
+        # A status quoted inside the body is not the response's own.
+        "Error calling tool 'create_incident': HTTP error 422: Unprocessable Entity - "
+        "{'detail': 'HTTP error 404'}",
         # A bare number elsewhere in a message is not an upstream status.
         "ValueError: page size 404 is too large",
     ],
