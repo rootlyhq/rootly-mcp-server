@@ -145,3 +145,57 @@ def test_placeholder_required_argument_raises_guided_error():
 def test_unreadable_execute_call_shape_raises_guided_error():
     with pytest.raises(GuidedToolError, match="execute takes one argument"):
         execute_code_for_call_shape({"foo": "bar"})
+
+
+_PLAN_GATED_404 = (
+    "Error calling tool 'list_alert_routes': HTTP error 404: Not Found - "
+    '{"errors": [{"title": "Not found or unauthorized", "status": "404"}], '
+    '"_plan_gating_hint": "This 404 most likely means the feature is not enabled"}'
+)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        _PLAN_GATED_404,
+        "Error calling tool 'get_user': HTTP error 404: Not Found - {\"errors\": []}",
+        "Error calling tool 'list_ai_automations': HTTP error 403: Forbidden - {}",
+        "Error calling tool 'list_incidents': HTTP error 401: Unauthorized",
+        "Error calling tool 'create_team': HTTP error 409: Conflict - {}",
+        "Error calling tool 'list_incidents': HTTP error 429: Too Many Requests",
+    ],
+)
+def test_upstream_4xx_answers_open_no_issue(message):
+    event = mark_expected_tool_errors(_event({"message": message, "type": "ToolError"}))
+
+    assert event.is_error is False
+    assert event.error["message"] == message
+
+
+def test_code_mode_script_that_died_of_a_404_opens_no_issue():
+    error = {
+        "message": "call_tool('get_alert') failed: see cause",
+        "type": "ToolError",
+        "chained_errors": [{"message": _PLAN_GATED_404, "type": "ToolError"}],
+    }
+
+    assert mark_expected_tool_errors(_event(error)).is_error is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # Can mean the server built the request wrong; keep these as issues.
+        "Error calling tool 'list_all_incident_action_items': HTTP error 400: Bad Request",
+        "Error calling tool 'create_workflow_task': HTTP error 422: Unprocessable Entity - "
+        '{"errors": [{"title": "unknown attribute \'channel\'"}]}',
+        "Error calling tool 'list_incidents': HTTP error 500: Internal Server Error",
+        "Error calling tool 'list_incidents': HTTP error 503: Service Unavailable",
+        # A bare number elsewhere in a message is not an upstream status.
+        "ValueError: page size 404 is too large",
+    ],
+)
+def test_other_failures_still_open_issues(message):
+    event = mark_expected_tool_errors(_event({"message": message, "type": "ToolError"}))
+
+    assert event.is_error is True
