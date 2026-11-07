@@ -330,8 +330,41 @@ def is_guided_error(error: Any) -> bool:
     )
 
 
+# Rootly API answers that describe the caller's request, not a server fault:
+# a missing or invisible record, a feature off for the plan, a token without
+# the scope, a conflict, the rate limit. The model gets the API's message and
+# acts on it; nothing in this server can fix them. 400 and 422 stay issues:
+# those can mean the server built the request wrong (an unknown attribute, a
+# filter the API rejects), which is how several real bugs surfaced. 5xx stays.
+_HTTP_STATUS = re.compile(r"\bHTTP error (\d{3})\b")
+_UPSTREAM_ANSWER_STATUSES = frozenset({"401", "403", "404", "409", "429"})
+
+
+def is_upstream_answer(error: Any) -> bool:
+    """Whether an AgentCat error payload is a Rootly API 401/403/404/409/429.
+
+    Matches the message fastmcp's OpenAPI tools raise ("HTTP error 404: Not
+    Found - {...}") on the error or anywhere in its cause chain, so a Code
+    Mode script that died of one counts too. Only each message's first status
+    is read, so a body that quotes another status cannot change the answer.
+    """
+    if not isinstance(error, dict):
+        return False
+    messages = [error.get("message")]
+    chain = error.get("chained_errors")
+    if isinstance(chain, list):
+        messages.extend(link.get("message") for link in chain if isinstance(link, dict))
+    for message in messages:
+        # The first status is the response's own; wrappers only prefix the
+        # message, and a later one is text quoted inside the response body.
+        match = _HTTP_STATUS.search(message) if isinstance(message, str) else None
+        if match and match.group(1) in _UPSTREAM_ANSWER_STATUSES:
+            return True
+    return False
+
+
 def mark_expected_tool_errors(event: Any) -> Any:
-    """Publish guided tool errors as non-errors so they open no Sentry issue.
+    """Publish guided errors and upstream 4xx answers as non-errors (no Sentry issue).
 
     A guided error is the server answering a mistake it anticipated, with a
     message telling the model how to retry; as Sentry issues these bury real
@@ -340,7 +373,10 @@ def mark_expected_tool_errors(event: Any) -> Any:
     cleared on the event itself. `error` is left in place: the Sentry log and
     transaction still carry the message for anyone looking.
     """
-    if getattr(event, "is_error", False) and is_guided_error(getattr(event, "error", None)):
+    if not getattr(event, "is_error", False):
+        return event
+    error = getattr(event, "error", None)
+    if is_guided_error(error) or is_upstream_answer(error):
         event.is_error = False
     return event
 
