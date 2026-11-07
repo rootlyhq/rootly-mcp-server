@@ -480,6 +480,16 @@ async def test_missing_await_is_explained(client: Client):
     assert "await call_tool(name, params)" in text
 
 
+async def test_async_with_is_explained(client: Client):
+    # ROOTLY-MCP-KZ
+    code = "async with session() as s:\n    pass\nreturn await call_tool('list_incidents', {})"
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert "async with" in text
+    assert "await call_tool(name, params)" in text
+
+
 def test_format_execute_exception_leaves_call_tool_failures_alone():
     message = (
         "Exception: call_tool('list_incidents') failed: start_time: Unexpected keyword "
