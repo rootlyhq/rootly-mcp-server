@@ -423,6 +423,13 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
             )
         return _undefined_name_message(missing, tools)
 
+    if "async context managers" in message or "async with" in message:
+        return (
+            f"{message}. Code Mode has no `async with` (and no clients or sessions to "
+            "open): call tools directly with `result = await call_tool(name, params)` "
+            "and `return` the value."
+        )
+
     if "'coroutine' object" in message:
         return (
             f"{message}. call_tool and the tool functions are async: write "
