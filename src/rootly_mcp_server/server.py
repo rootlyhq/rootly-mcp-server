@@ -968,9 +968,15 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
     that does not map cleanly reaches the API unchanged.
     """
 
-    def __init__(self, hidden_attributes: Collection[str] = ()) -> None:
+    def __init__(
+        self,
+        hidden_attributes: Collection[str] = (),
+        task_params_variants: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> None:
         # Attribute names trimmed from the advertised schemas; still accepted.
         self.hidden_attributes = frozenset(hidden_attributes)
+        # Workflow task type -> its task_params schema (compact_large_unions).
+        self.task_params_variants = task_params_variants or {}
 
     async def on_call_tool(
         self,
@@ -998,6 +1004,14 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
                 ),
                 method=str(getattr(route, "method", "")),
             )
+            if (
+                context.message.name in tool_arguments.WORKFLOW_TASK_WRITE_TOOLS
+                and self.task_params_variants
+            ):
+                repaired, nested = tool_arguments.nest_workflow_task_params(
+                    repaired, self.task_params_variants
+                )
+                rewrites = [*rewrites, *nested]
         except tool_arguments.MalformedJsonApiBody as exc:
             raise GuidedToolError(f"{context.message.name}: {exc}") from None
         if rewrites:
@@ -1378,7 +1392,11 @@ def create_rootly_mcp_server(
     # the curated tools once they are registered, below.
     argument_alias_middleware = ToolArgumentAliasMiddleware()
     mcp.add_middleware(argument_alias_middleware)
-    mcp.add_middleware(JsonApiBodyRepairMiddleware(trimmed["removed_property_names"]))
+    mcp.add_middleware(
+        JsonApiBodyRepairMiddleware(
+            trimmed["removed_property_names"], union_variants.get("task_type", {})
+        )
+    )
     # Innermost, so usage logging still records the rejected call and its arg keys.
     mcp.add_middleware(PathArgumentValidationMiddleware())
 
