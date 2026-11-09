@@ -555,6 +555,9 @@ def repair_jsonapi_body(
     arguments: Mapping[str, Any],
     schema: Mapping[str, Any] | None,
     hidden_attributes: Collection[str] = (),
+    *,
+    body_required: bool = False,
+    method: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Fix unambiguous JSON:API envelope mistakes in an OpenAPI write tool's ``data``.
 
@@ -571,6 +574,13 @@ def repair_jsonapi_body(
     ``hidden_attributes`` are attribute names trimmed from the advertised
     schema (``spec_transform.trim_tool_schemas``) that a caller may still send;
     they count as attributes so the rest of the body is still repaired.
+
+    ``body_required`` is the operation's ``requestBody.required``. A few
+    operations (``createAlertRoute``) set it without listing ``data`` as
+    required in the schema, so a call without ``data`` went out empty and came
+    back as "data: Expected hash" (ROOTLY-MCP-31K). ``method`` lets a PUT or
+    PATCH with nothing to change be answered here instead of by Rootly's
+    "carries no attributes or relationships to update".
     """
     resource_type, attribute_properties = _jsonapi_data_schema(schema)
     if not attribute_properties:
@@ -588,7 +598,7 @@ def repair_jsonapi_body(
     if "data" not in result:
         result, rewrites = _collect_flat_body(result, schema, attribute_properties)
         if "data" not in result:
-            if "data" not in ((schema or {}).get("required") or []):
+            if not body_required and "data" not in ((schema or {}).get("required") or []):
                 return result, rewrites
             example = json.dumps({"type": resource_type or "<type>", "attributes": {}})
             stray = sorted(key for key in result if key not in _properties(schema))
@@ -648,5 +658,19 @@ def repair_jsonapi_body(
     if "attributes" in data and "type" not in data and resource_type is not None:
         data = {"type": resource_type, **data}
         rewrites.append("data.type")
+    if (
+        (method or "").upper() in ("PUT", "PATCH")
+        and not data.get("attributes")
+        and not data.get("relationships")
+        and not any(key not in _JSONAPI_ENVELOPE_KEYS for key in data)
+    ):
+        names = sorted(attribute_properties)
+        field = "name" if "name" in attribute_properties else names[0]
+        example = json.dumps({"type": resource_type or "<type>", "attributes": {field: "..."}})
+        raise MalformedJsonApiBody(
+            f"`data.attributes` is empty, so there is nothing to update. Put the fields "
+            f"to change under `data.attributes`, e.g. {example}. Fields this tool "
+            f"accepts: {', '.join(names)}."
+        )
     result["data"] = data
     return result, rewrites
