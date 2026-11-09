@@ -301,6 +301,9 @@ async def test_double_encoded_data_says_so(server, sent):
     assert sent == []
 
 
+TASK_ID = "task-1"
+
+
 async def _call(server: FastMCP, tool: str, arguments: dict[str, Any]) -> Any:
     async with Client(server) as client:
         return await client.call_tool(tool, arguments, raise_on_error=False)
@@ -348,3 +351,68 @@ async def test_update_with_attributes_still_goes_through(server, sent):
     assert not result.is_error, _text(result)
     assert [r.url.path for r in sent] == ["/v1/teams/team-1"]
     assert json.loads(sent[-1].content)["data"]["attributes"] == {"name": "X"}
+
+
+async def test_task_settings_beside_task_params_move_into_it(server, sent):
+    # ROOTLY-MCP-31S: "unknown attribute 'headers'".
+    data = {
+        "type": "workflow_tasks",
+        "attributes": {
+            "name": "Call hook",
+            "headers": '{"X-Token": "t"}',
+            "task_params": {"task_type": "http_client", "url": "https://x"},
+        },
+    }
+    result = await _call(server, "update_workflow_task", {"id": TASK_ID, "data": data})
+
+    assert not result.is_error, _text(result)
+    attributes = json.loads(sent[-1].content)["data"]["attributes"]
+    assert attributes == {
+        "name": "Call hook",
+        "task_params": {
+            "task_type": "http_client",
+            "url": "https://x",
+            "headers": '{"X-Token": "t"}',
+        },
+    }
+
+
+async def test_stray_task_type_moves_with_its_settings(server, sent):
+    data = {
+        "type": "workflow_tasks",
+        "attributes": {"task_type": "invite_to_slack_channel", "channel": {"id": "C1"}},
+    }
+    result = await _call(server, "update_workflow_task", {"id": TASK_ID, "data": data})
+
+    assert not result.is_error, _text(result)
+    attributes = json.loads(sent[-1].content)["data"]["attributes"]
+    assert attributes == {
+        "task_params": {"task_type": "invite_to_slack_channel", "channel": {"id": "C1"}}
+    }
+
+
+async def test_value_already_in_task_params_is_not_overwritten(server, sent):
+    data = {
+        "type": "workflow_tasks",
+        "attributes": {
+            "headers": "outer",
+            "task_params": {"task_type": "http_client", "headers": "inner"},
+        },
+    }
+    result = await _call(server, "update_workflow_task", {"id": TASK_ID, "data": data})
+
+    assert not result.is_error, _text(result)
+    attributes = json.loads(sent[-1].content)["data"]["attributes"]
+    assert attributes["headers"] == "outer"
+    assert attributes["task_params"] == {"task_type": "http_client", "headers": "inner"}
+
+
+async def test_task_settings_without_a_task_type_are_explained(server, sent):
+    data = {"type": "workflow_tasks", "attributes": {"headers": '{"X": "y"}'}}
+    result = await _call(server, "update_workflow_task", {"id": TASK_ID, "data": data})
+
+    assert result.is_error
+    text = _text(result)
+    assert "'headers' belong inside `data.attributes.task_params`" in text
+    assert "get_workflow_task_params_schema" in text
+    assert sent == []

@@ -681,3 +681,70 @@ def repair_jsonapi_body(
         )
     result["data"] = data
     return result, rewrites
+
+
+# The attributes a workflow task itself has; everything else a task does is
+# configured inside task_params.
+_WORKFLOW_TASK_ATTRIBUTES = frozenset(
+    {"name", "position", "skip_on_failure", "enabled", "task_params"}
+)
+WORKFLOW_TASK_WRITE_TOOLS = frozenset({"create_workflow_task", "update_workflow_task"})
+
+
+def nest_workflow_task_params(
+    arguments: Mapping[str, Any], variants: Mapping[str, Mapping[str, Any]]
+) -> tuple[dict[str, Any], list[str]]:
+    """Move task settings sent beside ``task_params`` into it.
+
+    Models put a task's own fields (``headers``, ``channel``, ``query_value``)
+    on ``data.attributes`` next to ``task_params``, and Rootly answers 422
+    "unknown attribute 'headers'" (ROOTLY-MCP-31S, 2ZC, 2Z8). A key moves only
+    when the body names its ``task_type`` and that type's schema declares the
+    key, and only when ``task_params`` does not already hold a value for it.
+    A stray ``task_type`` moves too. A task field sent with no ``task_type`` to
+    check it against raises ``MalformedJsonApiBody`` instead of guessing.
+    """
+    data = arguments.get("data")
+    if not isinstance(data, dict):
+        return dict(arguments), []
+    attributes = data.get("attributes")
+    if not isinstance(attributes, dict):
+        return dict(arguments), []
+    task_params = attributes.get("task_params", {})
+    if not isinstance(task_params, dict):
+        return dict(arguments), []
+    stray = [key for key in attributes if key not in _WORKFLOW_TASK_ATTRIBUTES]
+    if not stray:
+        return dict(arguments), []
+
+    task_params = dict(task_params)
+    remaining = dict(attributes)
+    rewrites: list[str] = []
+
+    def move(key: str) -> None:
+        task_params[key] = remaining.pop(key)
+        rewrites.append(f"data.attributes.{key}->data.attributes.task_params.{key}")
+
+    if "task_type" in remaining and "task_type" not in task_params:
+        move("task_type")
+    task_type = task_params.get("task_type")
+    variant = variants.get(task_type) if isinstance(task_type, str) else None
+    if variant is None:
+        known = {name for schema in variants.values() for name in _properties(schema)}
+        misplaced = sorted(key for key in remaining if key in known and key != "task_params")
+        if misplaced and not isinstance(task_type, str):
+            raise MalformedJsonApiBody(
+                f"{', '.join(repr(key) for key in misplaced)} belong inside "
+                "`data.attributes.task_params`, together with `task_type` (the task "
+                "type these settings are for). get_workflow_task_params_schema "
+                "lists each type's fields."
+            )
+    else:
+        accepted = _properties(variant)
+        for key in list(remaining):
+            if key not in _WORKFLOW_TASK_ATTRIBUTES and key in accepted and key not in task_params:
+                move(key)
+    if not rewrites:
+        return dict(arguments), []
+    remaining["task_params"] = task_params
+    return {**arguments, "data": {**data, "attributes": remaining}}, rewrites
