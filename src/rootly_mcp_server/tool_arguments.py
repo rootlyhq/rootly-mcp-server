@@ -585,6 +585,13 @@ def repair_jsonapi_body(
     resource_type, attribute_properties = _jsonapi_data_schema(schema)
     if not attribute_properties:
         return dict(arguments), []
+    # What the tool itself advertises as writable, for guidance: not the
+    # compatibility-only hidden names, nor deprecated or read-only fields.
+    writable = sorted(
+        name
+        for name, prop in attribute_properties.items()
+        if not (isinstance(prop, dict) and (prop.get("deprecated") or prop.get("readOnly")))
+    ) or sorted(attribute_properties)
     attribute_properties = {
         **{
             name: {}
@@ -664,8 +671,8 @@ def repair_jsonapi_body(
         and not data.get("relationships")
         and not any(key not in _JSONAPI_ENVELOPE_KEYS for key in data)
     ):
-        names = sorted(attribute_properties)
-        field = "name" if "name" in attribute_properties else names[0]
+        names = writable
+        field = "name" if "name" in names else names[0]
         example = json.dumps({"type": resource_type or "<type>", "attributes": {field: "..."}})
         raise MalformedJsonApiBody(
             f"`data.attributes` is empty, so there is nothing to update. Put the fields "

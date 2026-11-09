@@ -331,6 +331,10 @@ async def test_update_with_nothing_to_change_is_rejected_before_the_api(server, 
     text = _text(result)
     assert "`data.attributes` is empty, so there is nothing to update" in text
     assert '"attributes": {"name": "..."}' in text
+    accepted = text.split("Fields this tool accepts: ", 1)[1]
+    assert "description" in accepted
+    # Deprecated (submitted value ignored) and compatibility-only names stay out.
+    assert "slug" not in accepted
     assert sent == []
 
 
