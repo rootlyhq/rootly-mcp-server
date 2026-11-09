@@ -705,7 +705,9 @@ def nest_workflow_task_params(
     check it against raises ``MalformedJsonApiBody`` instead of guessing.
     """
     data = arguments.get("data")
-    attributes = data.get("attributes") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return dict(arguments), []
+    attributes = data.get("attributes")
     if not isinstance(attributes, dict):
         return dict(arguments), []
     task_params = attributes.get("task_params", {})
