@@ -990,7 +990,13 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
 
         try:
             repaired, rewrites = tool_arguments.repair_jsonapi_body(
-                args, getattr(tool, "parameters", None), self.hidden_attributes
+                args,
+                getattr(tool, "parameters", None),
+                self.hidden_attributes,
+                body_required=bool(
+                    getattr(getattr(route, "request_body", None), "required", False)
+                ),
+                method=str(getattr(route, "method", "")),
             )
         except tool_arguments.MalformedJsonApiBody as exc:
             raise GuidedToolError(f"{context.message.name}: {exc}") from None
