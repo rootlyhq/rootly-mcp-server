@@ -3559,7 +3559,7 @@
             }
           },
           "403": {
-            "description": "non-paging rules and dynamic destinations not available for the organization",
+            "description": "non-paging rules, dynamic destinations, rule-level sources, value normalization and matching on more than one property not available for the organization",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
@@ -3703,7 +3703,7 @@
             }
           },
           "403": {
-            "description": "non-paging rules and dynamic destinations not available for the organization",
+            "description": "non-paging rules, dynamic destinations, rule-level sources, value normalization and matching on more than one property not available for the organization",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
@@ -3759,7 +3759,7 @@
             }
           },
           "403": {
-            "description": "non-paging rules and dynamic destinations not available for the organization",
+            "description": "non-paging rules, dynamic destinations, rule-level sources, value normalization and matching on more than one property not available for the organization",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
@@ -12514,6 +12514,169 @@
         }
       }
     },
+    "/v1/edge_connectors/{edge_connector_id}/actions/{action_id}/runs": {
+      "post": {
+        "summary": "Create an edge connector action run",
+        "operationId": "createEdgeConnectorActionRun",
+        "tags": [
+          "Edge Connector Actions"
+        ],
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "edge_connector_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Action run queued",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/edge_connector_action_run_response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "entity_type must be incident or alert"
+          },
+          "404": {
+            "description": "The entity is outside the team scope"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/vnd.api+json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "edge_connector_action_runs"
+                        ]
+                      },
+                      "attributes": {
+                        "type": "object",
+                        "properties": {
+                          "parameters": {
+                            "type": "object",
+                            "nullable": true,
+                            "description": "Null is treated as {}.",
+                            "additionalProperties": true
+                          },
+                          "entity_type": {
+                            "type": "string",
+                            "enum": [
+                              "incident",
+                              "alert"
+                            ],
+                            "nullable": true,
+                            "description": "Must be provided together with entity_id. A missing or unreadable entity returns 404."
+                          },
+                          "entity_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "nullable": true,
+                            "description": "Must be provided together with entity_type. A missing or unreadable entity returns 404."
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "attributes"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "data"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/edge_connectors/{edge_connector_id}/actions/{action_id}/runs/{id}": {
+      "get": {
+        "summary": "Show an edge connector action run",
+        "operationId": "getEdgeConnectorActionRun",
+        "tags": [
+          "Edge Connector Actions"
+        ],
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "edge_connector_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller can read the workflow run",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/edge_connector_action_run_response"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller cannot read the workflow run"
+          }
+        }
+      }
+    },
     "/v1/edge_connectors/{edge_connector_id}/actions": {
       "get": {
         "summary": "List edge connector actions",
@@ -18184,6 +18347,16 @@
               }
             }
           },
+          "422": {
+            "description": "rejects a private custom logo URL",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
           "401": {
             "description": "responds with unauthorized for invalid token",
             "content": {
@@ -18412,6 +18585,16 @@
               "application/vnd.api+json": {
                 "schema": {
                   "$ref": "#/components/schemas/workflow_task_response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "rejects a private custom logo URL",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
                 }
               }
             }
@@ -23440,6 +23623,15 @@
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "filter[incident_id]",
+            "in": "query",
+            "required": false,
+            "description": "Filter by incident IDs (UUIDs), comma-separated",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -39215,6 +39407,262 @@
         }
       }
     },
+    "/v1/status-page-saml-configurations": {
+      "post": {
+        "summary": "Creates a status page SAML configuration",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "StatusPageSamlConfigurations"
+        ],
+        "description": "Creates a shared SAML configuration that status pages can use",
+        "operationId": "createStatusPageSamlConfiguration",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "SAML configuration created",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/status_page_saml_configuration_response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid request",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "member without permission to create status pages",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/new_status_page_saml_configuration"
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "get": {
+        "summary": "List status page SAML configurations",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "StatusPageSamlConfigurations"
+        ],
+        "description": "List shared SAML configurations. Legacy per-page configurations are managed with the status page SAML fields.",
+        "operationId": "listStatusPageSamlConfigurations",
+        "parameters": [
+          {
+            "name": "page[number]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page[size]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "filter[name]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "Sort by name, created_at or updated_at. Prefix with - for descending.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "filtered by name",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/status_page_saml_configuration_list"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SAML authentication not enabled for the team",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status-page-saml-configurations/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Retrieves a status page SAML configuration",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "StatusPageSamlConfigurations"
+        ],
+        "description": "Retrieves a shared SAML configuration",
+        "operationId": "getStatusPageSamlConfiguration",
+        "responses": {
+          "200": {
+            "description": "SAML configuration found",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/status_page_saml_configuration_response"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SAML configuration of another team",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Updates a status page SAML configuration",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "StatusPageSamlConfigurations"
+        ],
+        "description": "Updates a shared SAML configuration",
+        "operationId": "updateStatusPageSamlConfiguration",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "SAML configuration updated",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/status_page_saml_configuration_response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid request",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/update_status_page_saml_configuration"
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "delete": {
+        "summary": "Deletes a status page SAML configuration",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "tags": [
+          "StatusPageSamlConfigurations"
+        ],
+        "description": "Deletes a shared SAML configuration that no status page uses",
+        "operationId": "deleteStatusPageSamlConfiguration",
+        "responses": {
+          "200": {
+            "description": "SAML configuration deleted",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/status_page_saml_configuration_response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "SAML configuration used by status pages",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/status-pages/{status_page_id}/templates": {
       "parameters": [
         {
@@ -42613,6 +43061,24 @@
             "description": "`true` returns only users whose membership in this organization is managed by SCIM, including users synced in by a linked organization's SCIM integration, `false` returns only users whose membership isn't. Other values are ignored.",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "filter[role_id]",
+            "in": "query",
+            "required": false,
+            "description": "Returns only users whose Incident Response role matches. Accepts one role ID or a comma-separated list. Role IDs come from `GET /v1/roles`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter[on_call_role_id]",
+            "in": "query",
+            "required": false,
+            "description": "Returns only users whose On-Call role matches. Accepts one On-Call role ID or a comma-separated list. On-Call role IDs come from `GET /v1/on_call_roles`.",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -49340,6 +49806,15 @@
             "nullable": true,
             "description": "Permalink to the Slack message Rootly posted for this event, when present."
           },
+          "notification_type": {
+            "type": "string",
+            "enum": [
+              "audible",
+              "quiet"
+            ],
+            "nullable": true,
+            "description": "Audible or quiet type of the page that produced this notification event. Null when Rootly cannot tell, and on other event kinds."
+          },
           "source": {
             "type": "string"
           },
@@ -51011,6 +51486,14 @@
                           "description": "Whether alerts matching this rule are left unpaged. A non-paging rule takes no destinations. Only available when dynamic alert routing is enabled for the organization",
                           "default": false
                         },
+                        "alerts_source_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "description": "Alert sources this rule applies to. Each must be one of the route's alert sources, and an empty list applies the rule to all of them. Can't be set on the fallback rule. Only available when rule-level source selection is enabled for the organization"
+                        },
                         "ai_sre_provider": {
                           "type": "string",
                           "enum": [
@@ -51070,8 +51553,8 @@
                               "match_keys": {
                                 "type": "array",
                                 "minItems": 1,
-                                "maxItems": 1,
-                                "description": "Dynamic destinations only. How an alert value is matched to a catalog entity property. Exactly one match key is supported",
+                                "maxItems": 2,
+                                "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when matching on more than one property is enabled for the organization",
                                 "items": {
                                   "type": "object",
                                   "properties": {
@@ -51094,27 +51577,32 @@
                                     },
                                     "normalizers": {
                                       "type": "object",
-                                      "description": "Value normalizers. Not supported yet: send the booleans as false and the strings as null or empty, or leave normalizers out",
+                                      "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when value normalization is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
                                       "properties": {
                                         "ignore_case": {
                                           "type": "boolean",
-                                          "default": false
+                                          "default": true,
+                                          "description": "Compare the alert value and the catalog value without regard to case"
                                         },
                                         "ignore_whitespace": {
                                           "type": "boolean",
-                                          "default": false
+                                          "default": true,
+                                          "description": "Compare the alert value and the catalog value with all whitespace removed"
                                         },
                                         "strip_prefix": {
                                           "type": "string",
-                                          "nullable": true
+                                          "nullable": true,
+                                          "description": "Removed once from the start of the alert value. Up to 100 characters"
                                         },
                                         "strip_suffix": {
                                           "type": "string",
-                                          "nullable": true
+                                          "nullable": true,
+                                          "description": "Removed once from the end of the alert value. Up to 100 characters"
                                         },
                                         "extract_pattern": {
                                           "type": "string",
-                                          "nullable": true
+                                          "nullable": true,
+                                          "description": "Not supported. Leave it null or empty"
                                         }
                                       },
                                       "additionalProperties": false
@@ -51311,6 +51799,14 @@
                           "description": "Whether alerts matching this rule are left unpaged. A non-paging rule takes no destinations. Only available when dynamic alert routing is enabled for the organization",
                           "default": false
                         },
+                        "alerts_source_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "description": "Alert sources this rule applies to. Each must be one of the route's alert sources, and an empty list applies the rule to all of them. Can't be set on the fallback rule. Only available when rule-level source selection is enabled for the organization"
+                        },
                         "ai_sre_provider": {
                           "type": "string",
                           "enum": [
@@ -51370,8 +51866,8 @@
                               "match_keys": {
                                 "type": "array",
                                 "minItems": 1,
-                                "maxItems": 1,
-                                "description": "Dynamic destinations only. How an alert value is matched to a catalog entity property. Exactly one match key is supported",
+                                "maxItems": 2,
+                                "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when matching on more than one property is enabled for the organization",
                                 "items": {
                                   "type": "object",
                                   "properties": {
@@ -51394,27 +51890,32 @@
                                     },
                                     "normalizers": {
                                       "type": "object",
-                                      "description": "Value normalizers. Not supported yet: send the booleans as false and the strings as null or empty, or leave normalizers out",
+                                      "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when value normalization is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
                                       "properties": {
                                         "ignore_case": {
                                           "type": "boolean",
-                                          "default": false
+                                          "default": true,
+                                          "description": "Compare the alert value and the catalog value without regard to case"
                                         },
                                         "ignore_whitespace": {
                                           "type": "boolean",
-                                          "default": false
+                                          "default": true,
+                                          "description": "Compare the alert value and the catalog value with all whitespace removed"
                                         },
                                         "strip_prefix": {
                                           "type": "string",
-                                          "nullable": true
+                                          "nullable": true,
+                                          "description": "Removed once from the start of the alert value. Up to 100 characters"
                                         },
                                         "strip_suffix": {
                                           "type": "string",
-                                          "nullable": true
+                                          "nullable": true,
+                                          "description": "Removed once from the end of the alert value. Up to 100 characters"
                                         },
                                         "extract_pattern": {
                                           "type": "string",
-                                          "nullable": true
+                                          "nullable": true,
+                                          "description": "Not supported. Leave it null or empty"
                                         }
                                       },
                                       "additionalProperties": false
@@ -51623,6 +52124,14 @@
                           "description": "Whether alerts matching this rule are left unpaged. A non-paging rule takes no destinations. Only available when dynamic alert routing is enabled for the organization",
                           "default": false
                         },
+                        "alerts_source_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "description": "Alert sources this rule applies to. Each must be one of the route's alert sources, and an empty list applies the rule to all of them. Can't be set on the fallback rule. Only available when rule-level source selection is enabled for the organization"
+                        },
                         "ai_sre_provider": {
                           "type": "string",
                           "enum": [
@@ -51691,8 +52200,8 @@
                               "match_keys": {
                                 "type": "array",
                                 "minItems": 1,
-                                "maxItems": 1,
-                                "description": "Dynamic destinations only. How an alert value is matched to a catalog entity property. Exactly one match key is supported",
+                                "maxItems": 2,
+                                "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when matching on more than one property is enabled for the organization",
                                 "items": {
                                   "type": "object",
                                   "properties": {
@@ -51715,27 +52224,32 @@
                                     },
                                     "normalizers": {
                                       "type": "object",
-                                      "description": "Value normalizers. Not supported yet: send the booleans as false and the strings as null or empty, or leave normalizers out",
+                                      "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when value normalization is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
                                       "properties": {
                                         "ignore_case": {
                                           "type": "boolean",
-                                          "default": false
+                                          "default": true,
+                                          "description": "Compare the alert value and the catalog value without regard to case"
                                         },
                                         "ignore_whitespace": {
                                           "type": "boolean",
-                                          "default": false
+                                          "default": true,
+                                          "description": "Compare the alert value and the catalog value with all whitespace removed"
                                         },
                                         "strip_prefix": {
                                           "type": "string",
-                                          "nullable": true
+                                          "nullable": true,
+                                          "description": "Removed once from the start of the alert value. Up to 100 characters"
                                         },
                                         "strip_suffix": {
                                           "type": "string",
-                                          "nullable": true
+                                          "nullable": true,
+                                          "description": "Removed once from the end of the alert value. Up to 100 characters"
                                         },
                                         "extract_pattern": {
                                           "type": "string",
-                                          "nullable": true
+                                          "nullable": true,
+                                          "description": "Not supported. Leave it null or empty"
                                         }
                                       },
                                       "additionalProperties": false
@@ -51921,6 +52435,14 @@
                   "type": "boolean",
                   "description": "Whether alerts matching this rule are left unpaged. Returned when the rule is non-paging or dynamic alert routing is enabled for the organization"
                 },
+                "alerts_source_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "description": "Alert sources this rule applies to; empty means all of the route's sources. Returned when the rule is limited to sources or rule-level source selection is enabled for the organization"
+                },
                 "ai_sre_provider": {
                   "type": "string",
                   "enum": [
@@ -51982,8 +52504,8 @@
                       "match_keys": {
                         "type": "array",
                         "minItems": 1,
-                        "maxItems": 1,
-                        "description": "Dynamic destinations only. How an alert value is matched to a catalog entity property. Exactly one match key is supported",
+                        "maxItems": 2,
+                        "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when matching on more than one property is enabled for the organization",
                         "items": {
                           "type": "object",
                           "properties": {
@@ -52006,27 +52528,32 @@
                             },
                             "normalizers": {
                               "type": "object",
-                              "description": "Value normalizers. Not supported yet: send the booleans as false and the strings as null or empty, or leave normalizers out",
+                              "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when value normalization is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
                               "properties": {
                                 "ignore_case": {
                                   "type": "boolean",
-                                  "default": false
+                                  "default": true,
+                                  "description": "Compare the alert value and the catalog value without regard to case"
                                 },
                                 "ignore_whitespace": {
                                   "type": "boolean",
-                                  "default": false
+                                  "default": true,
+                                  "description": "Compare the alert value and the catalog value with all whitespace removed"
                                 },
                                 "strip_prefix": {
                                   "type": "string",
-                                  "nullable": true
+                                  "nullable": true,
+                                  "description": "Removed once from the start of the alert value. Up to 100 characters"
                                 },
                                 "strip_suffix": {
                                   "type": "string",
-                                  "nullable": true
+                                  "nullable": true,
+                                  "description": "Removed once from the end of the alert value. Up to 100 characters"
                                 },
                                 "extract_pattern": {
                                   "type": "string",
-                                  "nullable": true
+                                  "nullable": true,
+                                  "description": "Not supported. Leave it null or empty"
                                 }
                               },
                               "additionalProperties": false
@@ -56592,7 +57119,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the catalog entity shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the catalog entity shown on status pages instead of its name",
                     "nullable": true
                   },
                   "position": {
@@ -56694,7 +57221,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the catalog entity shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the catalog entity shown on status pages instead of its name",
                     "nullable": true
                   },
                   "position": {
@@ -56776,7 +57303,7 @@
           },
           "public_name": {
             "type": "string",
-            "description": "The public name of the catalog entity shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+            "description": "The public name of the catalog entity shown on status pages instead of its name",
             "nullable": true
           },
           "position": {
@@ -56979,7 +57506,6 @@
                 },
                 "public_name": {
                   "type": "string",
-                  "description": "Only used when `status-page-v3-phase-1` is enabled",
                   "nullable": true
                 },
                 "backstage_id": {
@@ -58237,7 +58763,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the cause shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the cause shown on status pages instead of its name",
                     "nullable": true
                   },
                   "position": {
@@ -58327,7 +58853,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the cause shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the cause shown on status pages instead of its name",
                     "nullable": true
                   },
                   "position": {
@@ -58397,7 +58923,7 @@
           },
           "public_name": {
             "type": "string",
-            "description": "The public name of the cause shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+            "description": "The public name of the cause shown on status pages instead of its name",
             "nullable": true
           },
           "position": {
@@ -63267,6 +63793,176 @@
           "action"
         ]
       },
+      "edge_connector_action_trigger_request": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "edge_connector_action_runs"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "parameters": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "Null is treated as {}.",
+                    "additionalProperties": true
+                  },
+                  "entity_type": {
+                    "type": "string",
+                    "enum": [
+                      "incident",
+                      "alert"
+                    ],
+                    "nullable": true,
+                    "description": "Must be provided together with entity_id. A missing or unreadable entity returns 404."
+                  },
+                  "entity_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true,
+                    "description": "Must be provided together with entity_type. A missing or unreadable entity returns 404."
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "attributes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "edge_connector_action_run_response": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "edge_connector_action_runs"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "action_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "entity_type": {
+                    "type": "string",
+                    "enum": [
+                      "incident",
+                      "alert"
+                    ],
+                    "nullable": true
+                  },
+                  "entity_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "triggered_by_user_id": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "genius_task_run_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "exit_code": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "stdout": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "stderr": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "error": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "duration_ms": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "completed_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "failed_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "action_id",
+                  "status",
+                  "entity_type",
+                  "entity_id",
+                  "triggered_by_user_id",
+                  "genius_task_run_id",
+                  "exit_code",
+                  "stdout",
+                  "stderr",
+                  "error",
+                  "duration_ms",
+                  "created_at",
+                  "completed_at",
+                  "failed_at"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "attributes"
+            ]
+          },
+          "included": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/jsonapi_included_resource"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "new_environment": {
         "type": "object",
         "properties": {
@@ -63304,7 +64000,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the environment shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the environment shown on status pages instead of its name",
                     "nullable": true
                   },
                   "color": {
@@ -63458,7 +64154,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the environment shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the environment shown on status pages instead of its name",
                     "nullable": true
                   },
                   "color": {
@@ -63610,7 +64306,7 @@
           },
           "public_name": {
             "type": "string",
-            "description": "The public name of the environment shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+            "description": "The public name of the environment shown on status pages instead of its name",
             "nullable": true
           },
           "notify_emails": {
@@ -63851,7 +64547,6 @@
                 },
                 "public_name": {
                   "type": "string",
-                  "description": "Only used when `status-page-v3-phase-1` is enabled",
                   "nullable": true
                 },
                 "color": {
@@ -64411,7 +65106,6 @@
                           "America/Adak",
                           "America/Atka",
                           "US/Aleutian",
-                          "America/Vancouver",
                           "Canada/Pacific",
                           "America/Miquelon",
                           "Australia/Eucla",
@@ -64424,6 +65118,9 @@
                           "Pacific/Marquesas",
                           "Pacific/Kiritimati",
                           "Pacific/Norfolk",
+                          "America/Vancouver",
+                          "America/Edmonton",
+                          "America/Winnipeg",
                           "Asia/Rangoon",
                           "Europe/Kiev"
                         ],
@@ -64825,7 +65522,6 @@
                           "America/Adak",
                           "America/Atka",
                           "US/Aleutian",
-                          "America/Vancouver",
                           "Canada/Pacific",
                           "America/Miquelon",
                           "Australia/Eucla",
@@ -64838,6 +65534,9 @@
                           "Pacific/Marquesas",
                           "Pacific/Kiritimati",
                           "Pacific/Norfolk",
+                          "America/Vancouver",
+                          "America/Edmonton",
+                          "America/Winnipeg",
                           "Asia/Rangoon",
                           "Europe/Kiev"
                         ],
@@ -65228,7 +65927,6 @@
                   "America/Adak",
                   "America/Atka",
                   "US/Aleutian",
-                  "America/Vancouver",
                   "Canada/Pacific",
                   "America/Miquelon",
                   "Australia/Eucla",
@@ -65241,6 +65939,9 @@
                   "Pacific/Marquesas",
                   "Pacific/Kiritimati",
                   "Pacific/Norfolk",
+                  "America/Vancouver",
+                  "America/Edmonton",
+                  "America/Winnipeg",
                   "Asia/Rangoon",
                   "Europe/Kiev"
                 ],
@@ -66008,7 +66709,6 @@
                                 "America/Adak",
                                 "America/Atka",
                                 "US/Aleutian",
-                                "America/Vancouver",
                                 "Canada/Pacific",
                                 "America/Miquelon",
                                 "Australia/Eucla",
@@ -66021,6 +66721,9 @@
                                 "Pacific/Marquesas",
                                 "Pacific/Kiritimati",
                                 "Pacific/Norfolk",
+                                "America/Vancouver",
+                                "America/Edmonton",
+                                "America/Winnipeg",
                                 "Asia/Rangoon",
                                 "Europe/Kiev"
                               ]
@@ -66695,7 +67398,6 @@
                                       "America/Adak",
                                       "America/Atka",
                                       "US/Aleutian",
-                                      "America/Vancouver",
                                       "Canada/Pacific",
                                       "America/Miquelon",
                                       "Australia/Eucla",
@@ -66708,6 +67410,9 @@
                                       "Pacific/Marquesas",
                                       "Pacific/Kiritimati",
                                       "Pacific/Norfolk",
+                                      "America/Vancouver",
+                                      "America/Edmonton",
+                                      "America/Winnipeg",
                                       "Asia/Rangoon",
                                       "Europe/Kiev"
                                     ]
@@ -67160,7 +67865,6 @@
                       "America/Adak",
                       "America/Atka",
                       "US/Aleutian",
-                      "America/Vancouver",
                       "Canada/Pacific",
                       "America/Miquelon",
                       "Australia/Eucla",
@@ -67173,6 +67877,9 @@
                       "Pacific/Marquesas",
                       "Pacific/Kiritimati",
                       "Pacific/Norfolk",
+                      "America/Vancouver",
+                      "America/Edmonton",
+                      "America/Winnipeg",
                       "Asia/Rangoon",
                       "Europe/Kiev"
                     ],
@@ -67859,7 +68566,6 @@
                                 "America/Adak",
                                 "America/Atka",
                                 "US/Aleutian",
-                                "America/Vancouver",
                                 "Canada/Pacific",
                                 "America/Miquelon",
                                 "Australia/Eucla",
@@ -67872,6 +68578,9 @@
                                 "Pacific/Marquesas",
                                 "Pacific/Kiritimati",
                                 "Pacific/Norfolk",
+                                "America/Vancouver",
+                                "America/Edmonton",
+                                "America/Winnipeg",
                                 "Asia/Rangoon",
                                 "Europe/Kiev"
                               ]
@@ -68547,7 +69256,6 @@
                                       "America/Adak",
                                       "America/Atka",
                                       "US/Aleutian",
-                                      "America/Vancouver",
                                       "Canada/Pacific",
                                       "America/Miquelon",
                                       "Australia/Eucla",
@@ -68560,6 +69268,9 @@
                                       "Pacific/Marquesas",
                                       "Pacific/Kiritimati",
                                       "Pacific/Norfolk",
+                                      "America/Vancouver",
+                                      "America/Edmonton",
+                                      "America/Winnipeg",
                                       "Asia/Rangoon",
                                       "Europe/Kiev"
                                     ]
@@ -69012,7 +69723,6 @@
                       "America/Adak",
                       "America/Atka",
                       "US/Aleutian",
-                      "America/Vancouver",
                       "Canada/Pacific",
                       "America/Miquelon",
                       "Australia/Eucla",
@@ -69025,6 +69735,9 @@
                       "Pacific/Marquesas",
                       "Pacific/Kiritimati",
                       "Pacific/Norfolk",
+                      "America/Vancouver",
+                      "America/Edmonton",
+                      "America/Winnipeg",
                       "Asia/Rangoon",
                       "Europe/Kiev"
                     ],
@@ -69674,7 +70387,6 @@
                         "America/Adak",
                         "America/Atka",
                         "US/Aleutian",
-                        "America/Vancouver",
                         "Canada/Pacific",
                         "America/Miquelon",
                         "Australia/Eucla",
@@ -69687,6 +70399,9 @@
                         "Pacific/Marquesas",
                         "Pacific/Kiritimati",
                         "Pacific/Norfolk",
+                        "America/Vancouver",
+                        "America/Edmonton",
+                        "America/Winnipeg",
                         "Asia/Rangoon",
                         "Europe/Kiev"
                       ]
@@ -70362,7 +71077,6 @@
                               "America/Adak",
                               "America/Atka",
                               "US/Aleutian",
-                              "America/Vancouver",
                               "Canada/Pacific",
                               "America/Miquelon",
                               "Australia/Eucla",
@@ -70375,6 +71089,9 @@
                               "Pacific/Marquesas",
                               "Pacific/Kiritimati",
                               "Pacific/Norfolk",
+                              "America/Vancouver",
+                              "America/Edmonton",
+                              "America/Winnipeg",
                               "Asia/Rangoon",
                               "Europe/Kiev"
                             ]
@@ -70827,7 +71544,6 @@
               "America/Adak",
               "America/Atka",
               "US/Aleutian",
-              "America/Vancouver",
               "Canada/Pacific",
               "America/Miquelon",
               "Australia/Eucla",
@@ -70840,6 +71556,9 @@
               "Pacific/Marquesas",
               "Pacific/Kiritimati",
               "Pacific/Norfolk",
+              "America/Vancouver",
+              "America/Edmonton",
+              "America/Winnipeg",
               "Asia/Rangoon",
               "Europe/Kiev"
             ],
@@ -81956,7 +82675,7 @@
           },
           "custom_logo_url": {
             "type": "string",
-            "description": "URL to your custom email logo",
+            "description": "Non-HTTP(S), localhost, private or internal URLs return 422. Redirects, non-image/SVG/empty responses, files over 5 MB and timeouts allow saving but leave no logo attached.",
             "nullable": true
           }
         },
@@ -84329,6 +85048,40 @@
           "ai_skill_id"
         ]
       },
+      "run_edge_connector_action_task_params": {
+        "type": "object",
+        "properties": {
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "run_edge_connector_action"
+            ]
+          },
+          "edge_connector_action_id": {
+            "type": "string",
+            "description": "ID of a callable Edge Connector action"
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Each value must be a string or Liquid expression. Values support Liquid."
+          },
+          "wait_for_completion": {
+            "type": "boolean",
+            "default": true,
+            "description": "Wait for the action to finish"
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the workflow task"
+          }
+        },
+        "required": [
+          "edge_connector_action_id"
+        ]
+      },
       "new_workflow_task": {
         "type": "object",
         "properties": {
@@ -84821,6 +85574,9 @@
                       },
                       {
                         "$ref": "#/components/schemas/run_ai_skill_task_params"
+                      },
+                      {
+                        "$ref": "#/components/schemas/run_edge_connector_action_task_params"
                       }
                     ]
                   }
@@ -85339,6 +86095,9 @@
                       },
                       {
                         "$ref": "#/components/schemas/run_ai_skill_task_params"
+                      },
+                      {
+                        "$ref": "#/components/schemas/run_edge_connector_action_task_params"
                       }
                     ]
                   }
@@ -85825,6 +86584,9 @@
               },
               {
                 "$ref": "#/components/schemas/run_ai_skill_task_params"
+              },
+              {
+                "$ref": "#/components/schemas/run_edge_connector_action_task_params"
               }
             ]
           },
@@ -91457,6 +92219,11 @@
                     "description": "The Jira issue URL. Must be a single HTTPS link ending in the issue key, like https://your-site.atlassian.net/browse/KEY-123. Host not checked.",
                     "nullable": true
                   },
+                  "linear_issue_url": {
+                    "type": "string",
+                    "description": "The Linear issue URL, like https://linear.app/your-workspace/issue/KEY-123.",
+                    "nullable": true
+                  },
                   "form_field_selections": {
                     "type": "array",
                     "nullable": true,
@@ -91669,6 +92436,11 @@
                     "description": "The Jira issue URL. New or changed values must be one HTTPS link ending in the key, like https://your-site.atlassian.net/browse/KEY-123. Host not checked.",
                     "nullable": true
                   },
+                  "linear_issue_url": {
+                    "type": "string",
+                    "description": "The Linear issue URL, like https://linear.app/your-workspace/issue/KEY-123.",
+                    "nullable": true
+                  },
                   "form_field_selections": {
                     "type": "array",
                     "nullable": true,
@@ -91865,6 +92637,21 @@
           "jira_issue_url": {
             "type": "string",
             "description": "The Jira issue URL. Links saved before validation was added may not match the request format.",
+            "nullable": true
+          },
+          "linear_issue_id": {
+            "type": "string",
+            "description": "The Linear issue ID.",
+            "nullable": true
+          },
+          "linear_issue_key": {
+            "type": "string",
+            "description": "The Linear issue key.",
+            "nullable": true
+          },
+          "linear_issue_url": {
+            "type": "string",
+            "description": "The Linear issue URL, like https://linear.app/your-workspace/issue/KEY-123.",
             "nullable": true
           },
           "created_by": {
@@ -95967,7 +96754,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the incident type shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the incident type shown on status pages instead of its name",
                     "nullable": true
                   },
                   "color": {
@@ -96116,7 +96903,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the incident type shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the incident type shown on status pages instead of its name",
                     "nullable": true
                   },
                   "color": {
@@ -96245,7 +97032,7 @@
           },
           "public_name": {
             "type": "string",
-            "description": "The public name of the incident type shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+            "description": "The public name of the incident type shown on status pages instead of its name",
             "nullable": true
           },
           "color": {
@@ -100015,6 +100802,26 @@
                       ]
                     }
                   },
+                  "ai_investigations_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "run"
+                      ]
+                    }
+                  },
+                  "ai_connectors_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "manage"
+                      ]
+                    }
+                  },
                   "api_keys_permissions": {
                     "type": "array",
                     "items": {
@@ -100360,6 +101167,26 @@
                       ]
                     }
                   },
+                  "ai_investigations_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "run"
+                      ]
+                    }
+                  },
+                  "ai_connectors_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "manage"
+                      ]
+                    }
+                  },
                   "api_keys_permissions": {
                     "type": "array",
                     "items": {
@@ -100688,6 +101515,26 @@
                 "update",
                 "read",
                 "delete"
+              ]
+            }
+          },
+          "ai_investigations_permissions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "run"
+              ]
+            }
+          },
+          "ai_connectors_permissions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "manage"
               ]
             }
           },
@@ -105514,6 +106361,7 @@
                   },
                   "billing_permissions": {
                     "type": "array",
+                    "description": "Only honored for callers with an Owner membership or an organization API key holding the Owner role. Values from other callers are ignored.",
                     "items": {
                       "type": "string",
                       "enum": [
@@ -105859,6 +106707,26 @@
                       ]
                     }
                   },
+                  "ai_investigations_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "run"
+                      ]
+                    }
+                  },
+                  "ai_connectors_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "manage"
+                      ]
+                    }
+                  },
                   "ai_automations_permissions": {
                     "type": "array",
                     "items": {
@@ -106005,6 +106873,7 @@
                   },
                   "billing_permissions": {
                     "type": "array",
+                    "description": "Only honored for callers with an Owner membership or an organization API key holding the Owner role. Values from other callers are ignored.",
                     "items": {
                       "type": "string",
                       "enum": [
@@ -106330,6 +107199,26 @@
                     }
                   },
                   "ai_skills_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "manage"
+                      ]
+                    }
+                  },
+                  "ai_investigations_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "run"
+                      ]
+                    }
+                  },
+                  "ai_connectors_permissions": {
                     "type": "array",
                     "items": {
                       "type": "string",
@@ -106811,6 +107700,26 @@
             }
           },
           "ai_skills_permissions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "manage"
+              ]
+            }
+          },
+          "ai_investigations_permissions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "run"
+              ]
+            }
+          },
+          "ai_connectors_permissions": {
             "type": "array",
             "items": {
               "type": "string",
@@ -112519,6 +113428,343 @@
           "meta"
         ]
       },
+      "new_status_page_saml_configuration": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "status_page_saml_configurations"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The name of the SAML configuration",
+                    "maxLength": 255
+                  },
+                  "idp_sso_service_url": {
+                    "type": "string",
+                    "description": "SAML IdP SSO service URL",
+                    "maxLength": 2048
+                  },
+                  "idp_slo_service_url": {
+                    "type": "string",
+                    "description": "SAML IdP SLO service URL",
+                    "maxLength": 2048,
+                    "nullable": true
+                  },
+                  "idp_entity_id": {
+                    "type": "string",
+                    "description": "SAML IdP entity ID (issuer)",
+                    "maxLength": 2048
+                  },
+                  "idp_cert": {
+                    "type": "string",
+                    "description": "SAML IdP X.509 certificate in PEM format. Returned as [REDACTED].",
+                    "maxLength": 20000
+                  },
+                  "name_identifier_format": {
+                    "type": "string",
+                    "description": "SAML name identifier format",
+                    "enum": [
+                      "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+                      "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+                      "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+                      "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+                    ],
+                    "default": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+                    "nullable": true
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "idp_sso_service_url",
+                  "idp_entity_id",
+                  "idp_cert"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "attributes"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ]
+      },
+      "update_status_page_saml_configuration": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Accepted for JSON:API client compatibility, but ignored. The resource to update is identified by the id in the path."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "status_page_saml_configurations"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The name of the SAML configuration",
+                    "maxLength": 255
+                  },
+                  "idp_sso_service_url": {
+                    "type": "string",
+                    "description": "SAML IdP SSO service URL",
+                    "maxLength": 2048
+                  },
+                  "idp_slo_service_url": {
+                    "type": "string",
+                    "description": "SAML IdP SLO service URL",
+                    "maxLength": 2048,
+                    "nullable": true
+                  },
+                  "idp_entity_id": {
+                    "type": "string",
+                    "description": "SAML IdP entity ID (issuer)",
+                    "maxLength": 2048
+                  },
+                  "idp_cert": {
+                    "type": "string",
+                    "description": "SAML IdP X.509 certificate in PEM format. Returned as [REDACTED].",
+                    "maxLength": 20000
+                  },
+                  "name_identifier_format": {
+                    "type": "string",
+                    "description": "SAML name identifier format",
+                    "enum": [
+                      "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+                      "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+                      "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+                      "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+                    ],
+                    "default": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+                    "nullable": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "attributes"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ]
+      },
+      "status_page_saml_configuration": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name of the SAML configuration",
+            "maxLength": 255
+          },
+          "idp_sso_service_url": {
+            "type": "string",
+            "description": "SAML IdP SSO service URL",
+            "maxLength": 2048
+          },
+          "idp_slo_service_url": {
+            "type": "string",
+            "description": "SAML IdP SLO service URL",
+            "maxLength": 2048,
+            "nullable": true
+          },
+          "idp_entity_id": {
+            "type": "string",
+            "description": "SAML IdP entity ID (issuer)",
+            "maxLength": 2048
+          },
+          "idp_cert": {
+            "type": "string",
+            "description": "SAML IdP X.509 certificate in PEM format. Returned as [REDACTED].",
+            "maxLength": 20000
+          },
+          "name_identifier_format": {
+            "type": "string",
+            "description": "SAML name identifier format",
+            "enum": [
+              "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+              "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+              "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+              "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+            ],
+            "default": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+            "nullable": true
+          },
+          "idp_cert_fingerprint": {
+            "type": "string",
+            "description": "SHA1 fingerprint of the IdP certificate",
+            "nullable": true,
+            "readOnly": true
+          },
+          "sp_entity_id": {
+            "type": "string",
+            "description": "Service provider entity ID to configure in the IdP",
+            "readOnly": true
+          },
+          "acs_url": {
+            "type": "string",
+            "description": "Assertion consumer service URL to configure in the IdP",
+            "readOnly": true
+          },
+          "metadata_url": {
+            "type": "string",
+            "description": "Service provider metadata URL",
+            "readOnly": true
+          },
+          "status_pages_count": {
+            "type": "integer",
+            "description": "Number of status pages using this SAML configuration",
+            "readOnly": true
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Date of creation"
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "Date of last update"
+          }
+        },
+        "required": [
+          "name",
+          "idp_sso_service_url",
+          "idp_entity_id",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "status_page_saml_configuration_response": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique ID of the SAML configuration"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "status_page_saml_configurations"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/status_page_saml_configuration"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "attributes"
+            ]
+          },
+          "included": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/jsonapi_included_resource"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "status_page_saml_configuration_list": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Unique ID of the SAML configuration"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "status_page_saml_configurations"
+                  ]
+                },
+                "attributes": {
+                  "type": "object",
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/status_page_saml_configuration"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "attributes"
+              ]
+            }
+          },
+          "links": {
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/links"
+              }
+            ]
+          },
+          "meta": {
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/meta"
+              }
+            ]
+          },
+          "included": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/jsonapi_included_resource"
+            }
+          }
+        },
+        "required": [
+          "data",
+          "links",
+          "meta"
+        ]
+      },
       "new_status_page_template": {
         "type": "object",
         "properties": {
@@ -112939,6 +114185,16 @@
                     "description": "Allow search engines to include your public status page in search results",
                     "nullable": true
                   },
+                  "allow_page_subscriptions": {
+                    "type": "boolean",
+                    "description": "Allow visitors to subscribe to all status page updates",
+                    "default": true
+                  },
+                  "allow_incident_subscriptions": {
+                    "type": "boolean",
+                    "description": "Allow visitors to subscribe to updates for a single incident or scheduled maintenance",
+                    "default": false
+                  },
                   "show_uptime": {
                     "type": "boolean",
                     "description": "Show uptime",
@@ -113002,12 +114258,12 @@
                   },
                   "saml_idp_sso_service_url": {
                     "type": "string",
-                    "description": "SAML IdP SSO service URL",
+                    "description": "SAML IdP SSO service URL. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
                     "nullable": true
                   },
                   "saml_idp_slo_service_url": {
                     "type": "string",
-                    "description": "SAML IdP SLO service URL",
+                    "description": "SAML IdP SLO service URL. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
                     "nullable": true
                   },
                   "saml_idp_cert": {
@@ -113017,13 +114273,74 @@
                   },
                   "saml_name_identifier_format": {
                     "type": "string",
-                    "description": "SAML name identifier format",
+                    "description": "SAML name identifier format. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
                     "enum": [
                       "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                       "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
                       "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
                       "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
                     ],
+                    "nullable": true
+                  },
+                  "saml_idp_entity_id": {
+                    "type": "string",
+                    "description": "SAML IdP entity ID (issuer). Blank accepts any issuer. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
+                    "maxLength": 2048,
+                    "nullable": true
+                  },
+                  "saml_configuration_id": {
+                    "type": "string",
+                    "description": "ID of the shared SAML configuration used by the page. Manage shared configurations with /v1/status-page-saml-configurations.",
+                    "nullable": true
+                  },
+                  "saml_access_rules": {
+                    "type": "array",
+                    "description": "Rules that decide which signed-in SAML users can view the page. Values are compared case-sensitively.",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "claim": {
+                          "type": "string",
+                          "description": "SAML attribute name. Required for is_any_of.",
+                          "maxLength": 255,
+                          "nullable": true
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "is_any_of",
+                            "email_domain_is_any_of"
+                          ],
+                          "description": "is_any_of matches attribute values; email_domain_is_any_of matches the domain of the email NameID, not email attributes"
+                        },
+                        "values": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "maxLength": 255
+                          },
+                          "minItems": 1,
+                          "maxItems": 500,
+                          "description": "Accepted values"
+                        }
+                      },
+                      "required": [
+                        "operator",
+                        "values"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "nullable": true
+                  },
+                  "saml_access_rules_match": {
+                    "type": "string",
+                    "description": "Whether all rules or any rule must match",
+                    "enum": [
+                      "all",
+                      "any"
+                    ],
+                    "default": "all",
                     "nullable": true
                   },
                   "section_order": {
@@ -113192,6 +114509,14 @@
                     "description": "Allow search engines to include your public status page in search results",
                     "nullable": true
                   },
+                  "allow_page_subscriptions": {
+                    "type": "boolean",
+                    "description": "Allow visitors to subscribe to all status page updates"
+                  },
+                  "allow_incident_subscriptions": {
+                    "type": "boolean",
+                    "description": "Allow visitors to subscribe to updates for a single incident or scheduled maintenance"
+                  },
                   "show_uptime": {
                     "type": "boolean",
                     "description": "Show uptime",
@@ -113254,12 +114579,12 @@
                   },
                   "saml_idp_sso_service_url": {
                     "type": "string",
-                    "description": "SAML IdP SSO service URL",
+                    "description": "SAML IdP SSO service URL. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
                     "nullable": true
                   },
                   "saml_idp_slo_service_url": {
                     "type": "string",
-                    "description": "SAML IdP SLO service URL",
+                    "description": "SAML IdP SLO service URL. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
                     "nullable": true
                   },
                   "saml_idp_cert": {
@@ -113269,13 +114594,74 @@
                   },
                   "saml_name_identifier_format": {
                     "type": "string",
-                    "description": "SAML name identifier format",
+                    "description": "SAML name identifier format. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
                     "enum": [
                       "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
                       "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
                       "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
                       "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
                     ],
+                    "nullable": true
+                  },
+                  "saml_idp_entity_id": {
+                    "type": "string",
+                    "description": "SAML IdP entity ID (issuer). Blank accepts any issuer. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
+                    "maxLength": 2048,
+                    "nullable": true
+                  },
+                  "saml_configuration_id": {
+                    "type": "string",
+                    "description": "ID of the shared SAML configuration used by the page. Manage shared configurations with /v1/status-page-saml-configurations.",
+                    "nullable": true
+                  },
+                  "saml_access_rules": {
+                    "type": "array",
+                    "description": "Rules that decide which signed-in SAML users can view the page. Values are compared case-sensitively.",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "claim": {
+                          "type": "string",
+                          "description": "SAML attribute name. Required for is_any_of.",
+                          "maxLength": 255,
+                          "nullable": true
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "is_any_of",
+                            "email_domain_is_any_of"
+                          ],
+                          "description": "is_any_of matches attribute values; email_domain_is_any_of matches the domain of the email NameID, not email attributes"
+                        },
+                        "values": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "maxLength": 255
+                          },
+                          "minItems": 1,
+                          "maxItems": 500,
+                          "description": "Accepted values"
+                        }
+                      },
+                      "required": [
+                        "operator",
+                        "values"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "nullable": true
+                  },
+                  "saml_access_rules_match": {
+                    "type": "string",
+                    "description": "Whether all rules or any rule must match",
+                    "enum": [
+                      "all",
+                      "any"
+                    ],
+                    "default": "all",
                     "nullable": true
                   },
                   "section_order": {
@@ -113417,6 +114803,14 @@
             "description": "Allow search engines to include your public status page in search results",
             "nullable": true
           },
+          "allow_page_subscriptions": {
+            "type": "boolean",
+            "description": "Allow visitors to subscribe to all status page updates"
+          },
+          "allow_incident_subscriptions": {
+            "type": "boolean",
+            "description": "Allow visitors to subscribe to updates for a single incident or scheduled maintenance"
+          },
           "show_uptime": {
             "type": "boolean",
             "description": "Show uptime",
@@ -113479,12 +114873,12 @@
           },
           "saml_idp_sso_service_url": {
             "type": "string",
-            "description": "SAML IdP SSO service URL",
+            "description": "SAML IdP SSO service URL. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
             "nullable": true
           },
           "saml_idp_slo_service_url": {
             "type": "string",
-            "description": "SAML IdP SLO service URL",
+            "description": "SAML IdP SLO service URL. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
             "nullable": true
           },
           "saml_idp_cert": {
@@ -113499,13 +114893,73 @@
           },
           "saml_name_identifier_format": {
             "type": "string",
-            "description": "SAML name identifier format",
+            "description": "SAML name identifier format. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
             "enum": [
               "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
               "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
               "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
               "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
             ],
+            "nullable": true
+          },
+          "saml_idp_entity_id": {
+            "type": "string",
+            "description": "SAML IdP entity ID (issuer). Blank accepts any issuer. For pages on a shared SAML configuration, returns the configuration's value and rejects different values.",
+            "maxLength": 2048,
+            "nullable": true
+          },
+          "saml_configuration_id": {
+            "type": "string",
+            "description": "ID of the shared SAML configuration used by the page. Manage shared configurations with /v1/status-page-saml-configurations.",
+            "nullable": true
+          },
+          "saml_access_rules": {
+            "type": "array",
+            "description": "Rules that decide which signed-in SAML users can view the page. Values are compared case-sensitively.",
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "properties": {
+                "claim": {
+                  "type": "string",
+                  "description": "SAML attribute name. Required for is_any_of.",
+                  "maxLength": 255,
+                  "nullable": true
+                },
+                "operator": {
+                  "type": "string",
+                  "enum": [
+                    "is_any_of",
+                    "email_domain_is_any_of"
+                  ],
+                  "description": "is_any_of matches attribute values; email_domain_is_any_of matches the domain of the email NameID, not email attributes"
+                },
+                "values": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 255
+                  },
+                  "minItems": 1,
+                  "maxItems": 500,
+                  "description": "Accepted values"
+                }
+              },
+              "required": [
+                "operator",
+                "values"
+              ]
+            },
+            "nullable": true
+          },
+          "saml_access_rules_match": {
+            "type": "string",
+            "description": "Whether all rules or any rule must match",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "default": "all",
             "nullable": true
           },
           "section_order": {
@@ -113755,7 +115209,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the team shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the team shown on status pages instead of its name",
                     "nullable": true
                   },
                   "notify_emails": {
@@ -114063,7 +115517,7 @@
                   },
                   "public_name": {
                     "type": "string",
-                    "description": "The public name of the team shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+                    "description": "The public name of the team shown on status pages instead of its name",
                     "nullable": true
                   },
                   "notify_emails": {
@@ -114358,7 +115812,7 @@
           },
           "public_name": {
             "type": "string",
-            "description": "The public name of the team shown on status pages instead of its name. Only used and returned when `status-page-v3-phase-1` is enabled",
+            "description": "The public name of the team shown on status pages instead of its name",
             "nullable": true
           },
           "notify_emails": {
@@ -114745,7 +116199,6 @@
                 },
                 "public_name": {
                   "type": "string",
-                  "description": "Only used when `status-page-v3-phase-1` is enabled",
                   "nullable": true
                 },
                 "schedule_override_policy": {
@@ -116635,6 +118088,7 @@
                         "incident.in_triage",
                         "incident.mitigated",
                         "incident.resolved",
+                        "incident.closed",
                         "incident.cancelled",
                         "incident.deleted",
                         "incident.scheduled.created",
@@ -116756,6 +118210,7 @@
                         "incident.in_triage",
                         "incident.mitigated",
                         "incident.resolved",
+                        "incident.closed",
                         "incident.cancelled",
                         "incident.deleted",
                         "incident.scheduled.created",
@@ -116856,6 +118311,7 @@
                 "incident.in_triage",
                 "incident.mitigated",
                 "incident.resolved",
+                "incident.closed",
                 "incident.cancelled",
                 "incident.deleted",
                 "incident.scheduled.created",
