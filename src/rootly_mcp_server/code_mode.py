@@ -423,6 +423,22 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
             )
         return _undefined_name_message(missing, tools)
 
+    if "gather() does not yet support keyword arguments" in message:
+        return (
+            f"{message}. Call asyncio.gather(*calls) with no keyword arguments; "
+            "return_exceptions is not available. To keep going past a failed call, "
+            "wrap each one: `async def safe(name, params):` with try/except around "
+            "`await call_tool(name, params)`, then gather the safe(...) calls."
+        )
+
+    if "suspension limit" in message:
+        return (
+            f"{message}. The script awaited too many times in one execute call. Await "
+            "less: use list tools with filters and a larger page_size instead of one "
+            "call per item, drop polling loops and asyncio.sleep, or split the work "
+            "across several execute calls."
+        )
+
     if "async context managers" in message or "async with" in message:
         return (
             f"{message}. Code Mode has no `async with` (and no clients or sessions to "
