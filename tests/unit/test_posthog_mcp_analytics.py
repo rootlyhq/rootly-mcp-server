@@ -25,6 +25,7 @@ from rootly_mcp_server.posthog_analytics import (
     build_posthog_client,
     maybe_enable_posthog_mcp_analytics,
     posthog_session_middleware,
+    prepare_posthog_mcp_event,
 )
 from rootly_mcp_server.server import (
     ArgumentNormalizationMiddleware,
@@ -33,7 +34,6 @@ from rootly_mcp_server.server import (
     LegacyContextArgumentMiddleware,
     ToolUsageLoggingMiddleware,
 )
-from rootly_mcp_server.telemetry_scrubber import scrub_posthog_mcp_event
 
 # Fake credentials, split so secret scanners do not flag the fixtures.
 # The bearer value is one the SDK's own sanitizer lets through, so only our
@@ -77,7 +77,7 @@ def test_maybe_enable_posthog_mcp_analytics_disables_schema_injection():
     assert options.enable_conversation_id is False
     assert options.capture_model is False
     assert options.report_missing is False
-    assert options.before_send is scrub_posthog_mcp_event
+    assert options.before_send is prepare_posthog_mcp_event
 
 
 def test_maybe_enable_posthog_mcp_analytics_swallows_instrument_errors():
@@ -301,7 +301,8 @@ async def test_callable_middleware_is_adapted_and_keeps_running():
 
     tools, events = await list_tools_and_capture(server)
 
-    adapted = server.middleware[position]
+    # ToolExceptionCaptureMiddleware goes first; everything else keeps its order.
+    adapted = server.middleware[position + 1]
     assert isinstance(adapted, CallableMiddlewareAdapter)
     assert adapted.inner is duck
     assert tools == ["ping"]
