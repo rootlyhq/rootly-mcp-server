@@ -85,6 +85,19 @@ _MAX_TOOL_SUGGESTIONS = 3
 _UNDEFINED_NAME = re.compile(r"name '([^']+)' is not defined")
 _CALL_TOOL_FAILURE = re.compile(r"call_tool\('[^']*'\) failed: ")
 _INTROSPECTION_BUILTINS = frozenset({"dir", "globals", "locals", "vars"})
+# Names scripts reach for that the sandbox does not define, and what to write.
+_CLIENT_HINT = (
+    "There is no client or session object in Code Mode: call tools directly with "
+    "`await call_tool(name, params)`."
+)
+_SANDBOX_NAME_HINTS = {
+    "sleep": "Use `import asyncio` and `await asyncio.sleep(seconds)`.",
+    "sort": "Use `sorted(items, key=...)`, or `items.sort(key=...)` on a list.",
+    "client": _CLIENT_HINT,
+    "session": _CLIENT_HINT,
+    "rootly": _CLIENT_HINT,
+    "mcp": _CLIENT_HINT,
+}
 # JSON / JavaScript literals scripts write in place of Python's.
 _FOREIGN_LITERALS = {"true": "True", "false": "False", "null": "None", "undefined": "None"}
 _DISPLAY_LINE_NUMBER = re.compile(r'^\s*File "[^"]*", line (\d+)')
@@ -416,12 +429,21 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
                 "available in the Code Mode sandbox. Use tool_search / get_schema to "
                 "discover tools and their parameters, and `return` a value to inspect it."
             )
+        if missing in _SANDBOX_NAME_HINTS:
+            return f"{message}. {_SANDBOX_NAME_HINTS[missing]}"
         if missing == "datetime":
             return (
                 f"{message}. Add `import datetime` first; the current UTC time is "
                 "datetime.datetime.now(datetime.timezone.utc)."
             )
         return _undefined_name_message(missing, tools)
+
+    if "worker exceeded its memory limit" in message:
+        return (
+            f"{message}. Keep less in memory: request smaller pages (page_size), keep "
+            "only the fields you need from each result, and return a summary instead "
+            "of whole API responses. Split large jobs across several execute calls."
+        )
 
     if "gather() does not yet support keyword arguments" in message:
         return (
@@ -444,6 +466,20 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
             f"{message}. Code Mode has no `async with` (and no clients or sessions to "
             "open): call tools directly with `result = await call_tool(name, params)` "
             "and `return` the value."
+        )
+
+    unsupported = re.search(r"does not yet support (?:the )?(.+?)(?: statement)?$", message)
+    if unsupported:
+        feature = unsupported.group(1)
+        example = (
+            " For `del`, build a new dict or list without the item, e.g. "
+            "`d = {k: v for k, v in d.items() if k != 'key'}`."
+            if "del" in feature
+            else ""
+        )
+        return (
+            f"{message}. Code Mode runs a subset of Python; rewrite this without "
+            f"{feature}.{example}"
         )
 
     if "'coroutine' object" in message:

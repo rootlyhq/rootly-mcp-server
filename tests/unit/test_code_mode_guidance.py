@@ -531,6 +531,42 @@ async def test_list_tools_with_detail_still_works(client: Client):
     assert not result.is_error
 
 
+async def test_del_statement_is_explained(client: Client):
+    # ROOTLY-MCP-8F
+    code = "d = {'a': 1, 'b': 2}\ndel d['a']\nreturn d"
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert "does not yet support" in text
+    assert "Code Mode runs a subset of Python" in text
+
+
+@pytest.mark.parametrize(
+    ("name", "hint"),
+    [
+        ("sleep", "await asyncio.sleep(seconds)"),  # ROOTLY-MCP-32A
+        ("client", "There is no client or session object"),  # ROOTLY-MCP-32E
+        ("sort", "sorted(items, key=...)"),  # ROOTLY-MCP-32G
+    ],
+)
+async def test_sandbox_names_are_explained(client: Client, name: str, hint: str):
+    is_error, text = await _execute(client, {"code": f"return {name}"})
+
+    assert is_error
+    assert f"name '{name}' is not defined" in text
+    assert hint in text
+
+
+def test_memory_limit_is_explained():
+    # ROOTLY-MCP-2RJ
+    message = "MemoryError: the worker exceeded its memory limit and was terminated"
+    hint = _format_execute_exception(Exception(message))
+
+    assert hint is not None
+    assert hint.startswith(message)
+    assert "smaller pages" in hint
+
+
 def test_format_execute_exception_leaves_call_tool_failures_alone():
     message = (
         "Exception: call_tool('list_incidents') failed: start_time: Unexpected keyword "
