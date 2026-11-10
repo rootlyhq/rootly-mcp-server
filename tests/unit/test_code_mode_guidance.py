@@ -515,6 +515,22 @@ def test_suspension_limit_is_explained():
     assert "split the work across several execute calls" in hint
 
 
+async def test_list_tools_filter_points_to_tool_search(client: Client):
+    # ROOTLY-MCP-F1
+    result = await client.call_tool("list_tools", {"tag": "workflow"}, raise_on_error=False)
+
+    assert result.is_error
+    text = " ".join(getattr(block, "text", "") for block in result.content)
+    assert "list_tools takes only `detail`, not 'tag'" in text
+    assert "tool_search(query='workflow')" in text
+
+
+async def test_list_tools_with_detail_still_works(client: Client):
+    result = await client.call_tool("list_tools", {"detail": "brief"}, raise_on_error=False)
+
+    assert not result.is_error
+
+
 def test_format_execute_exception_leaves_call_tool_failures_alone():
     message = (
         "Exception: call_tool('list_incidents') failed: start_time: Unexpected keyword "

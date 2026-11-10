@@ -14,6 +14,7 @@ from rootly_mcp_server.code_mode import (
     EXECUTE_DESCRIPTION,
     ExecuteCallShapeMiddleware,
     GetSchemaArgumentShapeMiddleware,
+    ListToolsArgumentMiddleware,
     RootlyCodeMode,
     _format_execute_exception,
     build_code_mode_transform,
@@ -108,6 +109,7 @@ def test_create_rootly_codemode_server_adds_code_mode_transform():
         ToolSelectionMiddleware,
         ExecuteCallShapeMiddleware,
         GetSchemaArgumentShapeMiddleware,
+        ListToolsArgumentMiddleware,
     ]
     mock_create.assert_called_once_with(
         swagger_path="swagger.json",
