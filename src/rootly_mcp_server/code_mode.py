@@ -817,6 +817,48 @@ class GetSchemaArgumentShapeMiddleware(fastmcp_middleware.Middleware):
         return await call_next(context)
 
 
+_LIST_TOOLS_TOOL_NAME = "list_tools"
+_LIST_TOOLS_PARAMETERS = frozenset({"detail"})
+
+
+class ListToolsArgumentMiddleware(fastmcp_middleware.Middleware):
+    """Answers ``list_tools(tag="workflow")`` with how to filter instead.
+
+    fastmcp's list_tools takes only ``detail``. Models pass a filter (``tag``
+    most often, ROOTLY-MCP-F1) and pydantic answers "Unexpected keyword
+    argument", which does not say that tool_search is the filter. Registered
+    only on the Code Mode server.
+    """
+
+    def __init__(self, tool_name: str = _LIST_TOOLS_TOOL_NAME) -> None:
+        self._tool_name = tool_name
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        arguments = context.message.arguments or {}
+        if context.message.name == self._tool_name:
+            extra = sorted(key for key in arguments if key not in _LIST_TOOLS_PARAMETERS)
+            if extra:
+                terms = [
+                    value
+                    for key in extra
+                    for value in (
+                        arguments[key] if isinstance(arguments[key], list) else [arguments[key]]
+                    )
+                    if isinstance(value, str) and value.strip()
+                ]
+                query = " ".join(terms) or "incidents"
+                raise GuidedToolError(
+                    f"list_tools takes only `detail`, not {', '.join(repr(k) for k in extra)}. "
+                    f"To find tools on a topic, call tool_search(query={query!r}); "
+                    "list_tools() with no filter lists every tool."
+                )
+        return await call_next(context)
+
+
 def build_code_mode_transform(max_tool_calls: int | None = None) -> CodeMode:
     """Build the shared Code Mode transform used by hosted deployments.
 
@@ -875,4 +917,5 @@ def create_rootly_codemode_server(
     )
     mcp.add_middleware(ExecuteCallShapeMiddleware(transform.execute_tool_name))
     mcp.add_middleware(GetSchemaArgumentShapeMiddleware())
+    mcp.add_middleware(ListToolsArgumentMiddleware())
     return mcp
