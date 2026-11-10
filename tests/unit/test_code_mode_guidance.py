@@ -490,6 +490,31 @@ async def test_async_with_is_explained(client: Client):
     assert "await call_tool(name, params)" in text
 
 
+async def test_gather_keyword_arguments_are_explained(client: Client):
+    # ROOTLY-MCP-2J8
+    code = (
+        "import asyncio\n"
+        "async def f(i):\n"
+        "    return i\n"
+        "return await asyncio.gather(f(1), f(2), return_exceptions=True)"
+    )
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert "gather() does not yet support keyword arguments" in text
+    assert "return_exceptions is not available" in text
+
+
+def test_suspension_limit_is_explained():
+    # ROOTLY-MCP-2NC
+    message = "RuntimeError: suspension limit 1000 exceeded"
+    hint = _format_execute_exception(Exception(message))
+
+    assert hint is not None
+    assert hint.startswith(message)
+    assert "split the work across several execute calls" in hint
+
+
 def test_format_execute_exception_leaves_call_tool_failures_alone():
     message = (
         "Exception: call_tool('list_incidents') failed: start_time: Unexpected keyword "
