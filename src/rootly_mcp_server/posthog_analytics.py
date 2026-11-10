@@ -7,11 +7,14 @@ It runs alongside AgentCat when both are configured.
 import functools
 import logging
 import os
+import re
+from contextvars import ContextVar
 from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware as MCPMiddleware
 from posthog import Posthog
+from posthog.exception_utils import exceptions_from_error_tuple
 from posthog.mcp import (
     MCPAnalyticsOptions,
     PostHogMcpStatelessSessionMiddleware,
@@ -20,7 +23,9 @@ from posthog.mcp import (
 )
 from starlette.middleware import Middleware as ASGIMiddleware
 
-from .telemetry_scrubber import scrub_posthog_mcp_event
+from . import __version__
+from .exceptions import is_guided_exception
+from .telemetry_scrubber import redact_agentcat_telemetry_text, scrub_posthog_mcp_event
 from .transport import get_hosted_authenticated_user
 
 
@@ -77,6 +82,154 @@ def adapt_callable_middleware(server: FastMCP) -> None:
     ]
 
 
+_logger = logging.getLogger(__name__)
+
+# The exception the current tool call raised, as our middleware saw it. FastMCP
+# turns a tool's exception into an `isError` result before posthog.mcp records
+# the call, so the SDK only gets the text: `$mcp_error_type` is always "Error"
+# and `$exception_list` has no frames. The event is built in the same request
+# (its capture task copies this context), so `before_send` can read it back.
+_tool_exception: ContextVar[BaseException | None] = ContextVar(
+    "rootly_posthog_tool_exception", default=None
+)
+
+# Rootly API answers about the caller's request, not server faults; the same
+# set telemetry_scrubber keeps out of Sentry.
+_EXPECTED_UPSTREAM_STATUSES = frozenset({401, 403, 404, 409, 429})
+_HTTP_STATUS = re.compile(r"\bHTTP error (\d{3})\b")
+_FASTMCP_TOOL_WRAPPER = "Error calling tool"
+_MAX_FRAMES = 50
+_MAX_VALUE_LENGTH = 2048
+# posthog-python can attach frame locals; they would carry tool arguments.
+_FRAME_KEYS_DROPPED = ("code_variables", "vars")
+
+
+class ToolExceptionCaptureMiddleware(MCPMiddleware):
+    """Remembers the exception a tool call raised, for `enrich_posthog_mcp_event`.
+
+    Registered first, so it wraps every other middleware and sees what they
+    raise too (guided errors included). It never changes the outcome.
+    """
+
+    async def on_call_tool(self, context: Any, call_next: Any) -> Any:
+        _tool_exception.set(None)
+        try:
+            return await call_next(context)
+        except Exception as exc:
+            _tool_exception.set(exc)
+            raise
+
+
+def _chain(exc: BaseException) -> list[BaseException]:
+    seen: set[int] = set()
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _primary_exception(exc: BaseException) -> BaseException:
+    """Step past fastmcp's "Error calling tool 'x': ..." wrapper to its cause."""
+    if (
+        type(exc).__module__.startswith("fastmcp.")
+        and str(exc).startswith(_FASTMCP_TOOL_WRAPPER)
+        and exc.__cause__ is not None
+    ):
+        return exc.__cause__
+    return exc
+
+
+def _http_status(exc: BaseException) -> int | None:
+    for link in _chain(exc):
+        status = getattr(getattr(link, "response", None), "status_code", None)
+        if isinstance(status, int):
+            return status
+    match = _HTTP_STATUS.search(str(exc))
+    return int(match.group(1)) if match else None
+
+
+def _exception_list(exc: BaseException) -> list[dict[str, Any]]:
+    exceptions = exceptions_from_error_tuple((type(exc), exc, exc.__traceback__))
+    for entry in exceptions:
+        if isinstance(entry.get("value"), str):
+            # Scrub before cutting: a cut can drop the closing quote a quoted
+            # credential pattern needs, and the rest of the secret would pass.
+            entry["value"] = redact_agentcat_telemetry_text(entry["value"])[:_MAX_VALUE_LENGTH]
+        stacktrace = entry.get("stacktrace")
+        if not isinstance(stacktrace, dict):
+            continue
+        frames = stacktrace.get("frames")
+        if isinstance(frames, list):
+            stacktrace["frames"] = [
+                {key: value for key, value in frame.items() if key not in _FRAME_KEYS_DROPPED}
+                for frame in frames[-_MAX_FRAMES:]
+                if isinstance(frame, dict)
+            ]
+    return exceptions
+
+
+def enrich_posthog_mcp_event(event: Any) -> Any:
+    """Put the real exception back on a failed tool call's events.
+
+    On `$mcp_tool_call` and its `$exception` sibling: the exception class as
+    `$mcp_error_type`, the upstream HTTP status as `$mcp_error_status`, and
+    `mcp_error_expected` (with `mcp_error_expected_reason`) for failures that
+    are the server answering a mistake (a guided error) or the API answering
+    the caller (401/403/404/409/429). The `$exception` sibling gets the real
+    `$exception_list`, frames and cause chain included. Every event gets this
+    server's version in place of the framework's.
+    """
+    properties = event.get("properties") if isinstance(event, dict) else None
+    if not isinstance(properties, dict):
+        return event
+    properties["$mcp_server_version"] = __version__
+
+    name = event.get("event")
+    if name not in ("$mcp_tool_call", "$exception"):
+        return event
+    if name == "$mcp_tool_call" and not properties.get("$mcp_is_error"):
+        return event
+    exc = _tool_exception.get()
+    if exc is None:
+        return event
+
+    primary = _primary_exception(exc)
+    properties["$mcp_error_type"] = type(primary).__name__
+    status = _http_status(exc)
+    if status is not None:
+        properties["$mcp_error_status"] = str(status)
+    if is_guided_exception(exc):
+        properties["mcp_error_expected"] = True
+        properties["mcp_error_expected_reason"] = "guided"
+    elif status in _EXPECTED_UPSTREAM_STATUSES:
+        properties["mcp_error_expected"] = True
+        properties["mcp_error_expected_reason"] = "upstream_answer"
+    else:
+        properties["mcp_error_expected"] = False
+    if name == "$exception":
+        try:
+            properties["$exception_list"] = _exception_list(exc)
+        except Exception as error:  # noqa: BLE001 - keep the SDK's text-only list
+            _logger.debug(
+                "PostHog MCP analytics: kept the text-only exception list (%s)",
+                type(error).__name__,
+            )
+    return event
+
+
+def prepare_posthog_mcp_event(event: Any) -> Any:
+    """PostHog `before_send`: restore error detail, then scrub everything."""
+    return scrub_posthog_mcp_event(enrich_posthog_mcp_event(event))
+
+
+def server_build_from_env() -> str | None:
+    """The deployed commit, baked into the image as ROOTLY_MCP_BUILD."""
+    return os.getenv("ROOTLY_MCP_BUILD", "").strip() or None
+
+
 def maybe_enable_posthog_mcp_analytics(
     server: FastMCP, posthog_client: Posthog | None, logger: logging.Logger
 ) -> None:
@@ -85,6 +238,7 @@ def maybe_enable_posthog_mcp_analytics(
         return
     try:
         adapt_callable_middleware(server)
+        server.middleware.insert(0, ToolExceptionCaptureMiddleware())
         options = MCPAnalyticsOptions(
             # Match the AgentCat configuration: no injected `context`,
             # `conversation_id`, `llm_model` or `get_more_tools`, so tool
@@ -94,7 +248,8 @@ def maybe_enable_posthog_mcp_analytics(
             capture_model=False,
             report_missing=False,
             identify=identify,
-            before_send=scrub_posthog_mcp_event,
+            before_send=prepare_posthog_mcp_event,
+            server_build=server_build_from_env(),
             logger=functools.partial(logger.debug, "PostHog MCP analytics: %s"),
         )
         instrument(server, posthog_client, options)

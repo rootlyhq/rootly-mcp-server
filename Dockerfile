@@ -98,6 +98,9 @@ ENV FASTMCP_PORT=8000
 ENV FASTMCP_STATELESS_HTTP=true
 ENV ROOTLY_TRANSPORT=both
 ENV ROOTLY_LOG_LEVEL=INFO
+# The commit this image was built from, recorded as PostHog's $mcp_server_build.
+ARG ROOTLY_MCP_BUILD=""
+ENV ROOTLY_MCP_BUILD=${ROOTLY_MCP_BUILD}
 
 # Switch to non-root user
 USER appuser

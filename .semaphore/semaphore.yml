@@ -51,13 +51,13 @@ blocks:
             - export BUILDKIT_PROGRESS=plain
             - |
               if [ "$SEMAPHORE_GIT_BRANCH" = "staging" ]; then
-                docker build --push \
+                docker build --push --build-arg ROOTLY_MCP_BUILD=${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:staging \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/rootly/mcp:staging .
               elif [ "$SEMAPHORE_GIT_BRANCH" = "main" ]; then
-                docker build --push \
+                docker build --push --build-arg ROOTLY_MCP_BUILD=${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:latest \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:production \
