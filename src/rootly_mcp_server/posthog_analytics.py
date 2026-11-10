@@ -25,7 +25,7 @@ from starlette.middleware import Middleware as ASGIMiddleware
 
 from . import __version__
 from .exceptions import is_guided_exception
-from .telemetry_scrubber import scrub_posthog_mcp_event
+from .telemetry_scrubber import redact_agentcat_telemetry_text, scrub_posthog_mcp_event
 from .transport import get_hosted_authenticated_user
 
 
@@ -81,6 +81,8 @@ def adapt_callable_middleware(server: FastMCP) -> None:
         for m in server.middleware
     ]
 
+
+_logger = logging.getLogger(__name__)
 
 # The exception the current tool call raised, as our middleware saw it. FastMCP
 # turns a tool's exception into an `isError` result before posthog.mcp records
@@ -153,7 +155,9 @@ def _exception_list(exc: BaseException) -> list[dict[str, Any]]:
     exceptions = exceptions_from_error_tuple((type(exc), exc, exc.__traceback__))
     for entry in exceptions:
         if isinstance(entry.get("value"), str):
-            entry["value"] = entry["value"][:_MAX_VALUE_LENGTH]
+            # Scrub before cutting: a cut can drop the closing quote a quoted
+            # credential pattern needs, and the rest of the secret would pass.
+            entry["value"] = redact_agentcat_telemetry_text(entry["value"])[:_MAX_VALUE_LENGTH]
         stacktrace = entry.get("stacktrace")
         if not isinstance(stacktrace, dict):
             continue
@@ -208,8 +212,11 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
     if name == "$exception":
         try:
             properties["$exception_list"] = _exception_list(exc)
-        except Exception:  # noqa: BLE001 - keep the SDK's text-only list
-            pass
+        except Exception as error:  # noqa: BLE001 - keep the SDK's text-only list
+            _logger.debug(
+                "PostHog MCP analytics: kept the text-only exception list (%s)",
+                type(error).__name__,
+            )
     return event
 
 

@@ -148,6 +148,21 @@ def test_capture_middleware_wraps_every_other_middleware():
     assert isinstance(server.middleware[0], ToolExceptionCaptureMiddleware)
 
 
+def test_a_quoted_credential_past_the_cut_is_scrubbed_first():
+    from rootly_mcp_server.posthog_analytics import _exception_list
+
+    secret = "two words " + "x" * 3000
+    try:
+        raise ValueError('upstream said {"password": "' + secret + '"}')
+    except ValueError as exc:
+        entries = _exception_list(exc)
+
+    (entry,) = entries
+    assert len(entry["value"]) <= 2048
+    assert "two words" not in entry["value"]
+    assert "xxxxxxxx" not in entry["value"]
+
+
 def test_server_build_comes_from_the_image():
     with patch.dict("os.environ", {"ROOTLY_MCP_BUILD": " abc123 "}, clear=True):
         assert server_build_from_env() == "abc123"
