@@ -10,7 +10,7 @@ import logging
 import os
 import time
 import traceback
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextvars import ContextVar
 from typing import Any
 
@@ -35,7 +35,11 @@ from .security import mask_sensitive_data, sanitize_error_message
 from .telemetry_scrubber import RETIRED_INJECTED_PARAMS
 from .tools.alerts import register_alert_tools
 from .tools.audits import register_audit_tools
-from .tools.incidents import register_incident_tools
+from .tools.incidents import (
+    INCIDENT_SEQUENTIAL_REF_RE,
+    _resolve_incident_reference_to_uuid,
+    register_incident_tools,
+)
 from .tools.investigations import register_investigation_tools
 from .tools.oncall import register_oncall_tools
 from .tools.resources import register_resource_handlers
@@ -859,6 +863,68 @@ class PathArgumentValidationMiddleware(fastmcp_middleware.Middleware):
         raise GuidedToolError(message)
 
 
+class IncidentReferenceMiddleware(fastmcp_middleware.Middleware):
+    """Resolves incident numbers to UUIDs on generated ``/v1/incidents/{...}`` tools.
+
+    Models pass the number people use for an incident ("5883", "INC-5883",
+    "#5883") where the nested endpoints need its UUID. The API answers 404, so
+    ``list_incident_events``, ``list_incident_action_items`` and friends failed
+    for roughly 470 calls a week. The curated incident tools already accept
+    these references; this gives the generated ones the same resolution
+    (``filter[sequential_id]``, one extra request). UUIDs and slugs pass
+    through unchanged. An unknown number is answered with a guided error; any
+    other lookup failure leaves the call as it was, for the API to answer.
+    """
+
+    def __init__(self, resolve: Callable[[str], Awaitable[str]]) -> None:
+        self._resolve = resolve
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        if context.fastmcp_context is None:
+            return await call_next(context)
+        tool_name = context.message.name
+        try:
+            tool = await context.fastmcp_context.fastmcp.get_tool(tool_name)
+        except Exception:
+            tool = None
+        route_info = _openapi_path_arguments(tool) if tool is not None else None
+        if route_info is None:
+            return await call_next(context)
+        _method, path, path_args = route_info
+        segments = path.split("/")
+        if len(segments) < 4 or segments[1:3] != ["v1", "incidents"]:
+            return await call_next(context)
+        name = segments[3].strip("{}")
+        args = context.message.arguments or {}
+        value = args.get(name)
+        if name not in path_args or isinstance(value, bool) or not isinstance(value, str | int):
+            return await call_next(context)
+        reference = str(value).strip()
+        if not INCIDENT_SEQUENTIAL_REF_RE.match(reference):
+            return await call_next(context)
+        try:
+            incident_id = await self._resolve(reference)
+        except LookupError as exc:
+            raise GuidedToolError(
+                f"{tool_name}: {exc}. Check the number, or pass the incident's UUID "
+                "(the `id` from list_incidents or get_incident)."
+            ) from None
+        except Exception as exc:
+            logger.debug(
+                "Incident reference %s left unresolved (%s)", reference, type(exc).__name__
+            )
+            return await call_next(context)
+        context.message.arguments = {**args, name: incident_id}
+        bucket = _tool_argument_rewrites.get()
+        if bucket is not None:
+            bucket.append(f"{name}:incident_number->uuid")
+        return await call_next(context)
+
+
 def _read_only_hint(tool: Any) -> bool | None:
     annotations = getattr(tool, "annotations", None)
     if annotations is None:
@@ -1623,6 +1689,13 @@ def create_rootly_mcp_server(
 
         # Use our custom client with proper error handling instead of bypassing it
         return await http_client.request(method, url, **kwargs)
+
+    # Innermost: after path-argument validation, so only a present reference
+    # is resolved, and on the final argument names.
+    async def _resolve_incident(reference: str) -> str:
+        return await _resolve_incident_reference_to_uuid(reference, make_authenticated_request)
+
+    mcp.add_middleware(IncidentReferenceMiddleware(_resolve_incident))
 
     register_incident_tools(
         mcp=mcp,
