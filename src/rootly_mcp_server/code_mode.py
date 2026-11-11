@@ -438,6 +438,26 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
             )
         return _undefined_name_message(missing, tools)
 
+    if "datetime" in message and "has no attribute 'fromisoformat'" in message:
+        return (
+            f"{message}. Code Mode's datetime has no fromisoformat(). Keep API "
+            "timestamps as ISO 8601 strings; compare them as strings only when they "
+            "use the same UTC format, or return them for conversion outside execute."
+        )
+
+    if "callable replacement is not yet supported in re.sub()" in message:
+        return (
+            f"{message}. Use a string replacement instead of a callable, e.g. "
+            "`re.sub(pattern, '[redacted]', value)`."
+        )
+
+    if any(f"'os.{name}' is not supported" in message for name in ("getenv", "environ")):
+        return (
+            f"{message}. Code Mode cannot read the host environment or local files. "
+            "Pass needed non-secret inputs in the script and use "
+            "`await call_tool(name, params)` for authenticated Rootly operations."
+        )
+
     if "worker exceeded its memory limit" in message:
         return (
             f"{message}. Keep less in memory: request smaller pages (page_size), keep "
