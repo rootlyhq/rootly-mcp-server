@@ -134,12 +134,29 @@ def _provider_tool_inventory(
     return curated_names, autogen_provider, autogen_names
 
 
+# POST operations that change or act on existing state rather than only adding
+# a record: an override deletes the overrides it overlaps, a workflow run
+# executes the workflow's tasks (messages, tickets, incident changes), an AI
+# automation run executes the automation's prompt with its allowed tools, and a
+# rotated webhook secret stops the old one working immediately.
+_DESTRUCTIVE_CREATE_OPERATIONS = frozenset(
+    {
+        "create_override_shift",
+        "create_workflow_run",
+        "run_ai_automation",
+        "rotate_ai_automation_webhook_secret",
+    }
+)
+
+
 def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, Any]) -> None:
     """Apply ToolAnnotations to autogen OpenAPI tools based on their HTTP method.
 
-    GET operations are marked read-only; POST/PUT/PATCH are non-destructive writes;
-    DELETE operations are marked destructive. All autogen tools interact with
-    external APIs so open_world_hint is True.
+    GET operations are marked read-only. PUT/PATCH overwrite stored values the
+    caller may not be able to restore, so they are destructive, as is DELETE.
+    POST creates, so it is not -- except the operations in
+    `_DESTRUCTIVE_CREATE_OPERATIONS`, which replace or act on existing state.
+    All autogen tools interact with external APIs so open_world_hint is True.
     """
     _, autogen_provider, autogen_names = _provider_tool_inventory(mcp)
     if autogen_provider is None:
@@ -179,14 +196,14 @@ def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, An
         elif method in {"put", "patch"}:
             tool.annotations = mt.ToolAnnotations(
                 read_only_hint=False,
-                destructive_hint=False,
+                destructive_hint=True,
                 idempotent_hint=True,
                 open_world_hint=True,
             )
         else:
             tool.annotations = mt.ToolAnnotations(
                 read_only_hint=False,
-                destructive_hint=False,
+                destructive_hint=tool_name in _DESTRUCTIVE_CREATE_OPERATIONS,
                 idempotent_hint=False,
                 open_world_hint=True,
             )
