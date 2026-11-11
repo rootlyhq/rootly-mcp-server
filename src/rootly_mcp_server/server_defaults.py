@@ -58,6 +58,8 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "create_incident_action_item",
         "create_override_shift",
         "create_schedule",
+        "create_shift_coverage_request",
+        "delete_shift_coverage_request",
         "create_workflow",
         "create_workflow_task",
         "find_related_incidents",
@@ -573,6 +575,7 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/on_call_shadows/{on_call_shadow_id}",
     "/on_call_roles",
     "/on_call_roles/{on_call_role_id}",
+    "/schedules/{schedule_id}/shift_coverage_requests",
     # Escalation policies - create + update
     "/escalation_policies",
     "/escalation_policies/{escalation_policy_id}",
@@ -681,9 +684,13 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/ai/skills/{id}",
 ]
 
-# DELETE operations are only exposed for these high-priority screenshot families.
-# All other DELETE operations remain disabled in MCP by default.
+# Coverage cancellation is part of the ordinary on-call write workflow.
+# Other destructive DELETE endpoints still require an explicit allowlist.
+DEFAULT_WRITE_GATED_DELETE_PATHS = ["/shift_coverage_requests/{id}"]
+
+# DELETE endpoints an operator can explicitly allow.
 DEFAULT_DELETE_ALLOWED_PATHS = [
+    *DEFAULT_WRITE_GATED_DELETE_PATHS,
     "/schedules/{schedule_id}",
     "/schedule_rotations/{schedule_rotation_id}",
     "/escalation_policies/{escalation_policy_id}",

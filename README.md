@@ -647,6 +647,16 @@ The default tool surface depends on deployment profile:
 
 ### OpenAPI-Generated Tools
 
+Shift coverage requests support `list_shift_coverage_requests`,
+`get_shift_coverage_request`, `create_shift_coverage_request`, and
+`delete_shift_coverage_request` in the default and hosted slim (`core`) profiles.
+Creation broadcasts to schedule members who can volunteer, or targets the supplied
+`recipient_user_ids` when that feature is enabled. Pass `schedule_id` and a JSON:API
+`data` object with type `shift_coverage_requests` and attributes `starts_at`,
+`ends_at`, and optionally `user_id` and `recipient_user_ids`. The response is a
+list because one window can cover several shifts. Both write tools are disabled
+when writes are off or the connection is read-only.
+
 > **Tool naming:** all tools use `snake_case`. The historical `camelCase` names
 > (e.g. `getScheduleShifts`, `listIncidents`) are no longer advertised in
 > `tools/list`, but remain callable as hidden aliases — they are transparently
