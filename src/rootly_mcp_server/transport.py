@@ -157,6 +157,11 @@ def _extract_rootly_user_identity(payload: Any) -> dict[str, str] | None:
     if isinstance(name, str) and name:
         user["name"] = name
 
+    organization = attrs.get("organization")
+    organization_id = organization.get("id") if isinstance(organization, dict) else None
+    if isinstance(organization_id, int | str) and str(organization_id):
+        user["organization_id"] = str(organization_id)
+
     return user
 
 

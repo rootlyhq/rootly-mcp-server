@@ -271,6 +271,19 @@ class TestTransportModule:
             "name": "Example User",
         }
 
+    def test_extract_rootly_user_identity_keeps_the_organization_id(self):
+        payload = {
+            "data": {
+                "id": "user_123",
+                "attributes": {"organization": {"id": 2837, "name": "Acme Reliability"}},
+            }
+        }
+
+        assert transport._extract_rootly_user_identity(payload) == {
+            "id": "user_123",
+            "organization_id": "2837",
+        }
+
     def test_extract_rootly_user_identity_returns_none_without_id(self):
         payload = {"data": {"attributes": {"email": "example.user@example.test"}}}
 
