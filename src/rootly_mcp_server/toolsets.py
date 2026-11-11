@@ -43,7 +43,11 @@ TOOLSETS: dict[str, str] = {
     "status_pages": "Status pages, templates and pulses.",
     "config": "Severities, causes, incident types, forms, retrospective processes, dashboards.",
     "users": "Users, notification rules, contact methods.",
-    "ai": "AI SRE investigations, AI automations and skills.",
+    "ai": "AI SRE investigations and AI skills.",
+    "automations": (
+        "AI automations and workflow task setup: saved instructions Rootly runs "
+        "later, on a trigger or schedule."
+    ),
     "observability": "Rootly Observability logs and patterns.",
     "audit": "Audit log.",
 }
@@ -171,7 +175,7 @@ TAG_TOOLSETS: dict[str, str] = {
     "UserEmailAddresses": "users",
     "UserPhoneNumbers": "users",
     # ai
-    "AIAutomations": "ai",
+    "AIAutomations": "automations",
     "AISkills": "ai",
     "Investigations": "ai",
     # observability
@@ -180,8 +184,13 @@ TAG_TOOLSETS: dict[str, str] = {
     "Audits": "audit",
 }
 
-# Curated (hand-written) tools -> toolset.
+# Tool name -> toolset, checked before the OpenAPI tag: curated (hand-written)
+# tools, and generated tools that belong somewhere other than their tag.
 CURATED_TOOLSETS: dict[str, str] = {
+    # Creating or changing a workflow task stores an action Rootly runs on
+    # every later workflow run; listing, reading and deleting stay in workflows.
+    "create_workflow_task": "automations",
+    "update_workflow_task": "automations",
     "list_endpoints": "config",
     "get_server_version": "config",
     "search_incidents": "incidents",
@@ -206,7 +215,7 @@ CURATED_TOOLSETS: dict[str, str] = {
     "check_responder_availability": "oncall",
     "create_override_recommendation": "oncall",
     "check_oncall_health_risk": "oncall",
-    "get_workflow_task_params_schema": "workflows",
+    "get_workflow_task_params_schema": "automations",
     "list_investigations": "ai",
     "get_investigation": "ai",
     "get_investigation_progress": "ai",

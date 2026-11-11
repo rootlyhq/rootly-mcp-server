@@ -32,12 +32,13 @@ Every client loads the whole tool list into the model's context: the full surfac
 | `incidents` | Action items, events, roles, retrospectives, form field selections, meeting recordings |
 | `alerts` | Alerts, alert sources, routes and routing rules, urgencies, heartbeats, live call routers |
 | `oncall` | Schedules, rotations, shifts, overrides, escalation policies and paths |
-| `workflows` | Workflows, workflow tasks and runs, playbooks |
+| `workflows` | Workflows, workflow runs, playbooks; reading and deleting workflow tasks |
 | `catalog` | Services, functionalities, teams, environments, catalogs |
 | `status_pages` | Status pages, templates, pulses |
 | `config` | Severities, causes, incident types, forms, retrospective processes, dashboards |
 | `users` | Users, notification rules, contact methods |
-| `ai` | AI SRE investigations, AI automations and skills |
+| `ai` | AI SRE investigations, AI skills |
+| `automations` | AI automations, and creating or changing workflow tasks: saved instructions Rootly runs later |
 | `observability` | Rootly Observability logs and patterns |
 | `audit` | Audit log |
 

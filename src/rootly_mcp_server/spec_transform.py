@@ -341,6 +341,19 @@ _OPERATION_DESCRIPTIONS: dict[str, str] = {
         "Get one saved version of an AI skill, including the `body` it had at "
         "that version. Read-only. " + _AI_SKILL
     ),
+    "update_incident_sub_status": (
+        "Correct one entry in an incident's sub-status history: which sub-status "
+        "it records (`sub_status_id`), when it was assigned (`assigned_at`) or by "
+        "whom (`assigned_by_user_id`). The `id` is the history entry's id, not "
+        "the incident's. This edits the record only; it does not move the "
+        "incident to another sub-status."
+    ),
+    "create_incident_action_item": (
+        "Add a follow-up action item to an incident: a `summary`, optional "
+        "`description`, `kind`, `priority`, `status`, `due_date` and assignee "
+        "(`assigned_to_user_id` or `assigned_to_group_ids`). It can link an "
+        "existing Jira or Linear issue by URL or key; it does not create one."
+    ),
     "create_workflow_run": (
         "Run a Rootly workflow now. The workflow executes its configured tasks "
         "(for example posting Slack messages, creating tickets, or changing the "

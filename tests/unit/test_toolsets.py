@@ -84,6 +84,46 @@ async def test_requested_toolsets_add_their_tools(token):
     assert "create_alert_route" not in names
 
 
+# Tools that store instructions Rootly runs later. They live in `automations`
+# so a connection can leave them out while keeping `ai` and `workflows`.
+_AUTOMATION_TOOLS = {
+    "list_ai_automations",
+    "get_ai_automation",
+    "create_ai_automation",
+    "update_ai_automation",
+    "run_ai_automation",
+    "create_workflow_task",
+    "update_workflow_task",
+    "get_workflow_task_params_schema",
+}
+
+
+async def test_every_toolset_but_automations_leaves_them_all_out(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    everything_else = frozenset(set(TOOLSETS) - {"automations"})
+
+    names = await _names(server, ToolSelection(everything_else))
+
+    assert not _AUTOMATION_TOOLS & names
+    # Their neighbours stay: investigations and skills, workflows and runs,
+    # and reading or deleting a workflow task.
+    assert {
+        "start_investigation",
+        "list_ai_skills",
+        "create_workflow_run",
+        "list_workflow_tasks",
+        "get_workflow_task",
+    } <= names
+
+
+async def test_the_automations_toolset_brings_them_back(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+
+    names = await _names(server, ToolSelection(frozenset({"automations"})))
+
+    assert _AUTOMATION_TOOLS <= names
+
+
 async def test_readonly_drops_every_write(token):
     server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
 
