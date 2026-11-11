@@ -778,7 +778,9 @@ update_workflow_task
 
 **Major Expansion**: This version includes 50+ new endpoints covering communications, dashboards, playbooks, post-incident reviews, monitoring, and advanced form management - while carefully excluding security-sensitive operations like API key management, user creation/deletion, role management, and webhook configuration.
 
-Delete operations remain disabled in the default tool surface.
+`delete_shift_coverage_request` is enabled by default when writes are enabled.
+Other delete operations require an explicit delete allowlist. Disabling writes
+or using a read-only connection blocks all delete operations.
 
 ## On-Call Health Integration (Self-Hosted Only)
 
