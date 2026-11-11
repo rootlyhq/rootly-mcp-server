@@ -884,18 +884,6 @@ def upstream_client(**kwargs: Any) -> httpx2.AsyncClient:
     return client
 
 
-# (method, is_collection) on /v1/alert_routing_rules -> (legacy MCP tool, the
-# /v1/alert_routes tool to call instead). Named as MCP tools, not operationIds,
-# because the model can only act on a name it sees in its tool list.
-_ALERT_ROUTE_REPLACEMENTS: dict[tuple[str, bool], tuple[str, str]] = {
-    ("GET", True): ("list_alert_routing_rules", "list_alert_routes"),
-    ("GET", False): ("get_alert_routing_rule", "get_alert_route"),
-    ("POST", True): ("create_alert_routing_rule", "create_alert_route"),
-    ("PUT", False): ("update_alert_routing_rule", "update_alert_route"),
-    ("PATCH", False): ("update_alert_routing_rule", "update_alert_route"),
-}
-
-
 # A 429 is retried once, in place, when Rootly asks for a short wait. A burst
 # that trips the limiter usually clears within a second or two, and absorbing
 # it here keeps the model from seeing (and re-planning around) a transient
@@ -1282,7 +1270,6 @@ class AuthenticatedHTTPXClient:
         )
         response = self._maybe_annotate_404_response(method, url, response)
         response = self._maybe_annotate_user_lookup_404(method, url, response)
-        response = self._maybe_annotate_alert_routing_deprecation(method, url, response)
         response = self._maybe_annotate_offset_pagination_limit(method, url, response)
         response = self._maybe_annotate_unsortable_field(response)
 
@@ -1634,57 +1621,6 @@ class AuthenticatedHTTPXClient:
         return response
 
     @staticmethod
-    def _maybe_annotate_alert_routing_deprecation(
-        method: str, url: str, response: httpx2.Response
-    ) -> httpx2.Response:
-        """Translate the 403 from `/alert_routing_rules` into a model-actionable hint.
-
-        Tenants with the Advanced Alert Routing feature enabled get a 403 on the
-        legacy endpoint with a long-form message pointing to `/alert_routes`.
-        We surface a structured `_use_tool` field so the calling model can
-        switch tools without re-reading the prose.
-        """
-        if response.status_code != 403:
-            return response
-        path = AuthenticatedHTTPXClient._path_for_url(url)
-        # Match `/v1/alert_routing_rules` and `/v1/alert_routing_rules/{id}` only;
-        # a hypothetical `/v1/alert_routing_rules_v2` would slip through a plain
-        # startswith. Anchor on a `/` boundary instead.
-        if path != "/v1/alert_routing_rules" and not path.startswith("/v1/alert_routing_rules/"):
-            return response
-        try:
-            body = response.json()
-        except Exception:  # nosec B110 - best-effort annotation
-            return response
-        if not isinstance(body, dict):
-            return response
-        errors = body.get("errors")
-        first_title = ""
-        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
-            first_title = str(errors[0].get("title", ""))
-        if "advanced alert routing" not in first_title.lower():
-            return response
-        legacy_tool, replacement = _ALERT_ROUTE_REPLACEMENTS.get(
-            (method.upper(), path == "/v1/alert_routing_rules"),
-            ("an alert_routing_rule tool", "list_alert_routes"),
-        )
-        body.setdefault(
-            "_use_tool",
-            {
-                "instead_of": legacy_tool,
-                "use": replacement,
-                "reason": (
-                    "This team has Advanced Alert Routing enabled, so the legacy "
-                    "alert_routing_rule tools always fail here. Call "
-                    f"{replacement} instead; alert routes have their own schema, so "
-                    "check it with get_schema or list_alert_routes before writing."
-                ),
-            },
-        )
-        response._content = json.dumps(body).encode()  # noqa: SLF001
-        return response
-
-    @staticmethod
     def _is_alert_endpoint(url: str) -> bool:
         """Check if a URL is an alert endpoint (but not alert sub-resources like events)."""
         url_str = str(url)
@@ -1931,9 +1867,6 @@ class AuthenticatedHTTPXClient:
         # to a subscription tier, which is what these tools hit.
         response = self._maybe_annotate_404_response(request.method, str(request.url), response)
         response = self._maybe_annotate_user_lookup_404(request.method, str(request.url), response)
-        response = self._maybe_annotate_alert_routing_deprecation(
-            request.method, str(request.url), response
-        )
         response = self._maybe_annotate_offset_pagination_limit(
             request.method, str(request.url), response
         )

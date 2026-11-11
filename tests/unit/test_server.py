@@ -388,8 +388,8 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "get_functionality_uptime_chart" in tool_names
         assert "list_alert_groups" in tool_names
         assert "get_alert_group" in tool_names
-        assert "list_alert_routing_rules" in tool_names
-        assert "get_alert_routing_rule" in tool_names
+        assert "list_alert_routing_rules" not in tool_names
+        assert "get_alert_routing_rule" not in tool_names
         assert "list_alerts_sources" in tool_names
         assert "get_alerts_source" in tool_names
         assert "list_alert_urgencies" in tool_names
@@ -422,8 +422,8 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "create_alert_route" in tool_names
         assert "update_alert_route" in tool_names
         assert "patch_alert_route" in tool_names
-        assert "create_alert_routing_rule" in tool_names
-        assert "update_alert_routing_rule" in tool_names
+        assert "create_alert_routing_rule" not in tool_names
+        assert "update_alert_routing_rule" not in tool_names
         assert "create_alerts_source" in tool_names
         assert "update_alerts_source" in tool_names
         assert "create_alert_urgency" in tool_names
