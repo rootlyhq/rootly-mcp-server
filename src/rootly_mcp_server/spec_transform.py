@@ -352,7 +352,8 @@ _OPERATION_DESCRIPTIONS: dict[str, str] = {
         "Add a follow-up action item to an incident: a `summary`, optional "
         "`description`, `kind`, `priority`, `status`, `due_date` and assignee "
         "(`assigned_to_user_id` or `assigned_to_group_ids`). It can link an "
-        "existing Jira or Linear issue by URL or key; it does not create one."
+        "existing issue (Jira by `jira_issue_key` or `jira_issue_url`, Linear by "
+        "`linear_issue_url`); it does not create one."
     ),
     "create_workflow_run": (
         "Run a Rootly workflow now. The workflow executes its configured tasks "
