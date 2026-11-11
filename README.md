@@ -32,16 +32,19 @@ Every client loads the whole tool list into the model's context: the full surfac
 | `incidents` | Action items, events, roles, retrospectives, form field selections, meeting recordings |
 | `alerts` | Alerts, alert sources, routes and routing rules, urgencies, heartbeats, live call routers |
 | `oncall` | Schedules, rotations, shifts, overrides, escalation policies and paths |
-| `workflows` | Workflows, workflow tasks and runs, playbooks |
+| `workflows` | Workflows, workflow runs and playbooks; view a workflow's steps |
+| `workflow_tasks` | Add or edit the steps a workflow runs: post to Slack, page on-call, open a ticket, call a URL |
 | `catalog` | Services, functionalities, teams, environments, catalogs |
 | `status_pages` | Status pages, templates, pulses |
 | `config` | Severities, causes, incident types, forms, retrospective processes, dashboards |
 | `users` | Users, notification rules, contact methods |
-| `ai` | AI SRE investigations, AI automations and skills |
+| `ai` | AI SRE investigations and AI skills |
+| `automations` | AI automations: prompts Rootly AI runs on its own, on a schedule or trigger |
 | `observability` | Rootly Observability logs and patterns |
 | `audit` | Audit log |
 
 - **Pick toolsets:** `https://mcp.rootly.com/mcp?toolsets=core,workflows`, or send `X-MCP-Toolsets: core,workflows`
+- **Actions that run later are separate:** `workflow_tasks` and `automations` set up things Rootly does on its own afterwards (workflow steps, AI automations). Leave them out to let an assistant read and use workflows and AI investigations without being able to set those up
 - **Everything:** `?toolsets=all` (about 280 tools)
 - **Read-only:** add `readonly=true` (or `X-MCP-Readonly: true`), e.g. `?toolsets=all&readonly=true`. Any value other than `false`/`0`/`no`/`off` turns it on. Write tools are hidden and refused, and the server also refuses any non-GET request to the Rootly API on that connection. It is a per-connection guard; for a hard guarantee, connect with a Rootly API key whose role cannot write
 - **Deprecated: `?tool_profile=` and `X-Rootly-Tool-Profile`.** They still work (`full`/`all` mean `?toolsets=all`; `slim` keeps its fixed ~85-tool list) and will be removed; switch to `?toolsets=`. Each use is logged so remaining clients can be found

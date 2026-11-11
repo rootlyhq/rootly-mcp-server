@@ -1831,6 +1831,8 @@ class TestDirectoryReviewFindings:
         "create_workflow_run",
         "create_workflow_task",
         "update_workflow_task",
+        "update_incident_sub_status",
+        "create_incident_action_item",
     ]
 
     @pytest.fixture

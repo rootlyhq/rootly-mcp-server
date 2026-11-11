@@ -84,6 +84,70 @@ async def test_requested_toolsets_add_their_tools(token):
     assert "create_alert_route" not in names
 
 
+# AI automations live in `automations`, so a connection can leave them out
+# while keeping investigations and skills in `ai`.
+_AUTOMATION_TOOLS = {
+    "list_ai_automations",
+    "get_ai_automation",
+    "create_ai_automation",
+    "update_ai_automation",
+    "run_ai_automation",
+}
+
+
+async def test_every_toolset_but_automations_leaves_them_all_out(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    everything_else = frozenset(set(TOOLSETS) - {"automations"})
+
+    names = await _names(server, ToolSelection(everything_else))
+
+    assert not _AUTOMATION_TOOLS & names
+    # Their neighbours stay: investigations and skills.
+    assert {"start_investigation", "list_ai_skills"} <= names
+
+
+async def test_the_automations_toolset_brings_them_back(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+
+    names = await _names(server, ToolSelection(frozenset({"automations"})))
+
+    assert _AUTOMATION_TOOLS <= names
+
+
+_WORKFLOW_TASK_SETUP_TOOLS = {
+    "create_workflow_task",
+    "update_workflow_task",
+    "get_workflow_task_params_schema",
+}
+
+
+async def test_workflows_without_workflow_tasks_reads_tasks_but_cannot_set_them(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+
+    names = await _names(server, ToolSelection(frozenset({"workflows"})))
+
+    assert not _WORKFLOW_TASK_SETUP_TOOLS & names
+    assert {"list_workflows", "create_workflow_run", "list_workflow_tasks"} <= names
+
+
+async def test_the_workflow_tasks_toolset_brings_task_setup_back(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+
+    names = await _names(server, ToolSelection(frozenset({"workflows", "workflow_tasks"})))
+
+    assert _WORKFLOW_TASK_SETUP_TOOLS <= names
+
+
+async def test_the_directory_submission_url_hides_every_flagged_tool(token):
+    # The ChatGPT app is submitted with every toolset but these two.
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    submitted = frozenset(set(TOOLSETS) - {"automations", "workflow_tasks"})
+
+    names = await _names(server, ToolSelection(submitted))
+
+    assert not (_AUTOMATION_TOOLS | _WORKFLOW_TASK_SETUP_TOOLS) & names
+
+
 async def test_readonly_drops_every_write(token):
     server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
 
