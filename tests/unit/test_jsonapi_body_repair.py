@@ -353,6 +353,69 @@ async def test_update_with_attributes_still_goes_through(server, sent):
     assert json.loads(sent[-1].content)["data"]["attributes"] == {"name": "X"}
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"id": INCIDENT_ID, "status": "resolved"},
+        {
+            "id": INCIDENT_ID,
+            "status": "resolved",
+            "data": {"type": "alerts", "attributes": {"summary": "updated"}},
+        },
+    ],
+)
+async def test_update_alert_status_points_to_the_status_actions(server, sent, arguments):
+    result = await _call(server, "update_alert", arguments)
+
+    assert result.is_error
+    assert "does not accept 'status'" in _text(result)
+    assert "resolve_alert(id=...)" in _text(result)
+    assert "acknowledge_alert(id=...)" in _text(result)
+    assert sent == []
+
+
+async def test_update_alert_without_body_is_rejected_despite_optional_request_body(server, sent):
+    result = await _call(server, "update_alert", {"id": INCIDENT_ID})
+
+    assert result.is_error
+    assert "the request body goes in `data`" in _text(result)
+    assert sent == []
+
+
+async def test_flat_writable_alert_attribute_is_still_repaired(server, sent):
+    result = await _call(server, "update_alert", {"id": INCIDENT_ID, "summary": "updated"})
+
+    assert not result.is_error
+    request = next(req for req in sent if req.method == "PATCH")
+    assert json.loads(request.content) == {
+        "data": {"type": "alerts", "attributes": {"summary": "updated"}}
+    }
+
+
+@pytest.mark.parametrize("tool", ["resolve_alert", "acknowledge_alert"])
+async def test_alert_status_actions_can_still_post_without_a_body(server, sent, tool):
+    registered = await server.get_tool(tool)
+    assert registered.annotations is not None
+    assert registered.annotations.read_only_hint is False
+    assert registered.annotations.destructive_hint is True
+
+    result = await _call(server, tool, {"id": INCIDENT_ID})
+
+    assert not result.is_error
+    assert any(req.method == "POST" for req in sent)
+
+
+def test_alert_status_actions_are_not_exposed_when_writes_are_disabled(monkeypatch):
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "test-token")
+    readonly = create_rootly_mcp_server(
+        swagger_path=SWAGGER_PATH, hosted=False, enable_write_tools=False
+    )
+    _, _, tools = _provider_tool_inventory(readonly)
+
+    assert "resolve_alert" not in tools
+    assert "acknowledge_alert" not in tools
+
+
 async def test_task_settings_beside_task_params_move_into_it(server, sent):
     # ROOTLY-MCP-31S: "unknown attribute 'headers'".
     data = {

@@ -580,7 +580,8 @@ def repair_jsonapi_body(
     required in the schema, so a call without ``data`` went out empty and came
     back as "data: Expected hash" (ROOTLY-MCP-31K). ``method`` lets a PUT or
     PATCH with nothing to change be answered here instead of by Rootly's
-    "carries no attributes or relationships to update".
+    "carries no attributes or relationships to update", even when the spec
+    marks the body optional. Bodyless POST actions remain valid.
     """
     resource_type, attribute_properties = _jsonapi_data_schema(schema)
     if not attribute_properties:
@@ -605,7 +606,11 @@ def repair_jsonapi_body(
     if "data" not in result:
         result, rewrites = _collect_flat_body(result, schema, attribute_properties)
         if "data" not in result:
-            if not body_required and "data" not in ((schema or {}).get("required") or []):
+            if (
+                not body_required
+                and "data" not in ((schema or {}).get("required") or [])
+                and (method or "").upper() not in ("PUT", "PATCH")
+            ):
                 return result, rewrites
             example = json.dumps({"type": resource_type or "<type>", "attributes": {}})
             stray = sorted(key for key in result if key not in _properties(schema))

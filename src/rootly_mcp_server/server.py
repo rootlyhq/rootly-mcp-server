@@ -141,6 +141,8 @@ def _provider_tool_inventory(
 # rotated webhook secret stops the old one working immediately.
 _DESTRUCTIVE_CREATE_OPERATIONS = frozenset(
     {
+        "acknowledge_alert",
+        "resolve_alert",
         "create_override_shift",
         "create_workflow_run",
         "run_ai_automation",
@@ -1032,6 +1034,13 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
         route = getattr(tool, "_route", None)
         if route is None or str(getattr(route, "method", "GET")).upper() == "GET":
             return await call_next(context)
+
+        if context.message.name == "update_alert" and "status" in args:
+            raise GuidedToolError(
+                "update_alert does not accept 'status'. To change alert status, use "
+                "resolve_alert(id=...) or acknowledge_alert(id=...). "
+                "For other updates, put writable fields under data.attributes."
+            )
 
         try:
             repaired, rewrites = tool_arguments.repair_jsonapi_body(

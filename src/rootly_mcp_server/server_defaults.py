@@ -280,6 +280,8 @@ DEFAULT_ALLOWED_PATHS = [
     "/incidents/{incident_id}/alerts",
     "/alerts",
     "/alerts/{id}",
+    "/alerts/{id}/acknowledge",
+    "/alerts/{id}/resolve",
     "/severities",
     "/severities/{severity_id}",
     "/teams",
@@ -543,6 +545,8 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/teams/{team_id}",
     # Alert management - create + update
     "/alerts/{alert_id}/events",
+    "/alerts/{id}/acknowledge",
+    "/alerts/{id}/resolve",
     "/alert_groups",
     "/alert_groups/{id}",
     "/alert_routes",

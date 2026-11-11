@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ValidationError as MCPValidationError
 from fastmcp.server.middleware import Middleware as MCPMiddleware
 from posthog import Posthog
 from posthog.exception_utils import exceptions_from_error_tuple
@@ -205,9 +206,10 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
     On `$mcp_tool_call` and its `$exception` sibling: the exception class as
     `$mcp_error_type`, the upstream HTTP status as `$mcp_error_status`, and
     `mcp_error_expected` (with `mcp_error_expected_reason`) for failures that
-    are the server answering a mistake (a guided error) or the API answering
-    the caller (401/403/404/409/429). The `$exception` sibling gets the real
-    `$exception_list`, frames and cause chain included. Every event gets this
+    are the server answering a mistake (a guided error or invalid tool
+    arguments) or the API answering the caller (401/403/404/409/429). The
+    `$exception` sibling gets the real `$exception_list`, frames and cause
+    chain included. Every event gets this
     server's version in place of the framework's.
 
     The `$exception` sibling of an expected failure is dropped (None): it would
@@ -233,14 +235,27 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
         properties["$mcp_error_type"] = type(_primary_exception(exc)).__name__
         status = _http_status(exc)
         guided = is_guided_exception(exc)
+        validation = isinstance(_primary_exception(exc), MCPValidationError)
     else:
         status = _status_from_messages(_event_messages(properties))
         guided = bool(_event_types(properties) & GUIDED_ERROR_TYPE_NAMES)
+        # A bare "ValidationError" could be a Pydantic failure inside a tool.
+        # FastMCP uses its own class only for invalid caller arguments.
+        exception_list = properties.get("$exception_list")
+        validation = isinstance(exception_list, list) and any(
+            isinstance(entry, dict)
+            and entry.get("type") == "ValidationError"
+            and entry.get("module") == "fastmcp.exceptions"
+            for entry in exception_list
+        )
     if status is not None:
         properties["$mcp_error_status"] = str(status)
     if guided:
         properties["mcp_error_expected"] = True
         properties["mcp_error_expected_reason"] = "guided"
+    elif validation:
+        properties["mcp_error_expected"] = True
+        properties["mcp_error_expected_reason"] = "invalid_arguments"
     elif status in _EXPECTED_UPSTREAM_STATUSES:
         properties["mcp_error_expected"] = True
         properties["mcp_error_expected_reason"] = "upstream_answer"
