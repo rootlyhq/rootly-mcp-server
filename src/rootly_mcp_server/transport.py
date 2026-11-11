@@ -1281,6 +1281,7 @@ class AuthenticatedHTTPXClient:
             method, url, response
         )
         response = self._maybe_annotate_404_response(method, url, response)
+        response = self._maybe_annotate_user_lookup_404(method, url, response)
         response = self._maybe_annotate_alert_routing_deprecation(method, url, response)
         response = self._maybe_annotate_offset_pagination_limit(method, url, response)
         response = self._maybe_annotate_unsortable_field(response)
@@ -1467,6 +1468,41 @@ class AuthenticatedHTTPXClient:
             response._content = json.dumps(body).encode()  # noqa: SLF001
         except Exception:  # nosec B110 - Safe fallback; annotation is best-effort
             pass
+        return response
+
+    _USER_LOOKUP_PATH = re.compile(r"^/v\d+/users/(?!me$)[^/]+$")
+
+    @staticmethod
+    def _maybe_annotate_user_lookup_404(
+        method: str, url: str, response: httpx2.Response
+    ) -> httpx2.Response:
+        """Say where user ids come from when ``GET /v1/users/{id}`` is a 404.
+
+        get_user was the most-retried 404 in MCP telemetry: agents loop on an id
+        that is not a user this token can see, often a guess, an email, or the
+        id of another record (a schedule member, an on-call shift). The upstream
+        body says only "Not found or unauthorized". The hint names the two ways
+        to get a real id.
+        """
+        if response.status_code != 404 or method.upper() != "GET":
+            return response
+        path = AuthenticatedHTTPXClient._path_for_url(url)
+        if not AuthenticatedHTTPXClient._USER_LOOKUP_PATH.match(path):
+            return response
+        try:
+            body = response.json()
+        except Exception:  # nosec B110 - best-effort annotation
+            return response
+        hint = (
+            "No user with this id is visible to this token. Do not retry the same id. "
+            "For the caller, use get_current_user. To find someone, use list_users with "
+            "filter_email or filter_search and pass the `id` it returns."
+        )
+        if isinstance(body, dict):
+            body.setdefault("_lookup_hint", hint)
+        else:
+            body = {"original_response": body, "_lookup_hint": hint}
+        response._content = json.dumps(body).encode()  # noqa: SLF001
         return response
 
     @staticmethod
@@ -1890,6 +1926,7 @@ class AuthenticatedHTTPXClient:
         # gating hint matters most here: Rootly answers 404 for endpoints locked
         # to a subscription tier, which is what these tools hit.
         response = self._maybe_annotate_404_response(request.method, str(request.url), response)
+        response = self._maybe_annotate_user_lookup_404(request.method, str(request.url), response)
         response = self._maybe_annotate_alert_routing_deprecation(
             request.method, str(request.url), response
         )
