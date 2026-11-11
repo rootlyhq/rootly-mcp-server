@@ -14,7 +14,7 @@ class GuidedToolError(ToolError):
     Raised where the server answers a mistake it anticipated -- an argument the
     tool does not take, a required one left empty -- with a message that tells
     the model what to send instead. The call failed as designed, so telemetry
-    publishes it as a non-error (see telemetry_scrubber.mark_expected_tool_errors).
+    marks it expected (see posthog_analytics.enrich_posthog_mcp_event).
     """
 
 
@@ -26,7 +26,7 @@ class GuidedScriptError(ValueError):
     """
 
 
-# agentcat records exception types by name only, so these are what telemetry
+# Telemetry events carry exception types by name only, so these are what it
 # matches against.
 GUIDED_ERROR_TYPE_NAMES = frozenset({GuidedToolError.__name__, GuidedScriptError.__name__})
 

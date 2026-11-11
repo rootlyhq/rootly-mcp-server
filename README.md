@@ -419,52 +419,26 @@ To restrict either deployment to read-only tools, start the server with `--no-en
 
 For hosted clients, choose toolsets with `?toolsets=` on the MCP URL or the `X-MCP-Toolsets` header (see [Toolsets](#toolsets)).
 
-### AgentCat and Sentry telemetry
-
-Hosted deployments can send MCP telemetry to AgentCat by setting
-`ROOTLY_MCPCAT_PROJECT_ID`. To also export AgentCat events to Sentry, provide
-`SENTRY_DSN` through the deployment's secret store. The optional
-`ENVIRONMENT` defaults to `production`, and `SENTRY_RELEASE` defaults to the
-installed Rootly MCP Server version. Sentry performance tracing is enabled when
-the exporter is configured.
-Free-form event text is redacted and actor names are omitted from Sentry-bound
-telemetry; stable internal actor IDs remain available for correlation.
-
-AgentCat's `enable_tool_call_context` and `enable_report_missing` options are
-disabled. The SDK does not add an analytics `context` parameter or the
-`get_more_tools` feedback tool. Tool-call telemetry remains enabled, including
-arguments, responses, timing, errors, and configured identity information,
-subject to the existing redaction hooks.
-
-Telemetry runs on AgentCat v2 (MCP 2026-07-28 spec). Session correlation uses the
-SDK's hook mode (`resolve_session_id`): the server derives the session from the
-request. The key always starts with the caller (authenticated user, or a digest
-of the token), then the client's `Mcp-Session-Id` when it sends one, otherwise
-the UTC hour. No `session_id` parameter or session instructions are added to
-tool schemas. Clients holding a cached tool
-list that still send `context` or `session_id` are tolerated; the stray
-argument is dropped before validation. `initialize` and `tools/list` events are
-no longer published by the SDK.
-
 To override the hosted or self-hosted default profile entirely, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names. When that variable is set, it fully replaces the default selection.
 
 To expose only a specific subset of MCP tools on a self-hosted deployment, set `ROOTLY_MCP_ENABLED_TOOLS` (or pass `--enabled-tools`) with a comma-separated allowlist of exact tool names, for example `list_incidents,get_incident,get_server_version`.
 
 ### PostHog MCP analytics
 
-Setting `POSTHOG_PROJECT_TOKEN` (and optionally `POSTHOG_HOST`, default
-`https://us.i.posthog.com`) sends `$mcp_*` events to PostHog with the same
-privacy settings as AgentCat: no injected `context`, `conversation_id` or
-`llm_model` parameters, credential scrubbing before send, and hosted users
-identified by Rootly user ID only.
+Hosted deployments send MCP telemetry to PostHog only. Setting
+`POSTHOG_PROJECT_TOKEN` (and optionally `POSTHOG_HOST`, default
+`https://us.i.posthog.com`) sends `$mcp_*` events with no injected `context`,
+`conversation_id` or `llm_model` parameters, credential scrubbing before send,
+and hosted users identified by Rootly user ID only. Without the token (the
+default for local and self-hosted installs) nothing is sent.
 
-When AgentCat is also configured, both run side by side. posthog.mcp's MCP SDK
-1.x code path cannot handle AgentCat's middleware directly, so the server wraps
-it in an adapter first. On the stateless hosted transport, PostHog sessions are
-tied together through the `Mcp-Session-Id` header minted at `initialize`.
-AgentCat's session resolver also reads that header (scoped to the
-authenticated caller), so with PostHog on, AgentCat groups those clients'
-calls per connection instead of per hour.
+Failed calls carry the real exception type, the upstream HTTP status and an
+`mcp_error_expected` flag. Expected failures (guided errors and Rootly API
+401/403/404/409/429 answers) open no Error Tracking issue. On the stateless
+hosted transport, PostHog sessions are tied together through the
+`Mcp-Session-Id` header minted at `initialize`. Clients holding a cached tool
+list that still send `context` or `session_id` are tolerated; the stray
+argument is dropped before validation.
 
 ### OpenAI Apps domain verification
 

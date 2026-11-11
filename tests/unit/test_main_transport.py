@@ -1,9 +1,7 @@
 """Tests for CLI transport normalization and config propagation in __main__."""
 
 import argparse
-import dataclasses
 import logging
-from datetime import UTC, datetime
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -14,20 +12,14 @@ from starlette.requests import Request
 from rootly_mcp_server.__main__ import (
     _get_sorted_tool_names,
     _uvicorn_access_log_enabled,
-    agentcat_options_supports,
-    build_agentcat_session_resolver,
-    build_mcpcat_identify_callback,
-    derive_agentcat_session_key,
     get_server,
     main,
-    maybe_enable_mcpcat_tracking,
     normalize_transport,
     resolve_requested_hosted_tool_profile,
     run_dual_http_server,
     run_profiled_streamable_http_server,
     streamable_http_stateless_enabled,
 )
-from rootly_mcp_server.telemetry_scrubber import redact_agentcat_telemetry_text
 
 
 @pytest.mark.parametrize(
@@ -318,469 +310,6 @@ def test_streamable_http_respects_explicit_fastmcp_setting():
         assert streamable_http_stateless_enabled(hosted=False, fastmcp_stateless_http=True) is True
 
 
-def test_maybe_enable_mcpcat_tracking_is_noop_without_project_id():
-    server = object()
-    logger = Mock()
-
-    with patch("rootly_mcp_server.__main__.importlib.import_module") as mock_import:
-        assert maybe_enable_mcpcat_tracking(server, None, logger) is False
-
-    mock_import.assert_not_called()
-
-
-def test_maybe_enable_mcpcat_tracking_logs_when_package_missing():
-    server = object()
-    logger = Mock()
-
-    with patch(
-        "rootly_mcp_server.__main__.importlib.import_module",
-        side_effect=ImportError,
-    ) as mock_import:
-        assert maybe_enable_mcpcat_tracking(server, "proj_test_123", logger) is False
-
-    mock_import.assert_called_once_with("agentcat")
-    logger.warning.assert_called_once_with(
-        "AgentCat or Sentry telemetry is configured but agentcat is not installed; "
-        "skipping telemetry"
-    )
-
-
-@pytest.mark.parametrize(
-    ("project_id", "sentry_dsn", "expect_exporters"),
-    [
-        ("proj_test_123", "", False),
-        ("proj_test_123", "https://abc123@o1.ingest.sentry.io/1", True),
-        (None, "https://abc123@o1.ingest.sentry.io/1", True),
-        # An invalid DSN disables the Sentry exporter but leaves telemetry on
-        # via project_id -- a typo must not silently stop credential scrubbing.
-        ("proj_test_123", "not-a-dsn", False),
-    ],
-)
-def test_telemetry_options_disable_intent_requests_and_keep_redaction(
-    project_id, sentry_dsn, expect_exporters, monkeypatch
-):
-    # AgentCat redacts nothing on its own: event_queue only redacts when a hook
-    # is set. So the hook has to be attached for every configuration that sends
-    # telemetry, not just the ones that also export to Sentry.
-    monkeypatch.setenv("SENTRY_DSN", sentry_dsn)
-    captured = {}
-    agentcat_module = SimpleNamespace(track=Mock())
-    agentcat_types_module = SimpleNamespace(
-        AgentCatOptions=Mock(side_effect=lambda **kwargs: captured.update(kwargs)),
-        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
-    )
-
-    def fake_import(name):
-        return agentcat_module if name == "agentcat" else agentcat_types_module
-
-    with patch("rootly_mcp_server.__main__.importlib.import_module", fake_import):
-        maybe_enable_mcpcat_tracking(object(), project_id, Mock())
-
-    assert captured.get("redact_sensitive_information") is redact_agentcat_telemetry_text
-    assert captured["enable_tool_call_context"] is False
-    assert captured["enable_report_missing"] is False
-    assert ("exporters" in captured) is expect_exporters
-
-
-@pytest.mark.parametrize("supported", [True, False])
-def test_redact_event_is_offered_only_when_the_sdk_accepts_it(supported, monkeypatch):
-    # The event hook landed after 2.0.1. Passing an unknown option raises
-    # TypeError, which maybe_enable_mcpcat_tracking catches by disabling
-    # telemetry outright -- so an older SDK must simply not be offered it.
-    monkeypatch.delenv("SENTRY_DSN", raising=False)
-
-    fields: dict[str, Any] = {
-        "enable_tool_call_context": True,
-        "enable_report_missing": True,
-        "identify": None,
-        "redact_sensitive_information": None,
-        "resolve_session_id": None,
-        "exporters": None,
-    }
-    if supported:
-        fields["redact_event"] = None
-    options_cls = dataclasses.make_dataclass(
-        "AgentCatOptions", [(name, Any, None) for name in fields]
-    )
-
-    captured: dict[str, Any] = {}
-
-    def make_options(**kwargs):
-        captured.update(kwargs)
-        return options_cls(**kwargs)
-
-    # A subclass keeps dataclasses.fields() working while letting the call
-    # record its kwargs, which a Mock wrapper would hide.
-    factory = type("Factory", (options_cls,), {"__new__": lambda cls, **kw: make_options(**kw)})
-
-    agentcat_module = SimpleNamespace(track=Mock())
-    agentcat_types_module = SimpleNamespace(
-        AgentCatOptions=factory,
-        UserIdentity=Mock(side_effect=lambda **kw: SimpleNamespace(**kw)),
-    )
-
-    def fake_import(name):
-        return agentcat_module if name == "agentcat" else agentcat_types_module
-
-    logger = Mock()
-    with patch("rootly_mcp_server.__main__.importlib.import_module", fake_import):
-        maybe_enable_mcpcat_tracking(object(), "proj_test_123", logger)
-
-    # Telemetry stays enabled either way -- that is the point of the detection.
-    assert agentcat_module.track.called
-    assert captured["redact_sensitive_information"] is redact_agentcat_telemetry_text
-    assert ("redact_event" in captured) is supported
-
-    # An SDK too old for the hook must say so. Silently skipping the scrubber is
-    # how the SENTRY_DSN gap survived unnoticed.
-    warned = any("redact_event" in str(call.args[0]) for call in logger.warning.call_args_list)
-    assert warned is (not supported)
-
-
-@pytest.mark.parametrize("supported", [True, False])
-def test_session_resolver_is_offered_only_when_the_sdk_accepts_it(supported, monkeypatch):
-    # Same shape as redact_event: an SDK without hook mode must not be handed
-    # the option (TypeError would switch telemetry off), and must be warned
-    # about, because without the hook every tool grows a required session_id.
-    monkeypatch.delenv("SENTRY_DSN", raising=False)
-
-    fields: dict[str, Any] = {
-        "enable_tool_call_context": True,
-        "enable_report_missing": True,
-        "identify": None,
-        "redact_sensitive_information": None,
-        "redact_event": None,
-        "exporters": None,
-    }
-    if supported:
-        fields["resolve_session_id"] = None
-    options_cls = dataclasses.make_dataclass(
-        "AgentCatOptions", [(name, Any, None) for name in fields]
-    )
-    captured: dict[str, Any] = {}
-
-    def make_options(**kwargs):
-        captured.update(kwargs)
-        return options_cls(**kwargs)
-
-    factory = type("Factory", (options_cls,), {"__new__": lambda cls, **kw: make_options(**kw)})
-    agentcat_module = SimpleNamespace(track=Mock())
-    agentcat_types_module = SimpleNamespace(
-        AgentCatOptions=factory,
-        UserIdentity=Mock(side_effect=lambda **kw: SimpleNamespace(**kw)),
-    )
-
-    def fake_import(name):
-        return agentcat_module if name == "agentcat" else agentcat_types_module
-
-    logger = Mock()
-    with patch("rootly_mcp_server.__main__.importlib.import_module", fake_import):
-        maybe_enable_mcpcat_tracking(object(), "proj_test_123", logger)
-
-    assert agentcat_module.track.called
-    assert ("resolve_session_id" in captured) is supported
-    warned = any(
-        "resolve_session_id" in str(call.args[0]) for call in logger.warning.call_args_list
-    )
-    assert warned is (not supported)
-
-
-_HOUR = datetime(2026, 10, 5, 19, 2, tzinfo=UTC)
-
-
-def test_session_key_prefers_the_transport_session_within_the_caller():
-    key = derive_agentcat_session_key(
-        {"mcp-session-id": " abc123 "}, {"id": "user-1"}, "Bearer tok", now=_HOUR
-    )
-    assert key == "user:user-1:transport:abc123"
-
-
-def test_session_key_never_crosses_callers_on_a_shared_transport_session():
-    # Two callers presenting the same Mcp-Session-Id (collision, replay, or a
-    # shared harness) must not be grouped into one AgentCat session.
-    headers = {"mcp-session-id": "abc123"}
-    first = derive_agentcat_session_key(headers, {"id": "user-1"}, "Bearer a", now=_HOUR)
-    second = derive_agentcat_session_key(headers, {"id": "user-2"}, "Bearer b", now=_HOUR)
-    anonymous = derive_agentcat_session_key(headers, None, "Bearer c", now=_HOUR)
-    assert len({first, second, anonymous}) == 3
-
-
-def test_session_key_buckets_the_authenticated_user_by_hour():
-    key = derive_agentcat_session_key({}, {"id": "user-1"}, "Bearer tok", now=_HOUR)
-    assert key == "user:user-1:hour:2026100519"
-    later = derive_agentcat_session_key(
-        {}, {"id": "user-1"}, "Bearer tok", now=_HOUR.replace(hour=20)
-    )
-    assert later != key
-
-
-def test_session_key_falls_back_to_a_token_digest_not_the_token():
-    key = derive_agentcat_session_key({}, None, "Bearer secret-token", now=_HOUR)
-    assert key is not None
-    assert key.startswith("token:")
-    assert key.endswith(":hour:2026100519")
-    assert "secret-token" not in key
-    # Stable for the same token within the hour; different for another token.
-    assert key == derive_agentcat_session_key({}, None, "Bearer secret-token", now=_HOUR)
-    assert key != derive_agentcat_session_key({}, None, "Bearer other-token", now=_HOUR)
-
-
-def test_session_key_is_none_without_any_caller_identity():
-    # A transport session alone is not a caller: with nobody to attribute it
-    # to, the SDK mints a per-call handle rather than grouping strangers.
-    assert derive_agentcat_session_key({}, None, "", now=_HOUR) is None
-    assert derive_agentcat_session_key(None, {}, "  ", now=_HOUR) is None
-    assert derive_agentcat_session_key({"mcp-session-id": "abc"}, None, "", now=_HOUR) is None
-
-
-def test_session_resolver_reads_hosted_request_context(monkeypatch):
-    # No HTTP request is in scope here, so get_http_headers() raises and the
-    # resolver falls through to the ContextVars the auth middleware fills.
-    monkeypatch.setattr(
-        "rootly_mcp_server.__main__.get_hosted_authenticated_user", lambda: {"id": "user-9"}
-    )
-    resolver = build_agentcat_session_resolver()
-    key = resolver(None, None)
-    assert key is not None
-    assert key.startswith("user:user-9:hour:")
-
-
-def test_session_resolver_returns_none_outside_hosted_requests(monkeypatch):
-    import rootly_mcp_server.__main__ as main_module
-
-    monkeypatch.setattr(main_module, "get_hosted_authenticated_user", lambda: None)
-    token = main_module._session_auth_token.set("")
-    try:
-        assert build_agentcat_session_resolver()(None, None) is None
-    finally:
-        main_module._session_auth_token.reset(token)
-
-
-def test_agentcat_options_supports_detects_the_field():
-    options_cls = dataclasses.make_dataclass("Opts", [("redact_event", Any, None)])
-    assert agentcat_options_supports(options_cls, "redact_event") is True
-    assert agentcat_options_supports(options_cls, "nope") is False
-
-
-def test_agentcat_options_supports_is_false_for_a_non_dataclass():
-    assert agentcat_options_supports(object, "redact_event") is False
-
-
-def test_maybe_enable_mcpcat_tracking_tracks_when_available():
-    server = object()
-    logger = Mock()
-    agentcat_module = SimpleNamespace(track=Mock())
-    agentcat_types_module = SimpleNamespace(
-        AgentCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
-        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
-    )
-
-    def import_side_effect(module_name: str):
-        if module_name == "agentcat":
-            return agentcat_module
-        if module_name == "agentcat.types":
-            return agentcat_types_module
-        raise ImportError(module_name)
-
-    with patch(
-        "rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect
-    ):
-        assert maybe_enable_mcpcat_tracking(server, "proj_test_123", logger) is True
-
-    agentcat_module.track.assert_called_once()
-    call = agentcat_module.track.call_args
-    assert call.args[:2] == (server, "proj_test_123")
-    assert callable(call.args[2].identify)
-
-
-def test_maybe_enable_mcpcat_tracking_configures_sentry_exporter():
-    server = object()
-    logger = Mock()
-    agentcat_module = SimpleNamespace(track=Mock())
-    agentcat_types_module = SimpleNamespace(
-        AgentCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
-        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
-    )
-
-    def import_side_effect(module_name: str):
-        if module_name == "agentcat":
-            return agentcat_module
-        if module_name == "agentcat.types":
-            return agentcat_types_module
-        raise ImportError(module_name)
-
-    with (
-        patch.dict(
-            "os.environ",
-            {
-                "SENTRY_DSN": "https://abcdef@example.ingest.sentry.io/123",
-                "ENVIRONMENT": "staging",
-                "SENTRY_RELEASE": "rootly-mcp-server@test",
-            },
-            clear=True,
-        ),
-        patch(
-            "rootly_mcp_server.__main__.importlib.import_module",
-            side_effect=import_side_effect,
-        ),
-    ):
-        assert maybe_enable_mcpcat_tracking(server, "proj_test_123", logger) is True
-
-    options = agentcat_module.track.call_args.args[2]
-    # The hook scrubs the credential while leaving the surrounding text
-    # readable — a blanket placeholder would destroy error grouping and the
-    # client/server identifiers the telemetry backend needs.
-    redact = options.redact_sensitive_information
-    assert redact("Bearer production-secret") == "Bearer [redacted]"
-    assert redact("HTTP error 404: Not Found") == "HTTP error 404: Not Found"
-    identity = options.identify({}, SimpleNamespace())
-    assert identity is None
-    assert options.exporters == {
-        "sentry": {
-            "type": "sentry",
-            "dsn": "https://abcdef@example.ingest.sentry.io/123",
-            "environment": "staging",
-            "release": "rootly-mcp-server@test",
-            "enable_tracing": True,
-        }
-    }
-
-
-def test_maybe_enable_mcpcat_tracking_supports_sentry_without_agentcat_project():
-    server = object()
-    logger = Mock()
-    agentcat_module = SimpleNamespace(track=Mock())
-    agentcat_types_module = SimpleNamespace(
-        AgentCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
-        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
-    )
-
-    def import_side_effect(module_name: str):
-        if module_name == "agentcat":
-            return agentcat_module
-        if module_name == "agentcat.types":
-            return agentcat_types_module
-        raise ImportError(module_name)
-
-    with (
-        patch.dict(
-            "os.environ",
-            {
-                "SENTRY_DSN": "https://abcdef@example.ingest.sentry.io/123",
-                "ENVIRONMENT": "production-us-east-1",
-            },
-            clear=True,
-        ),
-        patch(
-            "rootly_mcp_server.__main__.importlib.import_module",
-            side_effect=import_side_effect,
-        ),
-    ):
-        assert maybe_enable_mcpcat_tracking(server, None, logger) is True
-
-    assert agentcat_module.track.call_args.args[:2] == (server, None)
-    options = agentcat_module.track.call_args.args[2]
-    assert options.exporters["sentry"]["environment"] == "production-us-east-1"
-    assert options.exporters["sentry"]["release"].startswith("rootly-mcp-server@")
-
-
-def test_maybe_enable_mcpcat_tracking_rejects_invalid_sentry_dsn_without_logging_it():
-    server = object()
-    logger = Mock()
-    invalid_dsn = "not-a-valid-dsn-containing-a-secret"
-
-    with (
-        patch.dict("os.environ", {"SENTRY_DSN": invalid_dsn}, clear=True),
-        patch("rootly_mcp_server.__main__.importlib.import_module") as mock_import,
-    ):
-        assert maybe_enable_mcpcat_tracking(server, None, logger) is False
-
-    mock_import.assert_not_called()
-    logger.warning.assert_called_once_with(
-        "Sentry telemetry is disabled because SENTRY_DSN is invalid"
-    )
-    assert invalid_dsn not in repr(logger.mock_calls)
-
-
-def test_maybe_enable_mcpcat_tracking_logs_when_track_raises():
-    server = object()
-    logger = Mock()
-    agentcat_module = SimpleNamespace(track=Mock(side_effect=RuntimeError("boom")))
-    agentcat_types_module = SimpleNamespace(
-        AgentCatOptions=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
-        UserIdentity=Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs)),
-    )
-
-    def import_side_effect(module_name: str):
-        if module_name == "agentcat":
-            return agentcat_module
-        if module_name == "agentcat.types":
-            return agentcat_types_module
-        raise ImportError(module_name)
-
-    with patch(
-        "rootly_mcp_server.__main__.importlib.import_module", side_effect=import_side_effect
-    ):
-        assert maybe_enable_mcpcat_tracking(server, "proj_test_123", logger) is False
-
-    assert agentcat_module.track.call_args.args[:2] == (server, "proj_test_123")
-    # assert_any_call, not assert_called_once_with: this stub's options class has
-    # no redact_event field, so the unsupported-SDK warning fires too. This test
-    # is about the track() failure path.
-    logger.warning.assert_any_call(
-        "AgentCat tracking could not be enabled; skipping (%s)",
-        "RuntimeError",
-    )
-
-
-def test_build_mcpcat_identify_callback_returns_authenticated_user_identity():
-    user_identity_cls = Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs))
-    callback = build_mcpcat_identify_callback(user_identity_cls)
-
-    with patch(
-        "rootly_mcp_server.__main__.get_hosted_authenticated_user",
-        return_value={
-            "id": "user_123",
-            "email": "example.user@example.test",
-            "name": "Example User",
-            "full_name_with_team": "[Acme Reliability] Example User",
-        },
-    ):
-        identity = callback({}, SimpleNamespace())
-
-    assert identity.user_id == "user_123"
-    assert identity.user_name == "[Acme Reliability] Example User"
-
-
-def test_build_mcpcat_identify_callback_omits_user_name_for_sentry():
-    user_identity_cls = Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs))
-    callback = build_mcpcat_identify_callback(user_identity_cls, include_user_name=False)
-
-    with patch(
-        "rootly_mcp_server.__main__.get_hosted_authenticated_user",
-        return_value={
-            "id": "user_123",
-            "email": "example.user@example.test",
-            "name": "Example User",
-            "full_name_with_team": "[Acme Reliability] Example User",
-        },
-    ):
-        identity = callback({}, SimpleNamespace())
-
-    assert identity.user_id == "user_123"
-    assert identity.user_name is None
-    assert identity.user_data is None
-
-
-def test_build_mcpcat_identify_callback_returns_none_without_authenticated_user():
-    callback = build_mcpcat_identify_callback(SimpleNamespace)
-
-    with patch("rootly_mcp_server.__main__.get_hosted_authenticated_user", return_value=None):
-        identity = callback({}, SimpleNamespace())
-
-    assert identity is None
-
-
 @pytest.mark.asyncio
 async def test_get_sorted_tool_names_returns_sorted_names():
     server = SimpleNamespace(
@@ -967,7 +496,7 @@ def test_main_hosted_streamable_http_with_explicit_enabled_tools_skips_profiled_
     assert main_server.run.call_args.kwargs["middleware"] == []
 
 
-def test_main_tracks_main_and_code_mode_servers_when_mcpcat_project_id_set():
+def test_main_instruments_main_and_code_mode_servers_with_posthog():
     args = SimpleNamespace(
         swagger_path=None,
         log_level="ERROR",
@@ -989,7 +518,9 @@ def test_main_tracks_main_and_code_mode_servers_when_mcpcat_project_id_set():
     code_mode_server = SimpleNamespace()
     slim_code_mode_server = SimpleNamespace()
 
-    with patch.dict("os.environ", {"ROOTLY_MCPCAT_PROJECT_ID": "proj_test_123"}, clear=True):
+    posthog_client = object()
+
+    with patch.dict("os.environ", {}, clear=True):
         with patch("rootly_mcp_server.__main__.parse_args", return_value=args):
             with patch("rootly_mcp_server.__main__.setup_logging"):
                 with patch(
@@ -1002,15 +533,21 @@ def test_main_tracks_main_and_code_mode_servers_when_mcpcat_project_id_set():
                     ):
                         with patch("rootly_mcp_server.__main__.run_dual_http_server"):
                             with patch(
-                                "rootly_mcp_server.__main__.maybe_enable_mcpcat_tracking"
-                            ) as mock_track:
-                                main()
+                                "rootly_mcp_server.__main__.build_posthog_client",
+                                return_value=posthog_client,
+                            ):
+                                with patch(
+                                    "rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"
+                                ) as mock_instrument:
+                                    main()
 
-    assert len(mock_track.call_args_list) == 4
-    assert mock_track.call_args_list[0].args[:2] == (main_server, "proj_test_123")
-    assert mock_track.call_args_list[1].args[:2] == (slim_server, "proj_test_123")
-    assert mock_track.call_args_list[2].args[:2] == (code_mode_server, "proj_test_123")
-    assert mock_track.call_args_list[3].args[:2] == (slim_code_mode_server, "proj_test_123")
+    instrumented = [call.args[:2] for call in mock_instrument.call_args_list]
+    assert instrumented == [
+        (main_server, posthog_client),
+        (slim_server, posthog_client),
+        (code_mode_server, posthog_client),
+        (slim_code_mode_server, posthog_client),
+    ]
 
 
 @pytest.mark.asyncio

@@ -45,27 +45,6 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
-# AgentCat (formerly MCPcat) provides hosted telemetry and is deliberately kept
-# out of the project's dependency graph. The [community] extra provides FastMCP
-# support, which this server relies on. v2 supports the MCP 2026-07-28 spec and
-# tracks sessions via a session_id in the tool list rather than stateful
-# connections — a better fit for our stateless hosted transport.
-#
-# It is installed with every locked version as a constraint, so it can only add
-# its own packages: it can never move a locked dependency (pydantic, mcp,
-# fastmcp, ...). If a future AgentCat needs a version the lock does not allow,
-# this step fails the build rather than shipping an untested combination.
-# `uv pip check` then confirms the final environment is consistent. This step
-# must stay after the last `uv sync`, which removes anything not in the lock.
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv export --quiet --locked --no-dev --no-emit-project --no-hashes -o /tmp/constraints.txt \
-    && uv pip install --python /opt/venv/bin/python \
-        --constraint /tmp/constraints.txt \
-        "agentcat[community]==2.1.0" \
-    && uv pip check --python /opt/venv/bin/python
-
 # ---------------------------------------------------------------------------
 # Runtime: same base image, no compiler, no uv, no build cache.
 # ---------------------------------------------------------------------------

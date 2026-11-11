@@ -1,7 +1,6 @@
 """PostHog MCP analytics for the hosted server.
 
-Opt-in via POSTHOG_PROJECT_TOKEN, so self-hosted and local runs are unchanged.
-It runs alongside AgentCat when both are configured.
+Opt-in via POSTHOG_PROJECT_TOKEN, so self-hosted and local runs send nothing.
 """
 
 import functools
@@ -25,7 +24,7 @@ from starlette.middleware import Middleware as ASGIMiddleware
 
 from . import __version__
 from .exceptions import GUIDED_ERROR_TYPE_NAMES, is_guided_exception
-from .telemetry_scrubber import redact_agentcat_telemetry_text, scrub_posthog_mcp_event
+from .telemetry_scrubber import redact_telemetry_text, scrub_posthog_mcp_event
 from .transport import get_hosted_authenticated_user
 
 
@@ -53,7 +52,7 @@ def identify(_request: Any, _extra: Any) -> UserIdentity | None:
 
 
 class CallableMiddlewareAdapter(MCPMiddleware):
-    """Presents a plain-callable middleware, such as AgentCat's, as a fastmcp Middleware.
+    """Presents a plain-callable middleware as a fastmcp Middleware.
 
     posthog.mcp (7.60.1 through at least 7.73.3) reads dispatch hooks off each
     middleware's class and raises for anything that is not a Middleware
@@ -93,8 +92,10 @@ _tool_exception: ContextVar[BaseException | None] = ContextVar(
     "rootly_posthog_tool_exception", default=None
 )
 
-# Rootly API answers about the caller's request, not server faults; the same
-# set telemetry_scrubber keeps out of Sentry.
+# Rootly API answers about the caller's request, not server faults: a missing
+# or invisible record, a feature off for the plan, a token without the scope, a
+# conflict, the rate limit. 400 and 422 stay unexpected: those can mean the
+# server built the request wrong.
 _EXPECTED_UPSTREAM_STATUSES = frozenset({401, 403, 404, 409, 429})
 _HTTP_STATUS = re.compile(r"\bHTTP error (\d{3})\b")
 _FASTMCP_TOOL_WRAPPER = "Error calling tool"
@@ -157,7 +158,7 @@ def _exception_list(exc: BaseException) -> list[dict[str, Any]]:
         if isinstance(entry.get("value"), str):
             # Scrub before cutting: a cut can drop the closing quote a quoted
             # credential pattern needs, and the rest of the secret would pass.
-            entry["value"] = redact_agentcat_telemetry_text(entry["value"])[:_MAX_VALUE_LENGTH]
+            entry["value"] = redact_telemetry_text(entry["value"])[:_MAX_VALUE_LENGTH]
         stacktrace = entry.get("stacktrace")
         if not isinstance(stacktrace, dict):
             continue
@@ -210,8 +211,7 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
     server's version in place of the framework's.
 
     The `$exception` sibling of an expected failure is dropped (None): it would
-    open an Error Tracking issue for something that is not a bug, the way these
-    are kept out of Sentry. The `$mcp_tool_call` event stays, so failure tables
+    open an Error Tracking issue for something that is not a bug. The `$mcp_tool_call` event stays, so failure tables
     and the error rate still count it.
 
     Without the exception our middleware saw (posthog.mcp may record the call
@@ -282,9 +282,9 @@ def maybe_enable_posthog_mcp_analytics(
         adapt_callable_middleware(server)
         server.middleware.insert(0, ToolExceptionCaptureMiddleware())
         options = MCPAnalyticsOptions(
-            # Match the AgentCat configuration: no injected `context`,
-            # `conversation_id`, `llm_model` or `get_more_tools`, so tool
-            # schemas are unchanged and agents are never asked about themselves.
+            # No injected `context`, `conversation_id`, `llm_model` or
+            # `get_more_tools`, so tool schemas are unchanged and agents are
+            # never asked about themselves.
             context=False,
             enable_conversation_id=False,
             capture_model=False,
@@ -313,10 +313,7 @@ def posthog_session_middleware(posthog_client: Posthog | None) -> list[ASGIMiddl
     so they get no token), so requests are otherwise unchanged.
 
     The token is unsigned and client-replayed: it is an analytics grouping key
-    only, never an auth or tenancy signal. AgentCat's session resolver also keys
-    on `Mcp-Session-Id` (always prefixed by the authenticated caller), so with
-    this middleware on, AgentCat sessions become per-connection instead of
-    hourly buckets for clients that replay the header.
+    only, never an auth or tenancy signal.
     """
     if posthog_client is None:
         return []

@@ -30,7 +30,6 @@ from rootly_mcp_server.posthog_analytics import (
 from rootly_mcp_server.server import (
     ArgumentNormalizationMiddleware,
     CamelCaseAliasMiddleware,
-    InjectedToolAnnotationMiddleware,
     LegacyContextArgumentMiddleware,
     ToolUsageLoggingMiddleware,
 )
@@ -107,12 +106,11 @@ def stdio_args() -> SimpleNamespace:
 
 
 @pytest.mark.parametrize(
-    ("agentcat_enabled", "posthog_token", "expect_posthog"),
-    [(True, "", False), (True, "phc_test", True), (False, "phc_test", True)],
-    ids=["agentcat-only", "both", "posthog-only"],
+    ("posthog_token", "expect_posthog"),
+    [("", False), ("phc_test", True)],
+    ids=["no-token", "token"],
 )
-def test_main_decides_which_analytics_run(agentcat_enabled, posthog_token, expect_posthog):
-    # The PostHog token alone decides; AgentCat no longer turns PostHog off.
+def test_the_posthog_token_alone_turns_analytics_on(posthog_token, expect_posthog):
     server = SimpleNamespace(run=Mock())
     environ = {"ROOTLY_API_TOKEN": "x" * 40, "POSTHOG_PROJECT_TOKEN": posthog_token}
 
@@ -123,15 +121,11 @@ def test_main_decides_which_analytics_run(agentcat_enabled, posthog_token, expec
                     "rootly_mcp_server.__main__.create_rootly_mcp_server",
                     return_value=server,
                 ):
-                    with patch(
-                        "rootly_mcp_server.__main__.maybe_enable_mcpcat_tracking",
-                        return_value=agentcat_enabled,
-                    ):
-                        with patch("rootly_mcp_server.posthog_analytics.Posthog"):
-                            with patch(
-                                "rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"
-                            ) as enable:
-                                main()
+                    with patch("rootly_mcp_server.posthog_analytics.Posthog"):
+                        with patch(
+                            "rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"
+                        ) as enable:
+                            main()
 
     posthog_client = enable.call_args.args[1]
     assert (posthog_client is not None) is expect_posthog
@@ -273,7 +267,6 @@ async def test_our_middleware_keeps_posthog_on():
         CamelCaseAliasMiddleware({"listIncidents": "list_incidents"}),
         ArgumentNormalizationMiddleware(),
         LegacyContextArgumentMiddleware(),
-        InjectedToolAnnotationMiddleware(),
         ToolUsageLoggingMiddleware(),
     )
 
@@ -284,7 +277,7 @@ async def test_our_middleware_keeps_posthog_on():
 
 
 class DuckTypedMiddleware:
-    """Shaped like AgentCat's middleware: callable, not a fastmcp Middleware."""
+    """A plain callable middleware, not a fastmcp Middleware subclass."""
 
     def __init__(self) -> None:
         self.seen: list[str] = []
