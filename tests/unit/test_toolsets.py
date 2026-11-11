@@ -84,17 +84,14 @@ async def test_requested_toolsets_add_their_tools(token):
     assert "create_alert_route" not in names
 
 
-# Tools that store instructions Rootly runs later. They live in `automations`
-# so a connection can leave them out while keeping `ai` and `workflows`.
+# AI automations live in `automations`, so a connection can leave them out
+# while keeping investigations and skills in `ai`.
 _AUTOMATION_TOOLS = {
     "list_ai_automations",
     "get_ai_automation",
     "create_ai_automation",
     "update_ai_automation",
     "run_ai_automation",
-    "create_workflow_task",
-    "update_workflow_task",
-    "get_workflow_task_params_schema",
 }
 
 
@@ -105,14 +102,13 @@ async def test_every_toolset_but_automations_leaves_them_all_out(token):
     names = await _names(server, ToolSelection(everything_else))
 
     assert not _AUTOMATION_TOOLS & names
-    # Their neighbours stay: investigations and skills, workflows and runs,
-    # and listing or reading a workflow task.
+    # Their neighbours stay: investigations and skills, and all of workflows.
     assert {
         "start_investigation",
         "list_ai_skills",
-        "create_workflow_run",
-        "list_workflow_tasks",
-        "get_workflow_task",
+        "create_workflow_task",
+        "update_workflow_task",
+        "get_workflow_task_params_schema",
     } <= names
 
 
