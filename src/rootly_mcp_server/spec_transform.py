@@ -265,6 +265,119 @@ def _fetch_swagger_from_url(url: str = SWAGGER_URL) -> dict[str, Any]:
         raise Exception(f"Failed to parse Swagger specification: {e}")
 
 
+_AI_AUTOMATION = (
+    "An AI automation is a saved instruction (prompt) that a Rootly AI agent runs "
+    "on a schedule, on a matching event (incident, alert, Slack message, webhook) "
+    "or on demand. When it runs, the agent may only use the tools listed in the "
+    "automation's `allowed_tool_keys` (all team-allowed tools when null), and it "
+    "posts its answer to the configured destination (a Slack channel or the "
+    "incident timeline), or nowhere when `destination_kind` is none."
+)
+_AI_SKILL = (
+    "An AI skill is reusable written guidance (markdown `body`) that Rootly AI "
+    "agents, users and AI automations can load while they work. Skills keep "
+    "saved versions, readable with list_ai_skill_versions."
+)
+
+# Tool descriptions for operations whose spec text says only which OAuth scope
+# they need. Keyed by snake_case operationId. The spec's own description is kept
+# after this text, so scope, rate-limit and visibility notes still reach the model.
+_OPERATION_DESCRIPTIONS: dict[str, str] = {
+    "list_ai_automations": (
+        "List the team's AI automations: name, prompt, triggers, destination, "
+        "allowed tools, run limits and whether each is enabled. Read-only. " + _AI_AUTOMATION
+    ),
+    "get_ai_automation": (
+        "Get one AI automation by id: its prompt, triggers, destination, allowed "
+        "tools, attached skills and run limits. Read-only. " + _AI_AUTOMATION
+    ),
+    "create_ai_automation": (
+        "Create an AI automation. Set `name` and `prompt`; `triggers` decide when "
+        "it runs, `destination_kind` where its answer is posted, and "
+        "`allowed_tool_keys` which tools the agent may use (null means every tool "
+        "the team allows, so pass an explicit list to keep it narrow). New "
+        "automations are disabled unless `enabled` is true. " + _AI_AUTOMATION
+    ),
+    "update_ai_automation": (
+        "Change an existing AI automation. Only the attributes you send change; "
+        "`triggers`, when sent, replace the automation's triggers. Changing the "
+        "prompt, allowed tools or destination changes what every future run does, "
+        "and the previous values are not kept. " + _AI_AUTOMATION
+    ),
+    "run_ai_automation": (
+        "Run an existing AI automation now, once. The run executes that "
+        "automation's saved prompt with only the tools in its `allowed_tool_keys`, "
+        "and posts the answer to its configured destination; it cannot run "
+        "arbitrary instructions. Pass `incident_id` to run it against an incident, "
+        "or `run_id` to re-run a previous run. "
+        "Returns the run; poll get_ai_automation_run for its status and output. " + _AI_AUTOMATION
+    ),
+    "get_ai_automation_run": (
+        "Get one AI automation run by id: its status, timing, what triggered it, "
+        "the linked incident if any, and the agent's output. Read-only."
+    ),
+    "list_ai_automation_runs": (
+        "List recent runs of one AI automation with status, trigger and timing. Read-only."
+    ),
+    "list_ai_skills": (
+        "List the team's AI skills: name, slug, description, who may invoke each "
+        "and whether it is enabled. Read-only. " + _AI_SKILL
+    ),
+    "get_ai_skill": (
+        "Get one AI skill by id, including its current `body`. Read-only. " + _AI_SKILL
+    ),
+    "create_ai_skill": (
+        "Create an AI skill from a `name`, `description` and markdown `body`. "
+        "`invocable_by` controls who may load it: the model, users, automations. " + _AI_SKILL
+    ),
+    "update_ai_skill": (
+        "Change an AI skill. Only the attributes you send change, and the change "
+        "applies to every agent and automation that loads the skill. " + _AI_SKILL
+    ),
+    "list_ai_skill_versions": (
+        "List the saved versions of one AI skill, newest first. Read-only. " + _AI_SKILL
+    ),
+    "get_ai_skill_version": (
+        "Get one saved version of an AI skill, including the `body` it had at "
+        "that version. Read-only. " + _AI_SKILL
+    ),
+    "create_workflow_run": (
+        "Run a Rootly workflow now. The workflow executes its configured tasks "
+        "(for example posting Slack messages, creating tickets, or changing the "
+        "incident), which can act on other systems and cannot be undone by this "
+        "server. Pass the record to run it against (such as `incident_id`) in "
+        "the request attributes; list_workflow_tasks shows what the workflow does."
+    ),
+    "create_workflow_task": (
+        "Add a task to a Rootly workflow. Set `task_params.task_type` to the "
+        "action (for example send_slack_message or create_jira_issue) and the "
+        "parameters that action needs; get_workflow_task_params_schema returns "
+        "them for a task_type. The task runs whenever the workflow runs."
+    ),
+    "update_workflow_task": (
+        "Change a task in a Rootly workflow: its name, position, enabled state "
+        "or `task_params`. The previous values are not kept, and the change "
+        "applies to every future run of the workflow. "
+        "get_workflow_task_params_schema returns the parameters for a task_type."
+    ),
+}
+
+
+def _describe_operations(paths: dict[str, Any]) -> None:
+    """Lead each operation in `_OPERATION_DESCRIPTIONS` with its written description."""
+    for path_item in paths.values():
+        if not isinstance(path_item, dict):
+            continue
+        for method, operation in path_item.items():
+            if method.lower() not in _OPENAPI_METHODS or not isinstance(operation, dict):
+                continue
+            text = _OPERATION_DESCRIPTIONS.get(to_snake_case(operation.get("operationId") or ""))
+            if text is None:
+                continue
+            original = (operation.get("description") or "").strip()
+            operation["description"] = f"{text}\n\n{original}" if original else text
+
+
 def _drop_duplicate_update_verb(path_item: dict[str, Any]) -> None:
     """Drop PUT when a path documents PATCH as the update and PUT separately.
 
@@ -383,6 +496,8 @@ def _filter_openapi_spec(
                 paths_to_remove.append(path)
         for path in paths_to_remove:
             del filtered_paths[path]
+
+    _describe_operations(filtered_paths)
 
     # Clean up schema references that might be broken
     # Remove problematic schema references from request bodies and parameters

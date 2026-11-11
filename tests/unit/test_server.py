@@ -1662,7 +1662,8 @@ class TestApplyAnnotationsToAutogenTools:
         assert ann.idempotent_hint is False
         assert ann.open_world_hint is True
 
-    def test_put_marked_idempotent(self):
+    def test_put_marked_idempotent_and_destructive(self):
+        # An update overwrites values the caller may not be able to restore.
         mcp, tools = self._make_mock_mcp(["update_item"])
         spec = {"paths": {"/items/{id}": {"put": {"operationId": "update_item"}}}}
 
@@ -1670,7 +1671,7 @@ class TestApplyAnnotationsToAutogenTools:
 
         ann = tools["update_item"].annotations
         assert ann.read_only_hint is False
-        assert ann.destructive_hint is False
+        assert ann.destructive_hint is True
         assert ann.idempotent_hint is True
 
     def test_patch_marked_idempotent(self):
@@ -1681,7 +1682,27 @@ class TestApplyAnnotationsToAutogenTools:
 
         ann = tools["patch_item"].annotations
         assert ann.read_only_hint is False
+        assert ann.destructive_hint is True
         assert ann.idempotent_hint is True
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "create_override_shift",
+            "create_workflow_run",
+            "run_ai_automation",
+            "rotate_ai_automation_webhook_secret",
+        ],
+    )
+    def test_posts_that_replace_or_act_on_state_are_destructive(self, name):
+        mcp, tools = self._make_mock_mcp([name])
+        spec = {"paths": {"/x": {"post": {"operationId": name}}}}
+
+        server_module._apply_annotations_to_autogen_tools(mcp, spec)
+
+        ann = tools[name].annotations
+        assert ann.destructive_hint is True
+        assert ann.idempotent_hint is False
 
     def test_delete_marked_destructive(self):
         mcp, tools = self._make_mock_mcp(["delete_item"])
@@ -1845,3 +1866,61 @@ class TestEveryToolDeclaresItsSafety:
         unannotated = [tool.name for tool in await server.list_tools() if tool.annotations is None]
 
         assert unannotated == [], f"tools with no annotations: {sorted(unannotated)}"
+
+
+@pytest.mark.unit
+class TestDirectoryReviewFindings:
+    """What the OpenAI directory review flagged, checked on the served tool list."""
+
+    _OVERWRITING = [
+        "update_incident",
+        "patch_alert_route",
+        "update_alerts_source",
+        "update_escalation_path",
+        "update_functionality",
+        "update_incident_action_item",
+        "update_on_call_role",
+        "update_service",
+        "update_team",
+        "update_ai_automation",
+        "create_override_shift",
+        "create_workflow_run",
+        "run_ai_automation",
+    ]
+    _DESCRIBED = [
+        "list_ai_automations",
+        "get_ai_automation",
+        "create_ai_automation",
+        "update_ai_automation",
+        "run_ai_automation",
+        "get_ai_automation_run",
+        "list_ai_skills",
+        "get_ai_skill",
+        "create_ai_skill",
+        "update_ai_skill",
+        "list_ai_skill_versions",
+        "get_ai_skill_version",
+        "create_workflow_run",
+        "create_workflow_task",
+        "update_workflow_task",
+    ]
+
+    @pytest.fixture
+    async def tools(self, mock_environment_token):
+        from rootly_mcp_server.server import create_rootly_mcp_server
+
+        server = create_rootly_mcp_server(hosted=True)
+        return {tool.name: tool for tool in await server.list_tools()}
+
+    @pytest.mark.parametrize("name", _OVERWRITING)
+    async def test_overwriting_tools_are_destructive(self, tools, name):
+        assert name in tools
+        assert tools[name].annotations.destructive_hint is True
+
+    @pytest.mark.parametrize("name", _DESCRIBED)
+    async def test_description_says_what_the_tool_does(self, tools, name):
+        description = tools[name].description or ""
+        # Not the spec's scope-only text ("Requires OAuth scope ...").
+        assert not description.startswith("Requires OAuth scope"), description
+        first_paragraph = description.split("\n\n", 1)[0]
+        assert len(first_paragraph) > 60, first_paragraph

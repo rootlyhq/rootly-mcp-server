@@ -1918,7 +1918,9 @@ def register_incident_tools(
             name="update_incident",
             annotations=ToolAnnotations(
                 read_only_hint=False,
-                destructive_hint=False,
+                # Overwrites fields (title, summary, status, severity...) whose
+                # previous values the caller may not be able to restore.
+                destructive_hint=True,
                 idempotent_hint=True,
                 open_world_hint=True,
             ),
