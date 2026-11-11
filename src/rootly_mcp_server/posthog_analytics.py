@@ -24,7 +24,7 @@ from posthog.mcp import (
 from starlette.middleware import Middleware as ASGIMiddleware
 
 from . import __version__
-from .exceptions import is_guided_exception
+from .exceptions import GUIDED_ERROR_TYPE_NAMES, is_guided_exception
 from .telemetry_scrubber import redact_agentcat_telemetry_text, scrub_posthog_mcp_event
 from .transport import get_hosted_authenticated_user
 
@@ -171,6 +171,33 @@ def _exception_list(exc: BaseException) -> list[dict[str, Any]]:
     return exceptions
 
 
+def _event_messages(properties: dict[str, Any]) -> list[str]:
+    """The error texts an event already carries: its message and exception values."""
+    messages = [properties.get("$mcp_error_message")]
+    exception_list = properties.get("$exception_list")
+    if isinstance(exception_list, list):
+        messages.extend(entry.get("value") for entry in exception_list if isinstance(entry, dict))
+    return [message for message in messages if isinstance(message, str)]
+
+
+def _event_types(properties: dict[str, Any]) -> set[str]:
+    types = {properties.get("$mcp_error_type")}
+    exception_list = properties.get("$exception_list")
+    if isinstance(exception_list, list):
+        types.update(entry.get("type") for entry in exception_list if isinstance(entry, dict))
+    return {name for name in types if isinstance(name, str)}
+
+
+def _status_from_messages(messages: list[str]) -> int | None:
+    # The first status in a message is the response's own; a later one is
+    # text quoted inside the response body.
+    for message in messages:
+        match = _HTTP_STATUS.search(message)
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def enrich_posthog_mcp_event(event: Any) -> Any:
     """Put the real exception back on a failed tool call's events.
 
@@ -181,6 +208,14 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
     the caller (401/403/404/409/429). The `$exception` sibling gets the real
     `$exception_list`, frames and cause chain included. Every event gets this
     server's version in place of the framework's.
+
+    The `$exception` sibling of an expected failure is dropped (None): it would
+    open an Error Tracking issue for something that is not a bug, the way these
+    are kept out of Sentry. The `$mcp_tool_call` event stays, so failure tables
+    and the error rate still count it.
+
+    Without the exception our middleware saw (posthog.mcp may record the call
+    itself one day), the type and status come from what the event carries.
     """
     properties = event.get("properties") if isinstance(event, dict) else None
     if not isinstance(properties, dict):
@@ -192,16 +227,18 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
         return event
     if name == "$mcp_tool_call" and not properties.get("$mcp_is_error"):
         return event
-    exc = _tool_exception.get()
-    if exc is None:
-        return event
 
-    primary = _primary_exception(exc)
-    properties["$mcp_error_type"] = type(primary).__name__
-    status = _http_status(exc)
+    exc = _tool_exception.get()
+    if exc is not None:
+        properties["$mcp_error_type"] = type(_primary_exception(exc)).__name__
+        status = _http_status(exc)
+        guided = is_guided_exception(exc)
+    else:
+        status = _status_from_messages(_event_messages(properties))
+        guided = bool(_event_types(properties) & GUIDED_ERROR_TYPE_NAMES)
     if status is not None:
         properties["$mcp_error_status"] = str(status)
-    if is_guided_exception(exc):
+    if guided:
         properties["mcp_error_expected"] = True
         properties["mcp_error_expected_reason"] = "guided"
     elif status in _EXPECTED_UPSTREAM_STATUSES:
@@ -209,20 +246,25 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
         properties["mcp_error_expected_reason"] = "upstream_answer"
     else:
         properties["mcp_error_expected"] = False
+
     if name == "$exception":
-        try:
-            properties["$exception_list"] = _exception_list(exc)
-        except Exception as error:  # noqa: BLE001 - keep the SDK's text-only list
-            _logger.debug(
-                "PostHog MCP analytics: kept the text-only exception list (%s)",
-                type(error).__name__,
-            )
+        if properties["mcp_error_expected"]:
+            return None
+        if exc is not None:
+            try:
+                properties["$exception_list"] = _exception_list(exc)
+            except Exception as error:  # noqa: BLE001 - keep the SDK's text-only list
+                _logger.debug(
+                    "PostHog MCP analytics: kept the text-only exception list (%s)",
+                    type(error).__name__,
+                )
     return event
 
 
 def prepare_posthog_mcp_event(event: Any) -> Any:
-    """PostHog `before_send`: restore error detail, then scrub everything."""
-    return scrub_posthog_mcp_event(enrich_posthog_mcp_event(event))
+    """PostHog `before_send`: restore error detail, drop expected exceptions, scrub."""
+    enriched = enrich_posthog_mcp_event(event)
+    return None if enriched is None else scrub_posthog_mcp_event(enriched)
 
 
 def server_build_from_env() -> str | None:

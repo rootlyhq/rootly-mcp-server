@@ -168,3 +168,53 @@ def test_server_build_comes_from_the_image():
         assert server_build_from_env() == "abc123"
     with patch.dict("os.environ", {}, clear=True):
         assert server_build_from_env() is None
+
+
+async def test_expected_failures_open_no_error_tracking_issue():
+    captured = await _capture("guided", "not_found", "server_error", "boom")
+
+    # Expected: the call is counted, but no $exception (no Error Tracking issue).
+    for tool in ("guided", "not_found"):
+        assert _events(captured, "$mcp_tool_call", tool)
+        assert _events(captured, "$exception", tool) == []
+    # Unexpected: both events, as before.
+    for tool in ("server_error", "boom"):
+        assert _events(captured, "$mcp_tool_call", tool)
+        assert _events(captured, "$exception", tool)
+
+
+def _sdk_event(name: str, **properties: Any) -> dict[str, Any]:
+    return {"event": name, "properties": {"$mcp_is_error": True, **properties}}
+
+
+def test_expected_is_read_from_the_event_when_the_exception_was_not_seen():
+    # As after a posthog.mcp release that records the exception itself.
+    from rootly_mcp_server.posthog_analytics import enrich_posthog_mcp_event
+
+    guided = _sdk_event(
+        "$exception",
+        **{"$exception_list": [{"type": "ToolError"}, {"type": "GuidedToolError"}]},
+    )
+    assert enrich_posthog_mcp_event(guided) is None
+
+    not_found = _sdk_event(
+        "$mcp_tool_call",
+        **{"$mcp_error_message": "Error calling tool 'get_user': HTTP error 404: Not Found"},
+    )
+    properties = enrich_posthog_mcp_event(not_found)["properties"]
+    assert properties["$mcp_error_status"] == "404"
+    assert properties["mcp_error_expected_reason"] == "upstream_answer"
+
+    # A status quoted inside the body is not the response's own.
+    quoted = _sdk_event(
+        "$exception",
+        **{
+            "$exception_list": [
+                {"type": "Error", "value": "HTTP error 422: x - {'d': 'HTTP error 404'}"}
+            ]
+        },
+    )
+    kept = enrich_posthog_mcp_event(quoted)
+    assert kept is not None
+    assert kept["properties"]["$mcp_error_status"] == "422"
+    assert kept["properties"]["mcp_error_expected"] is False
