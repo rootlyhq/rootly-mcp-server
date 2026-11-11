@@ -1499,6 +1499,10 @@ class AuthenticatedHTTPXClient:
             "filter_email or filter_search and pass the `id` it returns."
         )
         if isinstance(body, dict):
+            # The plan-gating annotator runs first and treats a non-numeric,
+            # non-UUID id (an email, a name) as a collection; its "upgrade your
+            # plan" advice is wrong here and would contradict this hint.
+            body.pop("_plan_gating_hint", None)
             body.setdefault("_lookup_hint", hint)
         else:
             body = {"original_response": body, "_lookup_hint": hint}

@@ -44,6 +44,22 @@ def test_user_lookup_404_gets_the_hint(path):
     assert body["errors"] == NOT_FOUND["errors"]
 
 
+def test_email_shaped_id_gets_no_plan_advice():
+    # Both annotators run in order on the real client; an email is neither a
+    # number nor a UUID, so the plan-gating one used to fire too.
+    url = "https://api.rootly.com/v1/users/alice@example.com"
+    response = httpx2.Response(
+        404, content=json.dumps(NOT_FOUND).encode(), request=httpx2.Request("GET", url)
+    )
+    client = transport.AuthenticatedHTTPXClient
+    response = client._maybe_annotate_404_response("GET", url, response)
+    response = client._maybe_annotate_user_lookup_404("GET", url, response)
+    body = response.json()
+
+    assert "_plan_gating_hint" not in body
+    assert "list_users" in body["_lookup_hint"]
+
+
 @pytest.mark.parametrize(
     ("method", "path", "status"),
     [
