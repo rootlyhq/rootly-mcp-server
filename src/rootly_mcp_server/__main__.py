@@ -40,11 +40,9 @@ from .server_defaults import (
     enabled_tools_from_env,
     resolve_write_tools_enabled,
 )
-from .sse_deprecation import (
-    CLI_SSE_DEPRECATION_WARNING,
-    SSE_SUNSET_DATE,
-    SSEDeprecationMiddleware,
-    with_sse_deprecation_instructions,
+from .sse_removal import (
+    CLI_SSE_REMOVED_ERROR,
+    SSEGoneMiddleware,
 )
 from .telemetry_scrubber import (
     prepare_telemetry_event,
@@ -56,16 +54,20 @@ if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
 
-TransportName = Literal["stdio", "sse", "streamable-http", "both"]
+# "both" predates the SSE removal, when it meant SSE + Streamable HTTP. It now
+# means Streamable HTTP plus Code Mode on one server, and keeps its name so
+# existing deployments (ROOTLY_TRANSPORT=both) need no change.
+TransportName = Literal["stdio", "streamable-http", "both"]
 TRANSPORT_ALIASES: dict[str, TransportName] = {
     "stdio": "stdio",
-    "sse": "sse",
     "streamable-http": "streamable-http",
     "streamable": "streamable-http",
     "http": "streamable-http",
     "both": "both",
     "dual": "both",
     "dual-http": "both",
+    # Old spellings of the SSE + Streamable HTTP pair: still the HTTP server,
+    # whose removed SSE paths now answer 410.
     "streamable+sse": "both",
     "sse+streamable": "both",
 }
@@ -77,9 +79,11 @@ SENTRY_DSN_PATTERN = re.compile(r"^https://[a-f0-9]+@[\w.-]+(?::\d+)?(?:/.*)?/\d
 def normalize_transport(value: str) -> TransportName:
     """Normalize transport names and validate supported values."""
     normalized = value.strip().lower().replace("_", "-")
+    if normalized == "sse":
+        raise argparse.ArgumentTypeError(CLI_SSE_REMOVED_ERROR)
     mapped = TRANSPORT_ALIASES.get(normalized)
     if mapped is None:
-        supported = ", ".join(sorted({"stdio", "sse", "streamable-http", "both"}))
+        supported = ", ".join(sorted({"stdio", "streamable-http", "both"}))
         raise argparse.ArgumentTypeError(
             f"Unsupported transport '{value}'. Supported values: {supported}, http, dual"
         )
@@ -90,9 +94,9 @@ def normalize_transport_or_default(value: str, default: TransportName = "stdio")
     """Normalize transport value, falling back to default when invalid."""
     try:
         return normalize_transport(value)
-    except argparse.ArgumentTypeError:
+    except argparse.ArgumentTypeError as error:
         logging.getLogger(__name__).warning(
-            f"Invalid ROOTLY_TRANSPORT value '{value}', defaulting to '{default}'"
+            f"Invalid ROOTLY_TRANSPORT value '{value}' ({error}), defaulting to '{default}'"
         )
         return default
 
@@ -367,7 +371,10 @@ def parse_args():
         "--transport",
         type=normalize_transport,
         default="stdio",
-        help="Transport protocol to use: stdio, sse, streamable-http/http, or both/dual. Default: stdio",
+        help=(
+            "Transport protocol to use: stdio, streamable-http/http, or both/dual "
+            "(Streamable HTTP plus Code Mode). Default: stdio"
+        ),
     )
     parser.add_argument(
         "--debug",
@@ -596,15 +603,17 @@ def build_dual_http_app(
     profiled_code_mode_servers: dict[str, Any] | None = None,
     default_tool_profile: str = server_defaults.HOSTED_TOOL_PROFILE_FULL,
 ):
-    """Build the ASGI app serving SSE, streamable-http and Code Mode together."""
+    """Build the ASGI app serving streamable-http and Code Mode together.
+
+    The removed SSE paths answer 410 Gone (see ``sse_removal``).
+    """
     import fastmcp
     from fastmcp.server.http import StreamableHTTPASGIApp, create_base_app
-    from mcp.server.sse import SseServerTransport
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.middleware import Middleware
     from starlette.requests import Request
     from starlette.responses import Response
-    from starlette.routing import BaseRoute, Mount, Route
+    from starlette.routing import BaseRoute, Route
 
     logger = logging.getLogger(__name__)
 
@@ -618,7 +627,6 @@ def build_dual_http_app(
         "Streamable HTTP configured in %s mode", "stateless" if stateless_http else "stateful"
     )
 
-    sse_transport = SseServerTransport(message_path)
     profiled_servers = profiled_servers or {default_tool_profile: server}
     profiled_code_mode_servers = profiled_code_mode_servers or (
         {default_tool_profile: code_mode_server} if code_mode_server is not None else {}
@@ -633,29 +641,6 @@ def build_dual_http_app(
             default=default_profile,
         )
         return profile if profile in available_profiles else default_profile
-
-    async def handle_sse(scope, receive, send, selected_server) -> Response:
-        async with sse_transport.connect_sse(scope, receive, send) as streams:
-            await selected_server._mcp_server.run(  # noqa: SLF001
-                streams[0],
-                streams[1],
-                # SSE is deprecated: tell the model/client in this session only.
-                with_sse_deprecation_instructions(
-                    selected_server._mcp_server.create_initialization_options()  # noqa: SLF001
-                ),
-            )
-        return Response()
-
-    async def sse_endpoint(request: Request) -> Response:
-        selected_profile = _profile_for_request(
-            request,
-            set(profiled_servers),
-            default_profile=default_tool_profile,
-        )
-        selected_server = profiled_servers[selected_profile]
-        return await handle_sse(  # noqa: SLF001
-            request.scope, request.receive, request._send, selected_server
-        )
 
     session_managers = {
         profile: StreamableHTTPSessionManager(
@@ -685,8 +670,6 @@ def build_dual_http_app(
     streamable_methods = ["POST", "DELETE"]
 
     routes: list[BaseRoute] = [
-        Route(sse_path, endpoint=sse_endpoint, methods=["GET"]),
-        Mount(message_path, app=sse_transport.handle_post_message),
         Route(streamable_path, endpoint=streamable_http_endpoint, methods=streamable_methods),
     ]
 
@@ -742,10 +725,15 @@ def build_dual_http_app(
                 await stack.enter_async_context(session_manager.run())
             yield
 
-    # Outermost of ours, so the 401 from the auth middleware carries the
-    # deprecation headers too. A fresh list: create_base_app mutates it.
+    # Outermost of ours, so a client stuck on the removed SSE paths gets the
+    # 410 rather than a 401. A fresh list: create_base_app mutates it.
     app_middleware = [
-        Middleware(SSEDeprecationMiddleware, sse_path=sse_path, message_path=message_path),
+        Middleware(
+            SSEGoneMiddleware,
+            sse_path=sse_path,
+            message_path=message_path,
+            live_paths=(streamable_path, code_mode_path),
+        ),
         *cast(list[Middleware], middleware or []),
     ]
     app = create_base_app(
@@ -755,15 +743,12 @@ def build_dual_http_app(
         lifespan=lifespan,
     )
     app.state.fastmcp_server = server
-    app.state.path = ",".join(
-        [path for path in (sse_path, streamable_path, code_mode_path) if path]
-    )
+    app.state.path = ",".join([path for path in (streamable_path, code_mode_path) if path])
     app.state.transport_type = "both"
     # What the setup page at GET / lists: Code Mode only when it is mounted.
     app.state.mcp_endpoints = McpEndpoints(
         code_mode=code_mode_path if profiled_code_mode_servers and code_mode_path else None,
         streamable=streamable_path,
-        sse=sse_path,
     )
     return app
 
@@ -778,7 +763,7 @@ def run_dual_http_server(
     profiled_code_mode_servers: dict[str, Any] | None = None,
     default_tool_profile: str = server_defaults.HOSTED_TOOL_PROFILE_FULL,
 ) -> None:
-    """Run SSE and streamable-http together on one ASGI server."""
+    """Run streamable-http and Code Mode together on one ASGI server."""
     import fastmcp
     import uvicorn
 
@@ -792,15 +777,7 @@ def run_dual_http_server(
         profiled_code_mode_servers=profiled_code_mode_servers,
         default_tool_profile=default_tool_profile,
     )
-    sse_path = fastmcp.settings.sse_path
     streamable_path = fastmcp.settings.streamable_http_path
-    logger.info(
-        "SSE endpoint %s is deprecated and will be removed after %s; "
-        "clients should use %s (or Code Mode)",
-        sse_path,
-        SSE_SUNSET_DATE,
-        streamable_path,
-    )
 
     host = fastmcp.settings.host
     port = fastmcp.settings.port
@@ -808,11 +785,8 @@ def run_dual_http_server(
 
     if code_mode_path:
         logger.info(
-            "Starting MCP server %r with dual transport on http://%s:%s%s, http://%s:%s%s, and Code Mode on http://%s:%s%s",
+            "Starting MCP server %r on http://%s:%s%s and Code Mode on http://%s:%s%s",
             server.name,
-            host,
-            port,
-            sse_path,
             host,
             port,
             streamable_path,
@@ -822,11 +796,8 @@ def run_dual_http_server(
         )
     else:
         logger.info(
-            "Starting MCP server %r with dual transport on http://%s:%s%s and http://%s:%s%s",
+            "Starting MCP server %r on http://%s:%s%s",
             server.name,
-            host,
-            port,
-            sse_path,
             host,
             port,
             streamable_path,
@@ -916,7 +887,15 @@ def run_profiled_streamable_http_server(
                 await stack.enter_async_context(session_manager.run())
             yield
 
-    app_middleware = cast(list[Middleware], middleware or [])
+    app_middleware = [
+        Middleware(
+            SSEGoneMiddleware,
+            sse_path=fastmcp.settings.sse_path,
+            message_path=fastmcp.settings.message_path,
+            live_paths=(streamable_path,),
+        ),
+        *cast(list[Middleware], middleware or []),
+    ]
     app = create_base_app(
         routes=routes,
         middleware=app_middleware,
@@ -981,8 +960,6 @@ def main():
         logger.info(f"Initializing server with name: {args.name}")
         # argparse already normalizes/validates --transport via type=normalize_transport
         normalized_transport = args.transport
-        if normalized_transport == "sse":
-            logger.warning(CLI_SSE_DEPRECATION_WARNING)
         code_mode_enabled = args.enable_code_mode or code_mode_enabled_from_env(default=True)
         enable_write_tools = resolve_write_tools_enabled(args.enable_write_tools)
         code_mode_path = (
@@ -1116,29 +1093,26 @@ def main():
                     default_tool_profile=default_hosted_tool_profile,
                 )
             else:
-                run_middleware = get_hosted_auth_middleware()
-                if normalized_transport == "sse":
-                    import fastmcp
-                    from starlette.middleware import Middleware
+                import fastmcp
+                from starlette.middleware import Middleware
 
-                    run_middleware = [
-                        Middleware(
-                            SSEDeprecationMiddleware,
-                            sse_path=fastmcp.settings.sse_path,
-                            message_path=fastmcp.settings.message_path,
-                        ),
-                        *(run_middleware or []),
-                    ]
-                run_kwargs = {
-                    "transport": normalized_transport,
-                    "middleware": run_middleware,
-                    # Override FastMCP's default of 0s to allow active SSE connections
-                    # to finish gracefully during deployments (avoids 502s).
-                    "uvicorn_config": {"timeout_graceful_shutdown": 30},
-                }
-                if normalized_transport == "streamable-http":
-                    run_kwargs["stateless_http"] = direct_streamable_stateless_http
-                server.run(**run_kwargs)
+                run_middleware = [
+                    Middleware(
+                        SSEGoneMiddleware,
+                        sse_path=fastmcp.settings.sse_path,
+                        message_path=fastmcp.settings.message_path,
+                        live_paths=(fastmcp.settings.streamable_http_path,),
+                    ),
+                    *(get_hosted_auth_middleware() or []),
+                ]
+                server.run(
+                    transport=normalized_transport,
+                    middleware=run_middleware,
+                    stateless_http=direct_streamable_stateless_http,
+                    # Override FastMCP's default of 0s so in-flight requests
+                    # finish gracefully during deployments (avoids 502s).
+                    uvicorn_config={"timeout_graceful_shutdown": 30},
+                )
 
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")

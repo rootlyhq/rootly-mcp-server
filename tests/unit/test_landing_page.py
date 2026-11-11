@@ -63,7 +63,7 @@ def test_hosted_dual_app_lists_every_mounted_endpoint(hosted_server):
     # Code Mode is the recommended endpoint, as on docs.rootly.com.
     assert "claude mcp add --transport http rootly http://testserver/mcp-codemode" in response.text
     assert "<code>http://testserver/mcp</code>" in response.text
-    assert "http://testserver/sse" in response.text
+    assert "/sse" not in response.text
     assert "not both" in response.text
     assert "front door" not in response.text
     assert response.headers["x-content-type-options"] == "nosniff"
@@ -143,12 +143,12 @@ def test_mounted_paths_are_used(hosted_server, monkeypatch):
     assert "testserver/mcp-codemode" not in page
 
 
-def test_sse_only_server_has_no_setup_tabs():
-    page = render_landing_page("https://x.example", McpEndpoints(sse="/sse"))
+def test_server_without_http_endpoints_has_no_setup_tabs():
+    page = render_landing_page("https://x.example", McpEndpoints())
 
-    assert "only serves the deprecated SSE transport" in page
+    assert "no HTTP MCP endpoint" in page
+    assert "--transport streamable-http" in page
     assert "claude mcp add" not in page
-    assert "https://x.example/sse" in page
 
 
 @pytest.mark.parametrize(
@@ -156,7 +156,6 @@ def test_sse_only_server_has_no_setup_tabs():
     [
         ({"mcp_endpoints": HOSTED_ENDPOINTS}, HOSTED_ENDPOINTS),
         ({"path": "/mcp", "transport_type": "streamable-http"}, McpEndpoints(streamable="/mcp")),
-        ({"path": "/sse", "transport_type": "sse"}, McpEndpoints(sse="/sse")),
         ({}, McpEndpoints()),
     ],
 )

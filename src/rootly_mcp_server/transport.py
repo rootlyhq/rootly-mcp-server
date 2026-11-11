@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 _UNFILLED_PATH_PARAM_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}|%7B[A-Za-z_][A-Za-z0-9_]*%7D")
 
 # ContextVar to hold the auth token for the current hosted HTTP session/request.
-# Set by AuthCaptureMiddleware on MCP transport paths (e.g. /sse, /mcp),
+# Set by AuthCaptureMiddleware on MCP transport paths (/mcp, /mcp-codemode),
 # then reused by outbound API requests when FastMCP request headers are not
 # available in the current execution context.
 _session_auth_token: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -253,15 +253,11 @@ def _extract_request_id(headers: dict[str, str]) -> str:
 
 def _infer_transport_from_path(
     path: str,
-    sse_path: str,
-    message_path: str,
     streamable_path: str,
     code_mode_path: str = "",
 ) -> str:
     """Infer effective transport name from the incoming MCP path."""
     normalized = _normalize_path(path)
-    if normalized in {sse_path, message_path}:
-        return "sse"
     if normalized in {streamable_path, code_mode_path}:
         return "streamable-http"
     return ""
@@ -269,8 +265,6 @@ def _infer_transport_from_path(
 
 def _infer_mcp_mode_from_path(
     path: str,
-    sse_path: str,
-    message_path: str,
     streamable_path: str,
     code_mode_path: str = "",
 ) -> str:
@@ -278,7 +272,7 @@ def _infer_mcp_mode_from_path(
     normalized = _normalize_path(path)
     if normalized == code_mode_path and code_mode_path:
         return "code-mode"
-    if normalized in {sse_path, message_path, streamable_path}:
+    if normalized == streamable_path:
         return "classic"
     return ""
 
@@ -287,7 +281,7 @@ class AuthCaptureMiddleware:
     """ASGI middleware that captures the Authorization header into a ContextVar.
 
     In hosted HTTP transports, this middleware captures auth headers for MCP
-    paths (SSE and Streamable HTTP) before request handling, so downstream
+    paths (Streamable HTTP and Code Mode) before request handling, so downstream
     tool execution can still authenticate Rootly API calls when request headers
     are unavailable in async child contexts.
     """
@@ -298,13 +292,9 @@ class AuthCaptureMiddleware:
 
     def __init__(self, app):
         self.app = app
-        self._sse_path = _normalize_path(os.getenv("FASTMCP_SSE_PATH", "/sse"))
-        self._message_path = _normalize_path(os.getenv("FASTMCP_MESSAGE_PATH", "/messages"))
         self._streamable_path = _normalize_path(os.getenv("FASTMCP_STREAMABLE_HTTP_PATH", "/mcp"))
         self._code_mode_path = _normalize_path(os.getenv("ROOTLY_CODE_MODE_PATH", "/mcp-codemode"))
         self._capture_paths = {
-            self._sse_path,
-            self._message_path,
             self._streamable_path,
             self._code_mode_path,
         }
@@ -444,15 +434,11 @@ class AuthCaptureMiddleware:
                     logger.debug("Failed to log tool_profile deprecation", exc_info=True)
             effective_transport = _infer_transport_from_path(
                 path,
-                self._sse_path,
-                self._message_path,
                 self._streamable_path,
                 self._code_mode_path,
             )
             mcp_mode = _infer_mcp_mode_from_path(
                 path,
-                self._sse_path,
-                self._message_path,
                 self._streamable_path,
                 self._code_mode_path,
             )
@@ -1222,7 +1208,7 @@ class AuthenticatedHTTPXClient:
 
         # In hosted mode, ensure Authorization header is present.
         # The _session_auth_token ContextVar is set by AuthCaptureMiddleware
-        # on MCP transport paths (/sse, /mcp) and propagates to tool handlers
+        # on MCP transport paths (/mcp, /mcp-codemode) and propagates to tool handlers
         # via Python's async context inheritance.
         if self.hosted:
             has_auth = any(k.lower() == "authorization" for k in headers)
@@ -1863,7 +1849,7 @@ class AuthenticatedHTTPXClient:
         self._check_for_unfilled_path_params(request.method, request.url)
         # In hosted mode, ensure Authorization header is present in the request.
         # The _session_auth_token ContextVar is set by AuthCaptureMiddleware
-        # on MCP transport paths (/sse, /mcp).
+        # on MCP transport paths (/mcp, /mcp-codemode).
         if self.hosted:
             has_auth = any(k.lower() == "authorization" for k in request.headers)
             if not has_auth:
