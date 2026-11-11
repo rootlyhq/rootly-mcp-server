@@ -10,7 +10,7 @@ import logging
 import os
 import time
 import traceback
-from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from contextvars import ContextVar
 from typing import Any
 
@@ -619,18 +619,12 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
 class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
     """Drops retired telemetry arguments that the target tool does not declare.
 
-    Until #223 AgentCat injected a ``context`` parameter into every tool schema,
-    and until session hook mode it injected ``session_id``. Callers with cached
-    schemas (scripts, agents, directory reviewers' harnesses) still send them.
-    Tools reject undeclared arguments, so the whole call failed -- and the
-    pydantic error echoed the caller's text into telemetry. The parameters stay
-    out of the advertised schemas; they are only tolerated.
-
-    AgentCat inserts its own middleware at index 0 of the chain (outermost), so
-    it has already copied the raw arguments before this runs; the event-level
-    scrubber removes them again there. This middleware guarantees that whatever
-    the SDK leaves behind -- or everything, when the SDK is not installed -- is
-    gone before the tool validates its arguments.
+    The retired AgentCat SDK injected ``context`` and ``session_id`` parameters
+    into every tool schema. Callers with cached schemas (scripts, agents,
+    directory reviewers' harnesses) still send them. Tools reject undeclared
+    arguments, so the whole call failed -- and the pydantic error echoed the
+    caller's text into telemetry. The parameters stay out of the advertised
+    schemas; they are only tolerated.
     """
 
     async def on_call_tool(
@@ -650,44 +644,6 @@ class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
                     for name in stray - set(declared):
                         args.pop(name)
         return await call_next(context)
-
-
-# Tools registered by the telemetry SDK rather than by us, with the annotations
-# they should carry. AgentCat 2.1.0 registers `get_more_tools` with only
-# `{"readOnlyHint": True}` (adapters/community.py), so `destructive_hint` and
-# `open_world_hint` fall back to the spec defaults -- both `true`, describing the
-# tool as destructive and open-world. It is neither: its handler returns a fixed
-# string and never reaches the API. Reported upstream; remove this once the SDK
-# sets them itself.
-_INJECTED_TOOL_ANNOTATIONS: dict[str, mt.ToolAnnotations] = {
-    "get_more_tools": mt.ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        open_world_hint=False,
-    ),
-}
-
-
-class InjectedToolAnnotationMiddleware(fastmcp_middleware.Middleware):
-    """Completes safety annotations on tools this server did not register.
-
-    An injected tool cannot be annotated where it is defined, and unset hints do
-    not read as "unknown" -- the MCP spec defaults them to the cautious answer.
-    A client that respects annotations may therefore prompt before every call,
-    and annotation scanners flag the tool.
-    """
-
-    async def on_list_tools(
-        self,
-        context: fastmcp_middleware.MiddlewareContext[mt.ListToolsRequest],
-        call_next: fastmcp_middleware.CallNext[mt.ListToolsRequest, Sequence[Any]],
-    ) -> Sequence[Any]:
-        tools = await call_next(context)
-        for tool in tools:
-            annotations = _INJECTED_TOOL_ANNOTATIONS.get(getattr(tool, "name", ""))
-            if annotations is not None:
-                tool.annotations = annotations
-        return tools
 
 
 def _openapi_path_arguments(tool: Any) -> tuple[str, str, list[str]] | None:
@@ -1468,7 +1424,6 @@ def create_rootly_mcp_server(
         mcp.add_middleware(tool_selection_middleware)
     mcp.add_middleware(ArgumentNormalizationMiddleware())
     mcp.add_middleware(LegacyContextArgumentMiddleware())
-    mcp.add_middleware(InjectedToolAnnotationMiddleware())
     mcp.add_middleware(ToolUsageLoggingMiddleware())
     # Inside usage logging, so the logged arg keys are what the caller sent and
     # the applied rewrites (or the rejection) are recorded with them. Scoped to

@@ -83,20 +83,7 @@ jobs:
         if: matrix.python-version == '3.13'
         env:
           ROOTLY_API_TOKEN: ${{ secrets.ROOTLY_API_TOKEN }}
-        # Exercise telemetry with the same optional SDK version as the image.
-        run: |
-          python - <<'PY'
-          import re
-          import subprocess
-          from pathlib import Path
-
-          sdk = re.search(r'"(agentcat\[community\]==[^"]+)"', Path("Dockerfile").read_text())
-          assert sdk, "AgentCat dependency missing from Dockerfile"
-          subprocess.run(
-              ["uv", "run", "--with", sdk[1], "pytest", "tests/integration/local/", "-x"],
-              check=True,
-          )
-          PY
+        run: uv run pytest tests/integration/local/ -x
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13'
@@ -133,9 +120,9 @@ jobs:
       - name: Build Docker image
         run: docker build -t rootly-mcp-server .
 
-      # Configure both telemetry layers as production does; "Verify telemetry
-      # wiring" below checks the outcome. Dummy IDs, and PostHog points at a
-      # dead host, so nothing is sent anywhere real.
+      # Configure telemetry as production does; "Verify telemetry wiring" below
+      # checks the outcome. Dummy token, and PostHog points at a dead host, so
+      # nothing is sent anywhere real.
       - name: Start MCP server container
         env:
           ROOTLY_API_TOKEN: ${{ secrets.ROOTLY_API_TOKEN }}
@@ -144,7 +131,6 @@ jobs:
             --name rootly-mcp-server \
             -p 8000:8000 \
             -e ROOTLY_API_TOKEN="${ROOTLY_API_TOKEN}" \
-            -e ROOTLY_MCPCAT_PROJECT_ID=proj_ci_dummy \
             -e POSTHOG_PROJECT_TOKEN=phc_ci_dummy \
             -e POSTHOG_HOST=http://127.0.0.1:9 \
             rootly-mcp-server
@@ -167,12 +153,12 @@ jobs:
         run: uv run pytest tests/integration/remote/test_mcp_protocol.py -v --timeout=60
 
       # Telemetry setup only logs on failure and the server keeps running, so
-      # the protocol tests alone would pass with AgentCat silently off.
+      # the protocol tests alone would pass with PostHog silently off.
       - name: Verify telemetry wiring
         run: |
           logs="$(docker logs rootly-mcp-server 2>&1)"
           grep -F "PostHog MCP analytics on" <<<"$logs"
-          if grep -E "could not be enabled|agentcat is not installed" <<<"$logs"; then
+          if grep -E "could not be enabled" <<<"$logs"; then
             echo "::error::Telemetry setup failed in the container"
             exit 1
           fi

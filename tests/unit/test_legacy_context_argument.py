@@ -36,7 +36,7 @@ def _server() -> FastMCP:
     return server
 
 
-def test_retired_parameters_are_the_two_agentcat_no_longer_injects():
+def test_retired_parameters_are_the_two_agentcat_used_to_inject():
     # `agent_id` is never injected (enable_agent_tracking is off), so there is
     # nothing stale for a client to send; it is not retired.
     assert RETIRED_INJECTED_PARAMS == {"context", "session_id"}

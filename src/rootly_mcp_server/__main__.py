@@ -7,20 +7,15 @@ This module provides the main entry point for the Rootly MCP Server.
 
 import argparse
 import asyncio
-import dataclasses
-import hashlib
-import importlib
 import logging
 import os
-import re
 import sys
 from collections.abc import Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from . import __version__, server_defaults
+from . import server_defaults
 from .code_mode import (
     code_mode_enabled_from_env,
     code_mode_path_from_env,
@@ -46,11 +41,6 @@ from .sse_deprecation import (
     SSEDeprecationMiddleware,
     with_sse_deprecation_instructions,
 )
-from .telemetry_scrubber import (
-    prepare_telemetry_event,
-    redact_agentcat_telemetry_text,
-)
-from .transport import _session_auth_token, get_hosted_authenticated_user
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -71,7 +61,6 @@ TRANSPORT_ALIASES: dict[str, TransportName] = {
 }
 HOSTED_TOOL_PROFILE_QUERY_PARAM = "tool_profile"
 HOSTED_TOOL_PROFILE_HEADER = "x-rootly-tool-profile"
-SENTRY_DSN_PATTERN = re.compile(r"^https://[a-f0-9]+@[\w.-]+(?::\d+)?(?:/.*)?/\d+$")
 
 
 def normalize_transport(value: str) -> TransportName:
@@ -124,222 +113,6 @@ def resolve_requested_hosted_tool_profile(
     if not raw and headers:
         raw = headers.get(HOSTED_TOOL_PROFILE_HEADER)
     return server_defaults.normalize_hosted_tool_profile(raw, default=default)
-
-
-def agentcat_options_supports(options_cls: type[Any], option: str) -> bool:
-    """Whether the installed AgentCat accepts *option*.
-
-    Options are a dataclass, so the accepted set is introspectable. Feature
-    detection keeps a newer hook from disabling telemetry on an older SDK,
-    which is what an unexpected keyword would cause.
-    """
-    try:
-        return option in {field.name for field in dataclasses.fields(options_cls)}
-    except TypeError:
-        # Not a dataclass in this version -- assume unsupported rather than
-        # risk the TypeError path.
-        return False
-
-
-def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging.Logger) -> bool:
-    """Enable AgentCat tracking when configured and available; return whether it is on.
-
-    The Python AgentCat package (formerly MCPcat) is currently deployed
-    separately from the core server dependency set, so we load it lazily and
-    only when a project ID is configured. This keeps the base server behavior
-    unchanged for self-hosted users and local development environments that do
-    not install AgentCat.
-    """
-    sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
-    if not project_id and not sentry_dsn:
-        return False
-    if sentry_dsn and not SENTRY_DSN_PATTERN.fullmatch(sentry_dsn):
-        logger.warning("Sentry telemetry is disabled because SENTRY_DSN is invalid")
-        sentry_dsn = ""
-        if not project_id:
-            return False
-
-    try:
-        agentcat = importlib.import_module("agentcat")
-        agentcat_types = importlib.import_module("agentcat.types")
-    except ImportError:
-        logger.warning(
-            "AgentCat or Sentry telemetry is configured but agentcat is not installed; "
-            "skipping telemetry"
-        )
-        return False
-
-    try:
-        options_kwargs: dict[str, Any] = {
-            # Tool calls do not need a narrative of the user's goal. Disable
-            # both SDK features that request one while retaining call telemetry.
-            "enable_tool_call_context": False,
-            "enable_report_missing": False,
-            "identify": build_mcpcat_identify_callback(
-                agentcat_types.UserIdentity,
-                include_user_name=not bool(sentry_dsn),
-            ),
-            # Registered whenever telemetry is on, not only alongside Sentry.
-            # The SDK scrubs nothing itself -- `_process_event` redacts only
-            # `if event.redaction_fn` -- so without this the project_id-only
-            # configuration sends credentials unscrubbed.
-            "redact_sensitive_information": redact_agentcat_telemetry_text,
-        }
-        # The event-level hook is the only place a credential's field name is
-        # visible; the string hook above receives bare values. It landed after
-        # 2.0.1, so it is offered only when the installed SDK accepts it --
-        # passing an unknown option raises TypeError, and the except below
-        # would turn that into telemetry being switched off entirely.
-        if agentcat_options_supports(agentcat_types.AgentCatOptions, "redact_event"):
-            options_kwargs["redact_event"] = prepare_telemetry_event
-        else:
-            # Say so rather than degrade quietly. The scrubber being silently
-            # inactive is how the SENTRY_DSN gap went unnoticed for months.
-            logger.warning(
-                "AgentCat does not support redact_event; credential-named tool "
-                "arguments will not be scrubbed. Upgrade to 2.0.2 or later."
-            )
-        # Session correlation runs in the SDK's hook mode: the server derives
-        # the session from the request, so the SDK injects no `session_id`
-        # parameter and no instruction text into the tool schemas. Without
-        # the hook, every tool carries a required parameter the tool does not
-        # need to run, described by directives aimed at the model.
-        if agentcat_options_supports(agentcat_types.AgentCatOptions, "resolve_session_id"):
-            options_kwargs["resolve_session_id"] = build_agentcat_session_resolver()
-        else:
-            logger.warning(
-                "AgentCat does not support resolve_session_id; a required "
-                "session_id parameter will be injected into every tool schema. "
-                "Upgrade to 2.1.0 or later."
-            )
-        if sentry_dsn:
-            options_kwargs["exporters"] = {
-                "sentry": {
-                    "type": "sentry",
-                    "dsn": sentry_dsn,
-                    "environment": os.getenv("ENVIRONMENT", "production"),
-                    "release": os.getenv(
-                        "SENTRY_RELEASE",
-                        f"rootly-mcp-server@{__version__}",
-                    ),
-                    "enable_tracing": True,
-                }
-            }
-        options = agentcat_types.AgentCatOptions(**options_kwargs)
-        agentcat.track(server, project_id, options)
-    except Exception as error:
-        logger.warning(
-            "AgentCat tracking could not be enabled; skipping (%s)",
-            type(error).__name__,
-        )
-        return False
-    return True
-
-
-def build_mcpcat_identify_callback(
-    user_identity_cls: type[Any],
-    *,
-    include_user_name: bool = True,
-):
-    """Build a lightweight AgentCat identify callback from hosted auth context."""
-
-    def identify(_request: dict[str, Any], _context: Any) -> Any:
-        user = get_hosted_authenticated_user()
-        if not user:
-            return None
-
-        return user_identity_cls(
-            user_id=user["id"],
-            user_name=(
-                user.get("full_name_with_team") or user.get("name") or user.get("email")
-                if include_user_name
-                else None
-            ),
-            user_data=None,
-        )
-
-    return identify
-
-
-MCP_SESSION_ID_HEADER = "mcp-session-id"
-# Without a transport session, a caller's calls are grouped by UTC hour. The
-# hosted transport is stateless and runs more than one replica with no shared
-# store, so the only task boundary every replica agrees on is the clock. A
-# fixed bucket therefore trades precision for consistency: two tasks by one
-# caller inside an hour share a session, and a task spanning the top of the
-# hour is split in two. Asking the client to carry a task handle would be the
-# precise alternative, and it is exactly the injected parameter this hook
-# exists to remove. Clients that keep a transport session get task-level
-# boundaries from the header.
-_SESSION_BUCKET_FORMAT = "%Y%m%d%H"
-
-
-def _caller_key(user: Mapping[str, str] | None, auth_header: str) -> str | None:
-    """Identify the caller without exposing the credential.
-
-    Prefers the authenticated Rootly user; falls back to a digest of the
-    bearer token so two tokens never share a key and the token never leaves
-    the process.
-    """
-    if user and user.get("id"):
-        return f"user:{user['id']}"
-    token = auth_header.strip()
-    if token:
-        return f"token:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
-    return None
-
-
-def derive_agentcat_session_key(
-    headers: Mapping[str, str] | None,
-    user: Mapping[str, str] | None,
-    auth_header: str,
-    *,
-    now: datetime | None = None,
-) -> str | None:
-    """Derive a caller-managed session key for AgentCat from request state.
-
-    The key always starts with the caller, so no two callers can share a
-    session: not through a colliding or replayed ``Mcp-Session-Id``, and not
-    through the time bucket. Within one caller the client's MCP transport
-    session is the boundary when it sends one, otherwise the UTC hour.
-    ``None`` (no caller identity at all) lets the SDK mint a fresh handle for
-    the call. The value never leaves the process as-is: the SDK folds it into
-    a deterministic KSUID.
-    """
-    caller = _caller_key(user, auth_header)
-    if caller is None:
-        return None
-
-    if headers:
-        transport_session = headers.get(MCP_SESSION_ID_HEADER, "").strip()
-        if transport_session:
-            return f"{caller}:transport:{transport_session}"
-
-    bucket = (now or datetime.now(UTC)).strftime(_SESSION_BUCKET_FORMAT)
-    return f"{caller}:hour:{bucket}"
-
-
-def build_agentcat_session_resolver():
-    """Build the AgentCat ``resolve_session_id`` hook from hosted request context.
-
-    The SDK calls the hook per tool call with its own ``(request, extra)``
-    pair; both are ignored in favor of the ContextVars the hosted auth
-    middleware already fills, which is also where ``identify`` reads from.
-    """
-
-    def resolve_session_id(_request: Any, _extra: Any) -> str | None:
-        headers: dict[str, str] = {}
-        try:
-            from fastmcp.server.dependencies import get_http_headers
-
-            headers = {str(k).lower(): str(v) for k, v in get_http_headers().items()}
-        except Exception:  # nosec B110 - no HTTP request in scope (stdio, tests)
-            pass
-        return derive_agentcat_session_key(
-            headers, get_hosted_authenticated_user(), _session_auth_token.get("")
-        )
-
-    return resolve_session_id
 
 
 def parse_args():
@@ -990,7 +763,6 @@ def main():
             if args.code_mode_path
             else code_mode_path_from_env()
         )
-        mcpcat_project_id = os.getenv("ROOTLY_MCPCAT_PROJECT_ID")
         server = create_rootly_mcp_server(
             swagger_path=args.swagger_path,
             name=args.name,
@@ -1072,8 +844,6 @@ def main():
             profiled_code_mode_servers[default_hosted_tool_profile] = code_mode_server
 
         all_servers = (*profiled_servers.values(), *profiled_code_mode_servers.values())
-        for mcp_server in all_servers:
-            maybe_enable_mcpcat_tracking(mcp_server, mcpcat_project_id, logger)
         posthog_client = build_posthog_client(logger)
         for mcp_server in all_servers:
             maybe_enable_posthog_mcp_analytics(mcp_server, posthog_client, logger)

@@ -3,9 +3,8 @@
 A dependency bump edits `pyproject.toml`; `uv.lock` must follow it, and the
 Docker image must install exactly the lock. The image used to `pip install -e .`
 (which re-resolves at build time, so production ran different versions than CI)
-and then re-pinned pydantic by hand after AgentCat. It now runs `uv sync
---locked` and installs AgentCat with the lock as a constraint, so these tests
-pin that mechanism in place rather than any single version.
+and then re-pinned pydantic by hand. It now runs `uv sync --locked`, so these
+tests pin that mechanism in place rather than any single version.
 """
 
 from __future__ import annotations
@@ -112,21 +111,6 @@ class TestImageInstallsTheLock:
                 f"Dockerfile installs the project outside the lock: {cmd}"
             )
 
-    def test_agentcat_is_constrained_by_the_lock(self):
-        # AgentCat sits outside the dependency graph on purpose. Installing it
-        # with the exported lock as a constraint means it can add packages but
-        # never move a locked one.
-        installs = [cmd for cmd in _dockerfile_run_commands() if "agentcat[community]==" in cmd]
-        assert len(installs) == 1, "expected exactly one AgentCat install step"
-        cmd = installs[0]
-        assert re.search(r"uv export\b[^&;]*--(locked|frozen)\b", cmd), (
-            "AgentCat constraints must come from `uv export --locked`"
-        )
-        assert re.search(r"--constraint\s|-c\s", cmd), (
-            "AgentCat must be installed with --constraint"
-        )
-        assert "uv pip check" in cmd, "expected `uv pip check` after installing AgentCat"
-
     def test_uv_image_is_pinned_to_an_exact_version(self):
         match = re.search(r"^FROM ghcr\.io/astral-sh/uv:(\S+)", _dockerfile_text(), re.MULTILINE)
         assert match, "expected uv to be copied from ghcr.io/astral-sh/uv"
@@ -152,9 +136,6 @@ class TestPinHelpersReadWhatTheyClaim:
     def test_pyproject_pin_is_found_and_looks_like_a_version(self):
         assert re.fullmatch(r"[0-9]+\.[0-9]+(\.[0-9]+)?", _pyproject_pin("pydantic"))
 
-    def test_dockerfile_agentcat_pin_is_found(self):
-        assert _dockerfile_pins("agentcat[community]")
-
     def test_dockerfile_run_commands_are_found(self):
         assert any("uv sync" in cmd for cmd in _dockerfile_run_commands())
 
@@ -165,7 +146,7 @@ class TestPinHelpersReadWhatTheyClaim:
         pattern = r"pip install\b[^&;]*\s(-e\s+)?\.(\s|$)"
         assert re.search(pattern, "uv pip install --system --no-cache-dir -e .")
         assert re.search(pattern, "pip install .")
-        assert not re.search(pattern, 'uv pip install --python /opt/venv/bin/python "agentcat"')
+        assert not re.search(pattern, 'uv pip install --python /opt/venv/bin/python "somepkg"')
 
     def test_unpinned_package_raises_rather_than_passing_silently(self):
         # A package listed with >= must not be mistaken for a pinned one, or
