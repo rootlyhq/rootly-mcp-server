@@ -394,6 +394,11 @@ async def test_flat_writable_alert_attribute_is_still_repaired(server, sent):
 
 @pytest.mark.parametrize("tool", ["resolve_alert", "acknowledge_alert"])
 async def test_alert_status_actions_can_still_post_without_a_body(server, sent, tool):
+    registered = await server.get_tool(tool)
+    assert registered.annotations is not None
+    assert registered.annotations.read_only_hint is False
+    assert registered.annotations.destructive_hint is True
+
     result = await _call(server, tool, {"id": INCIDENT_ID})
 
     assert not result.is_error

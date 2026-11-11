@@ -141,6 +141,8 @@ def _provider_tool_inventory(
 # rotated webhook secret stops the old one working immediately.
 _DESTRUCTIVE_CREATE_OPERATIONS = frozenset(
     {
+        "acknowledge_alert",
+        "resolve_alert",
         "create_override_shift",
         "create_workflow_run",
         "run_ai_automation",
