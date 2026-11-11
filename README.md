@@ -32,7 +32,7 @@ Every client loads the whole tool list into the model's context: the full surfac
 | `incidents` | Action items, events, roles, retrospectives, form field selections, meeting recordings |
 | `alerts` | Alerts, alert sources, routes and routing rules, urgencies, heartbeats, live call routers |
 | `oncall` | Schedules, rotations, shifts, overrides, escalation policies and paths |
-| `workflows` | Workflows, workflow runs, playbooks; reading and deleting workflow tasks |
+| `workflows` | Workflows, workflow runs, playbooks; listing and reading workflow tasks |
 | `catalog` | Services, functionalities, teams, environments, catalogs |
 | `status_pages` | Status pages, templates, pulses |
 | `config` | Severities, causes, incident types, forms, retrospective processes, dashboards |

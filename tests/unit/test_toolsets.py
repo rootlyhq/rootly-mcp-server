@@ -106,7 +106,7 @@ async def test_every_toolset_but_automations_leaves_them_all_out(token):
 
     assert not _AUTOMATION_TOOLS & names
     # Their neighbours stay: investigations and skills, workflows and runs,
-    # and reading or deleting a workflow task.
+    # and listing or reading a workflow task.
     assert {
         "start_investigation",
         "list_ai_skills",

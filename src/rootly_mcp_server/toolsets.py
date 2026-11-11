@@ -188,7 +188,7 @@ TAG_TOOLSETS: dict[str, str] = {
 # tools, and generated tools that belong somewhere other than their tag.
 CURATED_TOOLSETS: dict[str, str] = {
     # Creating or changing a workflow task stores an action Rootly runs on
-    # every later workflow run; listing, reading and deleting stay in workflows.
+    # every later workflow run; listing and reading them stay in workflows.
     "create_workflow_task": "automations",
     "update_workflow_task": "automations",
     "list_endpoints": "config",
