@@ -8,6 +8,7 @@ from fastmcp import Client
 
 from rootly_mcp_server import toolsets
 from rootly_mcp_server.server import _provider_tool_inventory, create_rootly_mcp_server
+from rootly_mcp_server.server_defaults import enabled_tools_from_env, hosted_tool_profile_from_env
 from rootly_mcp_server.spec_transform import _filter_openapi_spec
 from rootly_mcp_server.toolsets import ToolSelection
 
@@ -33,13 +34,22 @@ async def test_hosted_profiles_expose_coverage_writes_only_when_enabled(
     monkeypatch, profile, writes
 ):
     monkeypatch.setenv("ROOTLY_MCP_HOSTED_TOOL_PROFILE", profile)
+    enabled_tools = enabled_tools_from_env(
+        hosted=True, hosted_tool_profile=hosted_tool_profile_from_env()
+    )
     server = create_rootly_mcp_server(
-        swagger_path=SWAGGER_PATH, hosted=True, enable_write_tools=writes
+        swagger_path=SWAGGER_PATH,
+        hosted=True,
+        enable_write_tools=writes,
+        enabled_tools=enabled_tools,
     )
     async with Client(server) as client:
         tools = {tool.name: tool for tool in await client.list_tools()}
 
     assert READ_TOOLS <= tools.keys()
+    if profile != "full":
+        assert enabled_tools is not None
+        assert "create_team" not in tools
     if writes:
         assert WRITE_TOOLS <= tools.keys()
         create_annotations = tools["create_shift_coverage_request"].annotations
