@@ -410,7 +410,7 @@ def test_alert_status_actions_are_not_exposed_when_writes_are_disabled(monkeypat
     readonly = create_rootly_mcp_server(
         swagger_path=SWAGGER_PATH, hosted=False, enable_write_tools=False
     )
-    tools, _, _ = _provider_tool_inventory(readonly)
+    _, _, tools = _provider_tool_inventory(readonly)
 
     assert "resolve_alert" not in tools
     assert "acknowledge_alert" not in tools
