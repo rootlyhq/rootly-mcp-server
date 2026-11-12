@@ -71,7 +71,10 @@ def request_headers() -> dict[str, str]:
     try:
         from fastmcp.server.dependencies import get_http_headers
 
-        return {str(k).lower(): str(v) for k, v in get_http_headers().items()}
+        return {
+            str(k).lower(): str(v)
+            for k, v in get_http_headers(include={MCP_SESSION_ID_HEADER}).items()
+        }
     except Exception:  # nosec B110 - no HTTP request in scope (stdio, tests)
         return {}
 
