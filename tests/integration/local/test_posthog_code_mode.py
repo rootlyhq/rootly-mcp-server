@@ -26,6 +26,8 @@ from rootly_mcp_server.posthog_analytics import (
 )
 from rootly_mcp_server.transport import AuthCaptureMiddleware
 
+BUNDLED_SPEC = Path(__file__).resolve().parents[3] / "src/rootly_mcp_server/data/swagger.json"
+
 
 @pytest.mark.integration
 async def test_calls_execute_makes_reach_posthog(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -33,7 +35,7 @@ async def test_calls_execute_makes_reach_posthog(monkeypatch: pytest.MonkeyPatch
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     monkeypatch.delenv("ROOTLY_MCP_ENABLED_TOOLS", raising=False)
     server = create_rootly_codemode_server(
-        swagger_path=str(Path(__file__).resolve().parents[3] / "swagger.json"),
+        swagger_path=str(BUNDLED_SPEC),
         hosted=True,
     )
     client = new_posthog_client("phc_test", send=False)
@@ -69,9 +71,7 @@ async def test_calls_execute_makes_reach_posthog(monkeypatch: pytest.MonkeyPatch
 async def test_replayed_http_sessions_group_outer_and_inner_events(monkeypatch):
     monkeypatch.setenv("DISABLE_DIAGNOSTICS", "true")
     monkeypatch.delenv("ROOTLY_MCP_ENABLED_TOOLS", raising=False)
-    server = create_rootly_codemode_server(
-        swagger_path="src/rootly_mcp_server/data/swagger.json", hosted=True
-    )
+    server = create_rootly_codemode_server(swagger_path=str(BUNDLED_SPEC), hosted=True)
     posthog = new_posthog_client("phc_test", send=False)
     hook = posthog.before_send
     assert hook is not None
