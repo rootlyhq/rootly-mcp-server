@@ -7,16 +7,19 @@ import functools
 import logging
 import os
 import re
+import time
+from collections.abc import Mapping
 from contextvars import ContextVar
 from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ValidationError as MCPValidationError
 from fastmcp.server.middleware import Middleware as MCPMiddleware
-from posthog import Posthog
+from posthog.client import Client
 from posthog.exception_utils import exceptions_from_error_tuple
 from posthog.mcp import (
     MCPAnalyticsOptions,
+    PostHogMCP,
     PostHogMcpStatelessSessionMiddleware,
     UserIdentity,
     instrument,
@@ -24,18 +27,37 @@ from posthog.mcp import (
 from starlette.middleware import Middleware as ASGIMiddleware
 
 from . import __version__
-from .exceptions import GUIDED_ERROR_TYPE_NAMES, is_guided_exception
+from .exceptions import GUIDED_ERROR_TYPE_NAMES, is_guided_exception, is_tool_error_result
+from .posthog_sessions import current_session_id, request_headers
 from .telemetry_scrubber import redact_telemetry_text, scrub_posthog_mcp_event
 from .transport import get_hosted_authenticated_user
 
+PARENT_TOOL_PROPERTY = "rootly_parent_tool"
+_IDENTITY_PROPERTIES = ("email", "name")
 
-def build_posthog_client(logger: logging.Logger) -> Posthog | None:
+
+def new_posthog_client(token: str, **kwargs: Any) -> PostHogMCP:
+    """A PostHogMCP: a drop-in Posthog client that can also record the tool calls
+    Code Mode's execute makes, which instrument() never sees.
+
+    Those calls skip instrument()'s before_send, so the client scrubs them
+    itself. They send no `$exception`: the execute call that ran them does.
+    """
+    kwargs.setdefault("server_build", server_build_from_env())
+    return PostHogMCP(
+        token, before_send=scrub_nested_tool_call, mcp_exception_autocapture=False, **kwargs
+    )
+
+
+def build_posthog_client(logger: logging.Logger) -> PostHogMCP | None:
     """Create the process-wide PostHog client, or None when analytics stays off."""
     token = os.getenv("POSTHOG_PROJECT_TOKEN", "").strip()
     if not token:
         return None
     try:
-        client = Posthog(token, host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com"))
+        client = new_posthog_client(
+            token, host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
+        )
         logger.info("PostHog MCP analytics on")
         return client
     except Exception as error:
@@ -46,10 +68,27 @@ def build_posthog_client(logger: logging.Logger) -> Posthog | None:
         return None
 
 
+def identity_properties(user: Mapping[str, str]) -> dict[str, str] | None:
+    """The person properties set for a hosted user, the ones the web app sets."""
+    return {key: user[key] for key in _IDENTITY_PROPERTIES if user.get(key)} or None
+
+
+def identity_groups(user: Mapping[str, str]) -> dict[str, str] | None:
+    """The organization group, keyed by Rootly team ID like the web app's."""
+    organization_id = user.get("organization_id")
+    return {"organization": organization_id} if organization_id else None
+
+
 def identify(_request: Any, _extra: Any) -> UserIdentity | None:
-    """Identify hosted users by Rootly user ID only."""
+    """Identify hosted users by Rootly user ID, with their email, name and organization."""
     user = get_hosted_authenticated_user()
-    return UserIdentity(distinct_id=str(user["id"])) if user else None
+    if not user:
+        return None
+    return UserIdentity(
+        distinct_id=str(user["id"]),
+        properties=identity_properties(user),
+        groups=identity_groups(user),
+    )
 
 
 class CallableMiddlewareAdapter(MCPMiddleware):
@@ -200,6 +239,38 @@ def _status_from_messages(messages: list[str]) -> int | None:
     return None
 
 
+def _classify_failure(
+    status: int | None, *, guided: bool, validation: bool = False
+) -> dict[str, Any]:
+    properties: dict[str, Any] = {}
+    if status is not None:
+        properties["$mcp_error_status"] = str(status)
+    if guided:
+        properties["mcp_error_expected"] = True
+        properties["mcp_error_expected_reason"] = "guided"
+    elif validation:
+        properties["mcp_error_expected"] = True
+        properties["mcp_error_expected_reason"] = "invalid_arguments"
+    elif status in _EXPECTED_UPSTREAM_STATUSES:
+        properties["mcp_error_expected"] = True
+        properties["mcp_error_expected_reason"] = "upstream_answer"
+    else:
+        properties["mcp_error_expected"] = False
+    return properties
+
+
+def failure_properties(exc: BaseException) -> dict[str, Any]:
+    """The failure detail a tool call's exception gives its `$mcp_tool_call`."""
+    return {
+        "$mcp_error_type": type(_primary_exception(exc)).__name__,
+        **_classify_failure(
+            _http_status(exc),
+            guided=is_guided_exception(exc),
+            validation=isinstance(_primary_exception(exc), MCPValidationError),
+        ),
+    }
+
+
 def enrich_posthog_mcp_event(event: Any) -> Any:
     """Put the real exception back on a failed tool call's events.
 
@@ -232,15 +303,9 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
 
     exc = _tool_exception.get()
     if exc is not None:
-        properties["$mcp_error_type"] = type(_primary_exception(exc)).__name__
-        status = _http_status(exc)
-        guided = is_guided_exception(exc)
-        validation = isinstance(_primary_exception(exc), MCPValidationError)
+        properties.update(failure_properties(exc))
     else:
-        status = _status_from_messages(_event_messages(properties))
-        guided = bool(_event_types(properties) & GUIDED_ERROR_TYPE_NAMES)
-        # A bare "ValidationError" could be a Pydantic failure inside a tool.
-        # FastMCP uses its own class only for invalid caller arguments.
+        # A bare ValidationError may be a model failure inside the tool.
         exception_list = properties.get("$exception_list")
         validation = isinstance(exception_list, list) and any(
             isinstance(entry, dict)
@@ -248,19 +313,13 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
             and entry.get("module") == "fastmcp.exceptions"
             for entry in exception_list
         )
-    if status is not None:
-        properties["$mcp_error_status"] = str(status)
-    if guided:
-        properties["mcp_error_expected"] = True
-        properties["mcp_error_expected_reason"] = "guided"
-    elif validation:
-        properties["mcp_error_expected"] = True
-        properties["mcp_error_expected_reason"] = "invalid_arguments"
-    elif status in _EXPECTED_UPSTREAM_STATUSES:
-        properties["mcp_error_expected"] = True
-        properties["mcp_error_expected_reason"] = "upstream_answer"
-    else:
-        properties["mcp_error_expected"] = False
+        properties.update(
+            _classify_failure(
+                _status_from_messages(_event_messages(properties)),
+                guided=bool(_event_types(properties) & GUIDED_ERROR_TYPE_NAMES),
+                validation=validation,
+            )
+        )
 
     if name == "$exception":
         if properties["mcp_error_expected"]:
@@ -277,9 +336,150 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
 
 
 def prepare_posthog_mcp_event(event: Any) -> Any:
-    """PostHog `before_send`: restore error detail, drop expected exceptions, scrub."""
+    """PostHog `before_send`: restore error detail, drop expected exceptions,
+    put the event in the caller's session, scrub."""
     enriched = enrich_posthog_mcp_event(event)
-    return None if enriched is None else scrub_posthog_mcp_event(enriched)
+    if enriched is None:
+        return None
+    session_id = current_session_id()
+    properties = enriched.get("properties")
+    if session_id and isinstance(properties, dict):
+        properties["$session_id"] = session_id
+    return scrub_posthog_mcp_event(enriched)
+
+
+def scrub_nested_tool_call(event: Any) -> Any:
+    """The client's own before_send. instrument() events arrive already prepared,
+    so only the nested calls PostHogNestedToolCallMiddleware records are scrubbed."""
+    properties = event.get("properties") if isinstance(event, dict) else None
+    if isinstance(properties, dict) and PARENT_TOOL_PROPERTY in properties:
+        return scrub_posthog_mcp_event(event)
+    return event
+
+
+# The tool call this request is running, so a call made from inside it (Code
+# Mode's execute -> call_tool) is recognised as nested.
+_outer_tool_name: ContextVar[str | None] = ContextVar("rootly_posthog_outer_tool", default=None)
+
+
+def _result_payload(result: Any) -> Any:
+    structured = getattr(result, "structured_content", None)
+    if structured is not None:
+        return structured
+    return [
+        block.model_dump(mode="json") if hasattr(block, "model_dump") else str(block)
+        for block in getattr(result, "content", None) or []
+    ]
+
+
+def _result_failure_properties(result: Any) -> dict[str, Any]:
+    """Classify a returned error without changing the result seen by the caller."""
+    if not is_tool_error_result(result):
+        return {}
+    structured = getattr(result, "structured_content", None)
+    payload = structured if isinstance(structured, dict) else {}
+    error_type = str(payload.get("error_type") or "ToolError")
+    message = str(payload.get("message") or "")
+    if not message:
+        message = next(
+            (
+                str(block.text)
+                for block in (getattr(result, "content", None) or [])
+                if getattr(block, "text", "")
+            ),
+            "Tool returned an error",
+        )
+    details = payload.get("details")
+    details = details if isinstance(details, dict) else {}
+    raw_status = details.get("upstream_status", details.get("status_code", details.get("status")))
+    status = int(str(raw_status)) if str(raw_status).isdigit() else _status_from_messages([message])
+    return {
+        "$mcp_error_type": error_type,
+        "$mcp_error_message": message,
+        **_classify_failure(
+            status,
+            guided=error_type in GUIDED_ERROR_TYPE_NAMES,
+            validation=error_type == "validation_error" and status is None,
+        ),
+    }
+
+
+class PostHogNestedToolCallMiddleware(MCPMiddleware):
+    """Records the tool calls nested inside another one.
+
+    Code Mode's execute runs them in process through ctx.fastmcp.call_tool, so
+    they never reach the transport-level hook instrument() installs. Each is
+    recorded as its own `$mcp_tool_call`, tagged with the tool that ran it and
+    classified like any other failure.
+    """
+
+    def __init__(self, client: Client) -> None:
+        self.client = client
+
+    async def on_call_tool(self, context: Any, call_next: Any) -> Any:
+        parent = _outer_tool_name.get()
+        if parent is None:
+            token = _outer_tool_name.set(context.message.name)
+            try:
+                return await call_next(context)
+            finally:
+                _outer_tool_name.reset(token)
+
+        start = time.monotonic()
+        try:
+            result = await call_next(context)
+        except Exception as error:
+            self._record(parent, context, start, error=error)
+            raise
+        self._record(parent, context, start, result=result)
+        return result
+
+    def _record(
+        self,
+        parent: str,
+        context: Any,
+        start: float,
+        *,
+        result: Any = None,
+        error: Exception | None = None,
+    ) -> None:
+        user = get_hosted_authenticated_user()
+        if not isinstance(self.client, PostHogMCP) or not user:
+            return
+        try:
+            properties: dict[str, Any] = {
+                PARENT_TOOL_PROPERTY: parent,
+                "$mcp_server_version": __version__,
+            }
+            server = getattr(context.fastmcp_context, "fastmcp", None)
+            if server is not None:
+                properties["$mcp_server_name"] = server.name
+            returned_error = _result_failure_properties(result)
+            if error is not None:
+                properties.update(failure_properties(error))
+            else:
+                properties.update(returned_error)
+            headers = request_headers()
+            self.client.capture_tool_call(
+                context.message.name,
+                parameters=context.message.arguments,
+                response=None if result is None else _result_payload(result),
+                duration_ms=(time.monotonic() - start) * 1000,
+                is_error=error is not None or bool(returned_error),
+                error=error if error is not None else properties.get("$mcp_error_message"),
+                distinct_id=str(user["id"]),
+                set_properties=identity_properties(user),
+                groups=identity_groups(user),
+                session_id=current_session_id(),
+                client_user_agent=headers.get("user-agent"),
+                vendor_client=headers.get("x-anthropic-client"),
+                properties=properties,
+            )
+        except Exception as capture_error:  # noqa: BLE001 - analytics never breaks a tool call
+            _logger.debug(
+                "PostHog MCP analytics: nested tool call not recorded (%s)",
+                type(capture_error).__name__,
+            )
 
 
 def server_build_from_env() -> str | None:
@@ -288,7 +488,7 @@ def server_build_from_env() -> str | None:
 
 
 def maybe_enable_posthog_mcp_analytics(
-    server: FastMCP, posthog_client: Posthog | None, logger: logging.Logger
+    server: FastMCP, posthog_client: Client | None, logger: logging.Logger
 ) -> None:
     """Instrument *server* with PostHog MCP analytics when a client is configured."""
     if posthog_client is None:
@@ -296,6 +496,7 @@ def maybe_enable_posthog_mcp_analytics(
     try:
         adapt_callable_middleware(server)
         server.middleware.insert(0, ToolExceptionCaptureMiddleware())
+        server.middleware.insert(1, PostHogNestedToolCallMiddleware(posthog_client))
         options = MCPAnalyticsOptions(
             # No injected `context`, `conversation_id`, `llm_model` or
             # `get_more_tools`, so tool schemas are unchanged and agents are
@@ -317,7 +518,7 @@ def maybe_enable_posthog_mcp_analytics(
         )
 
 
-def posthog_session_middleware(posthog_client: Posthog | None) -> list[ASGIMiddleware]:
+def posthog_session_middleware(posthog_client: Client | None) -> list[ASGIMiddleware]:
     """ASGI middleware that ties a client's stateless requests into one PostHog session.
 
     It mints a self-encoded token into the `Mcp-Session-Id` header at

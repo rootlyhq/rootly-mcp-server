@@ -7,23 +7,31 @@ that would bypass `scrub_posthog_mcp_event` fails here instead of leaking.
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
 import httpx2
 import pytest
-from fastmcp import Client, FastMCP
+from fastmcp import Client, Context, FastMCP
+from fastmcp.exceptions import ToolError
+from mcp.types import TextContent
 from posthog import Posthog
+from posthog.mcp import PostHogMCP
+from posthog.mcp.session import derive_session_id_from_mcp_session
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from rootly_mcp_server.__main__ import main
+from rootly_mcp_server.exceptions import GuidedToolError
 from rootly_mcp_server.posthog_analytics import (
     CallableMiddlewareAdapter,
     build_posthog_client,
+    identify,
     maybe_enable_posthog_mcp_analytics,
+    new_posthog_client,
     posthog_session_middleware,
     prepare_posthog_mcp_event,
 )
@@ -50,14 +58,14 @@ def test_build_posthog_client_uses_env_host():
     environ = {"POSTHOG_PROJECT_TOKEN": "phc_test", "POSTHOG_HOST": "https://eu.i.posthog.com"}
     with patch.dict("os.environ", environ, clear=True):
         client = build_posthog_client(Mock())
-    assert isinstance(client, Posthog)
+    assert isinstance(client, PostHogMCP)
     assert client.host == "https://eu.i.posthog.com"
 
 
 def test_build_posthog_client_logs_that_analytics_is_on():
     logger = Mock()
     with patch.dict("os.environ", {"POSTHOG_PROJECT_TOKEN": "phc_test"}, clear=True):
-        assert isinstance(build_posthog_client(logger), Posthog)
+        assert isinstance(build_posthog_client(logger), PostHogMCP)
     logger.info.assert_called_once_with("PostHog MCP analytics on")
 
 
@@ -121,7 +129,7 @@ def test_the_posthog_token_alone_turns_analytics_on(posthog_token, expect_postho
                     "rootly_mcp_server.__main__.create_rootly_mcp_server",
                     return_value=server,
                 ):
-                    with patch("rootly_mcp_server.posthog_analytics.Posthog"):
+                    with patch("rootly_mcp_server.posthog_analytics.PostHogMCP"):
                         with patch(
                             "rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"
                         ) as enable:
@@ -290,12 +298,11 @@ class DuckTypedMiddleware:
 async def test_callable_middleware_is_adapted_and_keeps_running():
     duck = DuckTypedMiddleware()
     server = server_with(duck)
-    position = next(i for i, m in enumerate(server.middleware) if m is duck)
-
     tools, events = await list_tools_and_capture(server)
 
-    # ToolExceptionCaptureMiddleware goes first; everything else keeps its order.
-    adapted = server.middleware[position + 1]
+    adapted = next(
+        m for m in server.middleware if isinstance(m, CallableMiddlewareAdapter) and m.inner is duck
+    )
     assert isinstance(adapted, CallableMiddlewareAdapter)
     assert adapted.inner is duck
     assert tools == ["ping"]
@@ -338,3 +345,245 @@ async def test_session_middleware_mints_and_keeps_the_session_header():
 
     assert minted, "initialize did not mint a session id"
     assert replayed.headers.get("mcp-session-id") in (None, minted)
+
+
+HOSTED_USER = {
+    "id": "4242",
+    "email": "jane@example.com",
+    "name": "Jane Doe",
+    "organization_id": "2837",
+}
+
+
+def hour_session_ids(user_id: str, *moments: datetime) -> set[str]:
+    return {
+        derive_session_id_from_mcp_session(f"user:{user_id}:hour:{moment:%Y%m%d%H}")
+        for moment in moments
+    }
+
+
+async def capture_final_events(
+    server: FastMCP, calls: list[tuple[str, dict[str, Any]]], user: dict[str, str] | None
+) -> list[dict[str, Any]]:
+    """Call tools through the real pipeline; return every event as it would be sent."""
+    client = new_posthog_client("phc_test", send=False)
+    hook = client.before_send
+    assert hook is not None
+    captured: list[dict[str, Any]] = []
+
+    def record(message: dict[str, Any]) -> dict[str, Any] | None:
+        kept = hook(message)
+        assert kept is None or isinstance(kept, dict)
+        if kept:
+            captured.append(kept)
+        return kept
+
+    client.before_send = record
+    with (
+        patch(
+            "rootly_mcp_server.posthog_analytics.get_hosted_authenticated_user", return_value=user
+        ),
+        patch(
+            "rootly_mcp_server.posthog_sessions.get_hosted_authenticated_user", return_value=user
+        ),
+    ):
+        maybe_enable_posthog_mcp_analytics(server, client, logging.getLogger(__name__))
+        async with Client(server) as mcp_client:
+            for name, arguments in calls:
+                await mcp_client.call_tool(name, arguments, raise_on_error=False)
+        await asyncio.sleep(0.2)
+        client.flush()
+    return captured
+
+
+def tool_calls(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        event["properties"]["$mcp_tool_name"]: event["properties"]
+        for event in events
+        if event["event"] == "$mcp_tool_call"
+    }
+
+
+def test_identify_sends_email_name_and_organization_group():
+    with patch(
+        "rootly_mcp_server.posthog_analytics.get_hosted_authenticated_user",
+        return_value=HOSTED_USER,
+    ):
+        identity = identify(None, None)
+
+    assert identity is not None
+    assert identity.distinct_id == "4242"
+    assert identity.properties == {"email": "jane@example.com", "name": "Jane Doe"}
+    assert identity.groups == {"organization": "2837"}
+
+
+def test_identify_leaves_out_what_the_user_lacks():
+    with patch(
+        "rootly_mcp_server.posthog_analytics.get_hosted_authenticated_user",
+        return_value={"id": "4242"},
+    ):
+        identity = identify(None, None)
+
+    assert identity is not None
+    assert identity.properties is None
+    assert identity.groups is None
+
+
+async def test_every_event_uses_the_callers_session():
+    before = datetime.now(UTC)
+    events = await capture_final_events(server_with(), [("ping", {}), ("ping", {})], HOSTED_USER)
+    after = datetime.now(UTC)
+
+    session_ids = {event["properties"]["$session_id"] for event in events}
+    assert len(session_ids) == 1
+    assert session_ids <= hour_session_ids("4242", before, after)
+
+
+def nesting_server() -> FastMCP:
+    server = FastMCP("Rootly Code Mode")
+
+    @server.tool
+    async def execute(code: str, ctx: Context) -> str:
+        result = await ctx.fastmcp.call_tool("lookup", {"q": code, "api_token": "hunter2"})
+        try:
+            await ctx.fastmcp.call_tool("lookup_guided", {})
+        except ToolError:
+            pass
+        block = result.content[0]
+        assert isinstance(block, TextContent)
+        return block.text
+
+    @server.tool
+    def lookup(q: str, api_token: str) -> str:
+        return f"found {q} Bearer {FAKE_BEARER}"
+
+    @server.tool
+    def lookup_guided() -> str:
+        raise GuidedToolError("pass q")
+
+    return server
+
+
+async def test_calls_nested_in_execute_are_captured(monkeypatch):
+    monkeypatch.setenv("ROOTLY_MCP_BUILD", "abc123-deployed")
+    before = datetime.now(UTC)
+    events = await capture_final_events(
+        nesting_server(), [("execute", {"code": "incidents"})], HOSTED_USER
+    )
+    after = datetime.now(UTC)
+
+    calls = tool_calls(events)
+    assert set(calls) == {"execute", "lookup", "lookup_guided"}
+    assert {call["$mcp_server_build"] for call in calls.values()} == {"abc123-deployed"}
+    nested = calls["lookup"]
+    assert nested["rootly_parent_tool"] == "execute"
+    assert nested["$mcp_server_name"] == "Rootly Code Mode"
+    assert nested["$mcp_is_error"] is False
+    assert nested["$groups"] == {"organization": "2837"}
+    assert {nested["$session_id"], calls["execute"]["$session_id"]} <= hour_session_ids(
+        "4242", before, after
+    )
+    assert nested["$session_id"] == calls["execute"]["$session_id"]
+    guided = calls["lookup_guided"]
+    assert guided["$mcp_is_error"] is True
+    assert guided["mcp_error_expected"] is True
+    assert guided["mcp_error_expected_reason"] == "guided"
+    assert guided["$mcp_error_type"] == "GuidedToolError"
+    assert "rootly_parent_tool" not in calls["execute"]
+    nested_distinct_ids = {
+        event["distinct_id"] for event in events if "rootly_parent_tool" in event["properties"]
+    }
+    assert nested_distinct_ids == {"4242"}
+    assert not [event for event in events if event["event"] == "$exception"]
+    for secret in ("hunter2", FAKE_BEARER):
+        assert secret not in repr(events)
+
+
+async def test_nested_calls_are_skipped_without_a_hosted_user():
+    events = await capture_final_events(
+        nesting_server(), [("execute", {"code": "incidents"})], None
+    )
+
+    assert set(tool_calls(events)) == {"execute"}
+
+
+async def test_middleware_rejected_inner_calls_are_recorded():
+    from rootly_mcp_server import toolsets
+    from rootly_mcp_server.code_mode import create_rootly_codemode_server
+    from rootly_mcp_server.toolsets import ToolSelection
+
+    server = create_rootly_codemode_server(
+        swagger_path="src/rootly_mcp_server/data/swagger.json", hosted=True, enable_write_tools=True
+    )
+    reset = toolsets.requested_selection.set(ToolSelection(frozenset({"all"}), readonly=True))
+    try:
+        events = await capture_final_events(
+            server,
+            [("execute", {"code": "return await call_tool('create_incident', {'title': 'test'})"})],
+            HOSTED_USER,
+        )
+    finally:
+        toolsets.requested_selection.reset(reset)
+
+    calls = tool_calls(events)
+    assert set(calls) == {"execute", "create_incident"}
+    rejected = calls["create_incident"]
+    assert rejected["$mcp_is_error"] is True
+    assert rejected["mcp_error_expected"] is True
+    assert "read-only" in rejected["$mcp_error_message"]
+
+
+@pytest.mark.parametrize(
+    ("error_type", "details", "expected"),
+    [
+        ("validation_error", {}, True),
+        ("validation_error", {"upstream_status": 422}, False),
+        ("api_error", {"upstream_status": 500}, False),
+    ],
+)
+async def test_returned_inner_errors_keep_their_failure_metadata(error_type, details, expected):
+    server = FastMCP("Rootly Code Mode")
+
+    @server.tool
+    async def execute(ctx: Context) -> str:
+        await ctx.fastmcp.call_tool("lookup", {})
+        return "done"
+
+    @server.tool
+    def lookup() -> dict[str, Any]:
+        return {
+            "error": True,
+            "error_type": error_type,
+            "message": "lookup failed",
+            "details": details,
+        }
+
+    events = await capture_final_events(server, [("execute", {})], HOSTED_USER)
+    calls = tool_calls(events)
+    assert calls["execute"]["$mcp_is_error"] is False
+    failed = calls["lookup"]
+    assert failed["$mcp_is_error"] is True
+    assert failed["$mcp_error_type"] == error_type
+    assert failed["$mcp_error_message"] == "lookup failed"
+    assert failed["mcp_error_expected"] is expected
+    if details:
+        assert failed["$mcp_error_status"] == str(details["upstream_status"])
+    assert not [event for event in events if event["event"] == "$exception"]
+
+
+async def test_invalid_inner_arguments_are_expected():
+    server = FastMCP("Rootly Code Mode")
+
+    @server.tool
+    async def execute(ctx: Context) -> None:
+        await ctx.fastmcp.call_tool("lookup", {})
+
+    @server.tool
+    def lookup(value: int) -> int:
+        return value
+
+    events = await capture_final_events(server, [("execute", {})], HOSTED_USER)
+    failed = tool_calls(events)["lookup"]
+    assert failed["$mcp_is_error"] is True
+    assert failed["mcp_error_expected"] is True
+    assert failed["mcp_error_expected_reason"] == "invalid_arguments"
