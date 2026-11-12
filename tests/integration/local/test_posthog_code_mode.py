@@ -31,10 +31,12 @@ async def test_calls_execute_makes_reach_posthog(monkeypatch: pytest.MonkeyPatch
     )
     client = new_posthog_client("phc_test", send=False)
     hook = client.before_send
+    assert hook is not None
     tools: list[str] = []
 
     def record(message: dict[str, Any]) -> dict[str, Any] | None:
         kept = hook(message)
+        assert kept is None or isinstance(kept, dict)
         if kept and kept["event"] == "$mcp_tool_call":
             tools.append(kept["properties"]["$mcp_tool_name"])
         return kept

@@ -382,24 +382,24 @@ def _result_failure_properties(result: Any) -> dict[str, Any]:
     message = str(payload.get("message") or "")
     if not message:
         message = next(
-            (str(block.text) for block in getattr(result, "content", []) if getattr(block, "text", "")),
+            (
+                str(block.text)
+                for block in (getattr(result, "content", None) or [])
+                if getattr(block, "text", "")
+            ),
             "Tool returned an error",
         )
     details = payload.get("details")
     details = details if isinstance(details, dict) else {}
     raw_status = details.get("upstream_status", details.get("status_code", details.get("status")))
-    status = (
-        int(str(raw_status))
-        if str(raw_status).isdigit()
-        else _status_from_messages([message])
-    )
+    status = int(str(raw_status)) if str(raw_status).isdigit() else _status_from_messages([message])
     return {
         "$mcp_error_type": error_type,
         "$mcp_error_message": message,
         **_classify_failure(
             status,
             guided=error_type in GUIDED_ERROR_TYPE_NAMES,
-            validation=error_type == "validation_error",
+            validation=error_type == "validation_error" and status is None,
         ),
     }
 

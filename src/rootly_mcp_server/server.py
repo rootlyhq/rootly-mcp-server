@@ -28,7 +28,7 @@ from . import (
     toolsets,
     transport,
 )
-from .exceptions import GuidedToolError, RootlyAuthenticationError
+from .exceptions import GuidedToolError, RootlyAuthenticationError, is_tool_error_result
 from .landing_page import landing_page
 from .mcp_error import MCPError
 from .security import mask_sensitive_data, sanitize_error_message
@@ -374,8 +374,7 @@ def _normalize_error_details(value: Any) -> Any:
 def _extract_structured_tool_error(result: Any) -> dict[str, Any]:
     """Extract structured tool error metadata from an MCP error result, if present."""
     structured = getattr(result, "structured_content", None)
-    is_structured_tool_error = isinstance(structured, dict) and structured.get("error") is True
-    if not getattr(result, "is_error", False) and not is_structured_tool_error:
+    if not is_tool_error_result(result):
         return {}
 
     error_event: dict[str, Any] = {"error_type": "ToolError"}

@@ -5,6 +5,8 @@ This module defines specific exception types for better error handling
 and debugging throughout the application.
 """
 
+from typing import Any
+
 from fastmcp.exceptions import ToolError
 
 
@@ -41,6 +43,14 @@ def is_guided_exception(exc: BaseException) -> bool:
         seen.add(id(current))
         current = current.__cause__ or current.__context__
     return False
+
+
+def is_tool_error_result(result: Any) -> bool:
+    """Recognize MCP error results and Rootly's structured error contract."""
+    structured = getattr(result, "structured_content", None)
+    return bool(getattr(result, "is_error", False)) or (
+        isinstance(structured, dict) and structured.get("error") is True
+    )
 
 
 class RootlyMCPError(Exception):
