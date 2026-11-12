@@ -13,6 +13,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ValidationError as MCPValidationError
 from fastmcp.server.middleware import Middleware as MCPMiddleware
 from posthog.client import Client
 from posthog.exception_utils import exceptions_from_error_tuple
@@ -26,7 +27,7 @@ from posthog.mcp import (
 from starlette.middleware import Middleware as ASGIMiddleware
 
 from . import __version__
-from .exceptions import GUIDED_ERROR_TYPE_NAMES, is_guided_exception
+from .exceptions import GUIDED_ERROR_TYPE_NAMES, is_guided_exception, is_tool_error_result
 from .posthog_sessions import current_session_id, request_headers
 from .telemetry_scrubber import redact_telemetry_text, scrub_posthog_mcp_event
 from .transport import get_hosted_authenticated_user
@@ -42,6 +43,7 @@ def new_posthog_client(token: str, **kwargs: Any) -> PostHogMCP:
     Those calls skip instrument()'s before_send, so the client scrubs them
     itself. They send no `$exception`: the execute call that ran them does.
     """
+    kwargs.setdefault("server_build", server_build_from_env())
     return PostHogMCP(
         token, before_send=scrub_nested_tool_call, mcp_exception_autocapture=False, **kwargs
     )
@@ -237,13 +239,18 @@ def _status_from_messages(messages: list[str]) -> int | None:
     return None
 
 
-def _classify_failure(status: int | None, *, guided: bool) -> dict[str, Any]:
+def _classify_failure(
+    status: int | None, *, guided: bool, validation: bool = False
+) -> dict[str, Any]:
     properties: dict[str, Any] = {}
     if status is not None:
         properties["$mcp_error_status"] = str(status)
     if guided:
         properties["mcp_error_expected"] = True
         properties["mcp_error_expected_reason"] = "guided"
+    elif validation:
+        properties["mcp_error_expected"] = True
+        properties["mcp_error_expected_reason"] = "invalid_arguments"
     elif status in _EXPECTED_UPSTREAM_STATUSES:
         properties["mcp_error_expected"] = True
         properties["mcp_error_expected_reason"] = "upstream_answer"
@@ -256,7 +263,11 @@ def failure_properties(exc: BaseException) -> dict[str, Any]:
     """The failure detail a tool call's exception gives its `$mcp_tool_call`."""
     return {
         "$mcp_error_type": type(_primary_exception(exc)).__name__,
-        **_classify_failure(_http_status(exc), guided=is_guided_exception(exc)),
+        **_classify_failure(
+            _http_status(exc),
+            guided=is_guided_exception(exc),
+            validation=isinstance(_primary_exception(exc), MCPValidationError),
+        ),
     }
 
 
@@ -266,9 +277,10 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
     On `$mcp_tool_call` and its `$exception` sibling: the exception class as
     `$mcp_error_type`, the upstream HTTP status as `$mcp_error_status`, and
     `mcp_error_expected` (with `mcp_error_expected_reason`) for failures that
-    are the server answering a mistake (a guided error) or the API answering
-    the caller (401/403/404/409/429). The `$exception` sibling gets the real
-    `$exception_list`, frames and cause chain included. Every event gets this
+    are the server answering a mistake (a guided error or invalid tool
+    arguments) or the API answering the caller (401/403/404/409/429). The
+    `$exception` sibling gets the real `$exception_list`, frames and cause
+    chain included. Every event gets this
     server's version in place of the framework's.
 
     The `$exception` sibling of an expected failure is dropped (None): it would
@@ -293,10 +305,19 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
     if exc is not None:
         properties.update(failure_properties(exc))
     else:
+        # A bare ValidationError may be a model failure inside the tool.
+        exception_list = properties.get("$exception_list")
+        validation = isinstance(exception_list, list) and any(
+            isinstance(entry, dict)
+            and entry.get("type") == "ValidationError"
+            and entry.get("module") == "fastmcp.exceptions"
+            for entry in exception_list
+        )
         properties.update(
             _classify_failure(
                 _status_from_messages(_event_messages(properties)),
                 guided=bool(_event_types(properties) & GUIDED_ERROR_TYPE_NAMES),
+                validation=validation,
             )
         )
 
@@ -351,6 +372,38 @@ def _result_payload(result: Any) -> Any:
     ]
 
 
+def _result_failure_properties(result: Any) -> dict[str, Any]:
+    """Classify a returned error without changing the result seen by the caller."""
+    if not is_tool_error_result(result):
+        return {}
+    structured = getattr(result, "structured_content", None)
+    payload = structured if isinstance(structured, dict) else {}
+    error_type = str(payload.get("error_type") or "ToolError")
+    message = str(payload.get("message") or "")
+    if not message:
+        message = next(
+            (str(block.text) for block in getattr(result, "content", []) if getattr(block, "text", "")),
+            "Tool returned an error",
+        )
+    details = payload.get("details")
+    details = details if isinstance(details, dict) else {}
+    raw_status = details.get("upstream_status", details.get("status_code", details.get("status")))
+    status = (
+        int(str(raw_status))
+        if str(raw_status).isdigit()
+        else _status_from_messages([message])
+    )
+    return {
+        "$mcp_error_type": error_type,
+        "$mcp_error_message": message,
+        **_classify_failure(
+            status,
+            guided=error_type in GUIDED_ERROR_TYPE_NAMES,
+            validation=error_type == "validation_error",
+        ),
+    }
+
+
 class PostHogNestedToolCallMiddleware(MCPMiddleware):
     """Records the tool calls nested inside another one.
 
@@ -401,16 +454,19 @@ class PostHogNestedToolCallMiddleware(MCPMiddleware):
             server = getattr(context.fastmcp_context, "fastmcp", None)
             if server is not None:
                 properties["$mcp_server_name"] = server.name
+            returned_error = _result_failure_properties(result)
             if error is not None:
                 properties.update(failure_properties(error))
+            else:
+                properties.update(returned_error)
             headers = request_headers()
             self.client.capture_tool_call(
                 context.message.name,
                 parameters=context.message.arguments,
                 response=None if result is None else _result_payload(result),
                 duration_ms=(time.monotonic() - start) * 1000,
-                is_error=error is not None,
-                error=error,
+                is_error=error is not None or bool(returned_error),
+                error=error if error is not None else properties.get("$mcp_error_message"),
                 distinct_id=str(user["id"]),
                 set_properties=identity_properties(user),
                 groups=identity_groups(user),
@@ -440,7 +496,7 @@ def maybe_enable_posthog_mcp_analytics(
     try:
         adapt_callable_middleware(server)
         server.middleware.insert(0, ToolExceptionCaptureMiddleware())
-        server.add_middleware(PostHogNestedToolCallMiddleware(posthog_client))
+        server.middleware.insert(1, PostHogNestedToolCallMiddleware(posthog_client))
         options = MCPAnalyticsOptions(
             # No injected `context`, `conversation_id`, `llm_model` or
             # `get_more_tools`, so tool schemas are unchanged and agents are

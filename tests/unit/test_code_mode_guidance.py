@@ -371,6 +371,12 @@ async def test_call_shape_values_stay_data_in_the_sandbox():
         ("return {'ok': true}", "write True, not the JSON/JavaScript literal true"),
         ("return [null]", "write None"),
         ("import requests\nreturn 1", "no third-party packages, network or filesystem"),
+        (
+            "import re\nreturn re.sub('a', lambda m: 'b', 'a')",
+            "Use a string replacement instead of a callable",
+        ),
+        ("import os\nreturn os.getenv('ROOTLY_API_TOKEN')", "cannot read the host environment"),
+        ("import os\nreturn dict(os.environ)", "cannot read the host environment"),
     ],
 )
 async def test_sandbox_errors_carry_an_actionable_hint(client: Client, code: str, expected: str):
@@ -385,6 +391,8 @@ async def test_sandbox_errors_carry_an_actionable_hint(client: Client, code: str
         "a = {'x': 1}\nb = {'y': 2}\nreturn a | b",
         "import datetime\nreturn datetime.datetime.now(datetime.timezone.utc).isoformat()",
         "import datetime\nreturn datetime.date.today().isoformat()",
+        "import re\nreturn re.sub('a', '[redacted]', 'abc')",
+        "a = '2026-11-10T00:00:00Z'\nb = '2026-11-11T00:00:00Z'\nreturn a < b",
         "import json\nreturn json.loads('{\"a\": 1}')",
     ],
 )
@@ -422,7 +430,8 @@ async def test_sandbox_has_no_host_filesystem_or_environment(
 @pytest.mark.parametrize(
     "message",
     [
-        # Shapes observed in Sentry from earlier Monty releases.
+        # Shapes observed in Sentry/PostHog from earlier Monty releases.
+        "AttributeError: type object 'datetime.datetime' has no attribute 'fromisoformat'",
         "TypeError: '<' not supported between instances of 'list' and 'list'",
         "KeyError: value",
         "TypeError: list indices must be integers or slices, not str",
