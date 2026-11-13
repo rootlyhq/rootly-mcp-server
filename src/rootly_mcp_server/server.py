@@ -1263,11 +1263,12 @@ def create_rootly_mcp_server(
         name: Name of the MCP server.
         allowed_paths: List of API paths to include. If None, includes default paths.
         delete_allowed_paths: Path templates where DELETE operations are exposed.
-            If None, destructive delete tools remain disabled by default.
+            If None, coverage-request cancellation follows the write setting;
+            other delete tools require an explicit allowlist. An empty list disables all deletes.
         hosted: Whether the server is hosted (affects authentication).
         base_url: Base URL for Rootly API. If None, uses ROOTLY_BASE_URL env var or default.
         transport: Transport protocol (stdio, sse, or streamable-http).
-        enable_write_tools: Whether non-destructive write tools are exposed.
+        enable_write_tools: Whether write tools, including allowlisted deletes, are exposed.
             If None, uses ROOTLY_MCP_ENABLE_WRITE_TOOLS.
         write_allowed_paths: Path templates where POST/PUT/PATCH operations are exposed
             when write tools are enabled. If None, uses DEFAULT_WRITE_ALLOWED_PATHS.
@@ -1296,7 +1297,9 @@ def create_rootly_mcp_server(
         if enabled_tools & {"create_workflow_task", "update_workflow_task"}:
             enabled_tools = enabled_tools | {spec_transform.WORKFLOW_TASK_PARAMS_SCHEMA_TOOL}
     if delete_allowed_paths is None:
-        delete_allowed_paths = []
+        delete_allowed_paths = (
+            server_defaults.DEFAULT_WRITE_GATED_DELETE_PATHS if enable_write_tools else []
+        )
     if write_allowed_paths is None:
         write_allowed_paths = DEFAULT_WRITE_ALLOWED_PATHS if enable_write_tools else []
 
