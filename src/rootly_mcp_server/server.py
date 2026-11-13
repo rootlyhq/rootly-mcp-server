@@ -1224,10 +1224,16 @@ def _drop_null_arguments(
         plural = len(empty_required) > 1
         listed = ", ".join(f"'{name}'" for name in empty_required)
         example = ", ".join(f'"{name}": "<value>"' for name in empty_required)
+        hint = (
+            " For list_incidents, use incidents[*].incident_id, not id. "
+            "For search_incidents, use data[*].id."
+            if "incident_id" in empty_required
+            else ""
+        )
         raise GuidedToolError(
             f"{tool_name} requires the argument{'s' if plural else ''} {listed}, but got "
             f"{tool_arguments.describe_received(empty_required, args)} -- a placeholder, "
-            f"not a value. Retry with {{{example}}}."
+            f"not a value. Retry with {{{example}}}.{hint}"
         )
     if dropped:
         bucket = _tool_argument_rewrites.get()

@@ -30,7 +30,22 @@ BUNDLED_SPEC = Path(__file__).resolve().parents[3] / "src/rootly_mcp_server/data
 
 
 @pytest.mark.integration
-async def test_calls_execute_makes_reach_posthog(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("code", "expected_tools", "is_error"),
+    [
+        (
+            "return await call_tool('get_server_version', {})",
+            ["execute", "get_server_version"],
+            False,
+        ),
+        ("return data", ["execute"], True),
+        ("return __INC__", ["execute"], True),
+        ('return __import__("json")', ["execute"], True),
+    ],
+)
+async def test_calls_execute_makes_reach_posthog(
+    monkeypatch: pytest.MonkeyPatch, code: str, expected_tools: list[str], is_error: bool
+) -> None:
     monkeypatch.setenv("DISABLE_DIAGNOSTICS", "true")
     monkeypatch.delenv("SENTRY_DSN", raising=False)
     monkeypatch.delenv("ROOTLY_MCP_ENABLED_TOOLS", raising=False)
@@ -41,13 +56,13 @@ async def test_calls_execute_makes_reach_posthog(monkeypatch: pytest.MonkeyPatch
     client = new_posthog_client("phc_test", send=False)
     hook = client.before_send
     assert hook is not None
-    tools: list[str] = []
+    events: list[dict[str, Any]] = []
 
     def record(message: dict[str, Any]) -> dict[str, Any] | None:
         kept = hook(message)
         assert kept is None or isinstance(kept, dict)
-        if kept and kept["event"] == "$mcp_tool_call":
-            tools.append(kept["properties"]["$mcp_tool_name"])
+        if kept:
+            events.append(kept)
         return kept
 
     client.before_send = record
@@ -57,14 +72,17 @@ async def test_calls_execute_makes_reach_posthog(monkeypatch: pytest.MonkeyPatch
     ):
         maybe_enable_posthog_mcp_analytics(server, client, logging.getLogger(__name__))
         async with Client(server) as mcp_client:
-            result = await mcp_client.call_tool(
-                "execute", {"code": "return await call_tool('get_server_version', {})"}
-            )
+            result = await mcp_client.call_tool("execute", {"code": code}, raise_on_error=False)
         await asyncio.sleep(0.2)
         client.flush()
 
-    assert not result.is_error
-    assert sorted(tools) == ["execute", "get_server_version"]
+    assert result.is_error is is_error
+    calls = [event["properties"] for event in events if event["event"] == "$mcp_tool_call"]
+    assert sorted(call["$mcp_tool_name"] for call in calls) == expected_tools
+    if is_error:
+        assert calls[0]["mcp_error_expected"] is True
+        assert calls[0]["mcp_error_expected_reason"] == "guided"
+        assert not [event for event in events if event["event"] == "$exception"]
 
 
 @pytest.mark.integration

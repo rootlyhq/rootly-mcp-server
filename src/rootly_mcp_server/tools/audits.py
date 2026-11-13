@@ -304,6 +304,7 @@ def register_audit_tools(
                     "'Audits - read' permission on the role under Configuration -> "
                     "Roles & Permissions, or use a token whose role already has it.",
                     "permission_error",
+                    {"upstream_status": response.status_code},
                 )
             response.raise_for_status()
 

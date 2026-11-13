@@ -539,6 +539,10 @@ async def test_middleware_rejected_inner_calls_are_recorded():
         ("validation_error", {}, True),
         ("validation_error", {"upstream_status": 422}, False),
         ("api_error", {"upstream_status": 500}, False),
+        ("permission_error", {"upstream_status": 404}, True),
+        ("authentication_error", {"upstream_status": 403}, True),
+        ("authentication_error", {"upstream_status": 500}, False),
+        ("permission_error", {}, False),
     ],
 )
 async def test_returned_inner_errors_keep_their_failure_metadata(error_type, details, expected):
@@ -569,6 +573,33 @@ async def test_returned_inner_errors_keep_their_failure_metadata(error_type, det
     if details:
         assert failed["$mcp_error_status"] == str(details["upstream_status"])
     assert not [event for event in events if event["event"] == "$exception"]
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 422, 429, 500])
+async def test_returned_httpx_errors_keep_their_upstream_status(status):
+    server = FastMCP("Rootly Code Mode")
+
+    @server.tool
+    async def execute(ctx: Context) -> str:
+        await ctx.fastmcp.call_tool("lookup", {})
+        return "done"
+
+    @server.tool
+    def lookup() -> dict[str, Any]:
+        response = httpx2.Response(
+            status, request=httpx2.Request("GET", "https://api.rootly.com/v1/incidents")
+        )
+        try:
+            response.raise_for_status()
+        except httpx2.HTTPStatusError as exc:
+            return {"error": True, "error_type": "client_error", "message": f"Client error: {exc}"}
+        raise AssertionError("expected upstream failure")
+
+    events = await capture_final_events(server, [("execute", {})], HOSTED_USER)
+    failed = tool_calls(events)["lookup"]
+    assert failed["$mcp_is_error"] is True
+    assert failed["$mcp_error_status"] == str(status)
+    assert failed["mcp_error_expected"] is (status in {401, 403, 404, 409, 429})
 
 
 async def test_invalid_inner_arguments_are_expected():
