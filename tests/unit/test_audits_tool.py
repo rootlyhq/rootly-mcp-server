@@ -35,7 +35,10 @@ class FakeMCPError:
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         # Parameter names must match the MCPErrorLike protocol, not just types.
-        return {"error": True, "error_type": error_type, "message": error_message}
+        result: dict[str, Any] = {"error": True, "error_type": error_type, "message": error_message}
+        if details:
+            result["details"] = details
+        return result
 
 
 class FakeResponse:
@@ -148,6 +151,7 @@ class TestListAuditsPermissionError:
 
         assert result["error"] is True
         assert result["error_type"] == "permission_error"
+        assert result["details"]["upstream_status"] == 404
         assert "Audits - read" in result["message"]
         # The caller must not be told the feature is absent.
         assert "not found" not in result["message"].lower().replace("returns 404 both when", "")

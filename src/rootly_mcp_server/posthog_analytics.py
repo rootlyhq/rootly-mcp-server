@@ -137,7 +137,7 @@ _tool_exception: ContextVar[BaseException | None] = ContextVar(
 # conflict, the rate limit. 400 and 422 stay unexpected: those can mean the
 # server built the request wrong.
 _EXPECTED_UPSTREAM_STATUSES = frozenset({401, 403, 404, 409, 429})
-_HTTP_STATUS = re.compile(r"\bHTTP error (\d{3})\b")
+_HTTP_STATUS = re.compile(r"\b(?:HTTP error |(?:Client|Server) error [\'\"])([1-5]\d{2})\b")
 _FASTMCP_TOOL_WRAPPER = "Error calling tool"
 _MAX_FRAMES = 50
 _MAX_VALUE_LENGTH = 2048

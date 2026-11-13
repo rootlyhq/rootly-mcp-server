@@ -354,6 +354,9 @@ async def test_call_shape_values_stay_data_in_the_sandbox():
     ("code", "expected"),
     [
         ("return datetime.now()", "Add `import datetime` first"),
+        ("return data", "Define this variable before using it"),
+        ("return __INC__", "Replace template placeholders"),
+        ('return __import__("json")', "Use an import statement"),
         ("return dir()", "Introspection builtins"),
         ("return globals()", "Use tool_search / get_schema"),
         ("items = [1, 2]\nreturn next(items)", "`next(iter(items), None)`"),

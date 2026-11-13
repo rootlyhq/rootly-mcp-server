@@ -802,6 +802,9 @@ async def test_empty_required_argument_is_named(server, sent, value):
         "-- a placeholder, not a value."
     ) in text
     assert 'Retry with {"incident_id": "<value>"}' in text
+    assert "incidents[*].incident_id" in text
+    assert "not id" in text
+    assert "data[*].id" in text
     assert "valid string" not in text
     assert not sent
 

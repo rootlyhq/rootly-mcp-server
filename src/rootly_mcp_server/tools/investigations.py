@@ -93,7 +93,9 @@ def register_investigation_tools(
         if api_error:
             code = api_error.get("code")
             message = f"{api_error['title']} ({code})" if code else api_error["title"]
-        return mcp_error.tool_error(message, error_type)
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        details = {"upstream_status": status} if isinstance(status, int) else None
+        return mcp_error.tool_error(message, error_type, details)
 
     async def _fetch_progress(investigation_id: str, after_cursor: str | None) -> dict[str, Any]:
         params = {"after": after_cursor} if after_cursor else None

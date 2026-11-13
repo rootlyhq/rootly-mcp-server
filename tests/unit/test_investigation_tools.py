@@ -34,7 +34,10 @@ class FakeMCPError:
         error_type: str = "execution_error",
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {"error": True, "error_type": error_type, "message": error_message}
+        result: dict[str, Any] = {"error": True, "error_type": error_type, "message": error_message}
+        if details:
+            result["details"] = details
+        return result
 
 
 class _HTTPError(Exception):
@@ -314,6 +317,7 @@ async def test_cancel_investigation_surfaces_api_error_title_and_code():
     result = await tools["cancel_investigation"](investigation_id="inv-1")
 
     assert result["message"] == "The investigation has already finished. (not_cancellable)"
+    assert result["details"]["upstream_status"] == 409
 
 
 @pytest.mark.asyncio
@@ -328,3 +332,4 @@ async def test_get_investigation_error_without_code_shows_only_the_title():
     result = await tools["get_investigation"](investigation_id="missing")
 
     assert result["message"] == "Not found or unauthorized"
+    assert result["details"]["upstream_status"] == 404
