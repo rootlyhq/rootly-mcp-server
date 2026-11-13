@@ -5,7 +5,7 @@
 
 # uv is pinned (Dependabot's docker ecosystem bumps this tag). The binary is
 # copied in rather than pip-installed so it never lands in the runtime image.
-FROM ghcr.io/astral-sh/uv:0.13.7 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
 
 # ---------------------------------------------------------------------------
 # Builder: resolve nothing, install the lock into /opt/venv.
@@ -15,7 +15,7 @@ FROM ghcr.io/astral-sh/uv:0.13.7 AS uv
 # needs a wheel for it: there is no compiler here, so a package without one
 # fails the build instead of being compiled from source.
 # ---------------------------------------------------------------------------
-FROM python:3.14-slim AS builder
+FROM python:3.15-slim AS builder
 
 COPY --from=uv /uv /usr/local/bin/uv
 
@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------------------------------------------------------------------------
 # Runtime: same base image, no compiler, no uv, no build cache.
 # ---------------------------------------------------------------------------
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 # curl stays for container health checks.
 RUN apt-get update && apt-get install -y --no-install-recommends \
