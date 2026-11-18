@@ -185,3 +185,13 @@ async def test_visible_under_any_toolset_selection(monkeypatch):
             assert FEEDBACK_TOOL_NAME in await _names(server)
         finally:
             toolsets.requested_selection.reset(reset)
+
+
+def test_naming_it_in_a_tool_list_is_not_an_invalid_name(monkeypatch, caplog):
+    # main() registers it after the server applies the list, so the list
+    # check must not report it as unknown.
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    with caplog.at_level("WARNING"):
+        create_rootly_mcp_server(enabled_tools={"list_incidents", FEEDBACK_TOOL_NAME})
+
+    assert "Invalid tool names" not in caplog.text

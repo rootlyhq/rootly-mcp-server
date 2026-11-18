@@ -978,3 +978,47 @@ async def test_dual_http_client_disconnect_mid_body_is_not_an_error(path, caplog
     # client is gone.
     statuses = [m.get("status") for m in sent if m["type"] == "http.response.start"]
     assert statuses in ([], [200])
+
+
+@pytest.mark.parametrize(
+    ("enabled_tools", "expect_feedback"),
+    [
+        (None, True),
+        ("list_incidents", False),
+        ("list_incidents,submit_feedback", True),
+    ],
+    ids=["no-list", "list-without-feedback", "list-with-feedback"],
+)
+def test_main_feedback_respects_an_explicit_tool_list(enabled_tools, expect_feedback):
+    args = SimpleNamespace(
+        swagger_path=None,
+        log_level="ERROR",
+        name="Rootly",
+        transport="stdio",
+        debug=False,
+        base_url=None,
+        allowed_paths=None,
+        hosted=False,
+        enable_code_mode=False,
+        enable_write_tools=False,
+        enabled_tools=enabled_tools,
+        list_tools=False,
+        code_mode_path=None,
+        host=False,
+    )
+    server = SimpleNamespace(run=Mock())
+
+    with patch.dict(
+        "os.environ", {"ROOTLY_API_TOKEN": "x" * 40, "ROOTLY_MCP_ENABLE_CODE_MODE": "false"}
+    ):
+        with (
+            patch("rootly_mcp_server.__main__.parse_args", return_value=args),
+            patch("rootly_mcp_server.__main__.setup_logging"),
+            patch("rootly_mcp_server.__main__.create_rootly_mcp_server", return_value=server),
+            patch("rootly_mcp_server.__main__.build_posthog_client", return_value=Mock()),
+            patch("rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"),
+            patch("rootly_mcp_server.__main__.register_feedback_tool") as mock_feedback,
+        ):
+            main()
+
+    assert mock_feedback.called is expect_feedback

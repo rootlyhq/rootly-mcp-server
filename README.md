@@ -444,7 +444,9 @@ list that still send `context` or `session_id` are tolerated; the stray
 argument is dropped before validation.
 
 With the token set, the server also exposes `submit_feedback`, visible under
-every toolset selection (including `?readonly=true`). An agent calls it when
+every toolset selection (including `?readonly=true`); an explicit
+`ROOTLY_MCP_ENABLED_TOOLS` / `--enabled-tools` list includes it only if it
+names `submit_feedback`. An agent calls it when
 a tool failed, returned something unhelpful, or lacked a capability, and
 describes what it attempted, what it expected and a proposed fix. Each report
 is a `mcp_feedback_submitted` event for the signed-in user, in the same PostHog

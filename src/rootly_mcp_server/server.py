@@ -1765,7 +1765,9 @@ def create_rootly_mcp_server(
         registered_names = curated_names | autogen_names
 
         valid_tools = enabled_tools & registered_names
-        invalid_tools = sorted(enabled_tools - registered_names)
+        # Always-visible tools (submit_feedback) are registered later, by main(),
+        # so naming one in the list is valid even though it is not here yet.
+        invalid_tools = sorted(enabled_tools - registered_names - toolsets.ALWAYS_VISIBLE_TOOLS)
 
         if invalid_tools:
             audit.audit.log_configuration_error(
