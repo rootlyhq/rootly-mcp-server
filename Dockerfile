@@ -55,7 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# The venv's interpreter symlinks to /usr/local/bin/python3.14, which is the
+# The venv's interpreter symlinks to /usr/local/bin/python3.15, which is the
 # same path in both stages because they share a base image.
 COPY --from=builder /opt/venv /opt/venv
 
