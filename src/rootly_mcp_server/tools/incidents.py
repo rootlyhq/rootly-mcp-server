@@ -427,6 +427,53 @@ def _augment_pagination_error(result: JsonDict, page_number: int) -> JsonDict:
     return result
 
 
+_MAX_UPSTREAM_REASON_LENGTH = 500
+
+
+def _upstream_error_detail(exc: Exception) -> tuple[int | None, str | None]:
+    """The HTTP status and the API's own explanation from a failed request.
+
+    httpx's message names only the status and URL, so a 422 reached the model
+    as "Client error '422 Unprocessable Entity'" with nothing to correct. The
+    API explains itself in the body, either JSON:API (`errors[].title/detail`)
+    or Rails-style (`{"field": ["message"]}`).
+    """
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    status = status if isinstance(status, int) else None
+    if response is None:
+        return status, None
+    try:
+        body = response.json()
+    except Exception:  # nosec B110 - not JSON; the status alone is reported
+        return status, None
+    if not isinstance(body, dict):
+        return status, None
+
+    messages: list[str] = []
+    errors = body.get("errors")
+    if isinstance(errors, list):
+        for error in errors:
+            if not isinstance(error, dict):
+                continue
+            title = error.get("title")
+            detail = error.get("detail")
+            source = error.get("source")
+            pointer = source.get("pointer") if isinstance(source, dict) else None
+            parts = [str(p) for p in (title, detail) if isinstance(p, str) and p]
+            if parts:
+                text = ": ".join(dict.fromkeys(parts))
+                messages.append(f"{text} ({pointer})" if isinstance(pointer, str) else text)
+    else:
+        for field, value in body.items():
+            if isinstance(value, list) and all(isinstance(v, str) for v in value) and value:
+                prefix = "" if field == "base" else f"{field} "
+                messages.extend(f"{prefix}{v}" for v in value)
+
+    reason = "; ".join(messages)[:_MAX_UPSTREAM_REASON_LENGTH] or None
+    return status, reason
+
+
 def _normalize_incident_reference(reference: str) -> tuple[str, str | int]:
     """Classify and normalize an incident reference."""
     normalized = _normalize_optional_text(reference)
@@ -522,9 +569,27 @@ def register_incident_tools(
         if isinstance(exc, ValueError):
             return cast(JsonDict, mcp_error.tool_error(f"{action}: {exc}", "validation_error"))
         if isinstance(exc, LookupError):
-            return cast(JsonDict, mcp_error.tool_error(f"{action}: {exc}", "not_found"))
+            # The API answered: no incident with that number is visible to
+            # this token. Recorded as the 404 it is, so telemetry counts it
+            # as an answer rather than a server fault.
+            return cast(
+                JsonDict,
+                mcp_error.tool_error(
+                    f"{action}: {exc}. No incident with that number is visible to this "
+                    "token; do not retry it. Find the incident with search_incidents or "
+                    "list_incidents and pass its id.",
+                    "not_found",
+                    {"upstream_status": 404},
+                ),
+            )
         error_type, error_message = mcp_error.categorize_error(exc)
-        return cast(JsonDict, mcp_error.tool_error(f"{action}: {error_message}", error_type))
+        status, reason = _upstream_error_detail(exc)
+        if reason:
+            error_message = f"{error_message}\nRootly API says: {reason}"
+        details = {"upstream_status": status} if status is not None else None
+        return cast(
+            JsonDict, mcp_error.tool_error(f"{action}: {error_message}", error_type, details)
+        )
 
     async def _resolve_team_names_to_ids(teams: str) -> tuple[str, dict[str, str]]:
         """Resolve comma-separated team names/slugs to Rootly team IDs."""
