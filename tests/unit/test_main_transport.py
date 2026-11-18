@@ -536,18 +536,25 @@ def test_main_instruments_main_and_code_mode_servers_with_posthog():
                                 "rootly_mcp_server.__main__.build_posthog_client",
                                 return_value=posthog_client,
                             ):
-                                with patch(
-                                    "rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"
-                                ) as mock_instrument:
+                                with (
+                                    patch(
+                                        "rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"
+                                    ) as mock_instrument,
+                                    patch(
+                                        "rootly_mcp_server.__main__.register_feedback_tool"
+                                    ) as mock_feedback,
+                                ):
                                     main()
 
-    instrumented = [call.args[:2] for call in mock_instrument.call_args_list]
-    assert instrumented == [
+    expected = [
         (main_server, posthog_client),
         (slim_server, posthog_client),
         (code_mode_server, posthog_client),
         (slim_code_mode_server, posthog_client),
     ]
+    assert [call.args[:2] for call in mock_instrument.call_args_list] == expected
+    # Every surface gets submit_feedback, so a report can come from any of them.
+    assert [call.args[:2] for call in mock_feedback.call_args_list] == expected
 
 
 @pytest.mark.asyncio

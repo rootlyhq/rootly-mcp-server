@@ -443,6 +443,15 @@ hosted transport, PostHog sessions are tied together through the
 list that still send `context` or `session_id` are tolerated; the stray
 argument is dropped before validation.
 
+With the token set, the server also exposes `submit_feedback`, visible under
+every toolset selection (including `?readonly=true`). An agent calls it when
+a tool failed, returned something unhelpful, or lacked a capability, and
+describes what it attempted, what it expected and a proposed fix. Each report
+is a `mcp_feedback_submitted` event for the signed-in user, in the same PostHog
+session as their tool calls. Fields are credential-scrubbed and length-capped,
+and each user can send 5 reports per hour per server process. Report text is
+written by the caller's agent: treat it as untrusted data wherever it is read.
+
 ### OpenAI Apps domain verification
 
 Hosted deployments expose an unauthenticated domain-verification endpoint used by the OpenAI plugin directory:

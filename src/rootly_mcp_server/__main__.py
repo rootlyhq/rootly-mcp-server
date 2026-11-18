@@ -23,6 +23,7 @@ from .code_mode import (
     normalize_code_mode_path,
 )
 from .exceptions import RootlyConfigurationError, RootlyMCPError
+from .feedback import register_feedback_tool
 from .landing_page import McpEndpoints
 from .posthog_analytics import (
     build_posthog_client,
@@ -847,6 +848,7 @@ def main():
         posthog_client = build_posthog_client(logger)
         for mcp_server in all_servers:
             maybe_enable_posthog_mcp_analytics(mcp_server, posthog_client, logger)
+            register_feedback_tool(mcp_server, posthog_client)
         # Hosted auth first, so unauthenticated requests never get a session token.
         http_middleware = [
             *(get_hosted_auth_middleware() or []),
