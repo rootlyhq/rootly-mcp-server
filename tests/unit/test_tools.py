@@ -62,8 +62,13 @@ class FakeMCPError:
         return (exception.__class__.__name__, str(exception))
 
     @staticmethod
-    def tool_error(message: str, error_type: str) -> dict[str, Any]:
-        return {"error": True, "error_type": error_type, "message": message}
+    def tool_error(
+        message: str, error_type: str, details: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {"error": True, "error_type": error_type, "message": message}
+        if details:
+            result["details"] = details
+        return result
 
 
 @pytest.mark.unit
