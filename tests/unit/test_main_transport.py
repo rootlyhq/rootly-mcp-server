@@ -555,6 +555,9 @@ def test_main_instruments_main_and_code_mode_servers_with_posthog():
     assert [call.args[:2] for call in mock_instrument.call_args_list] == expected
     # Every surface gets submit_feedback, so a report can come from any of them.
     assert [call.args[:2] for call in mock_feedback.call_args_list] == expected
+    # ...sharing one rate limiter, so a profile switch does not reset it.
+    limiters = {id(call.kwargs["rate_limiter"]) for call in mock_feedback.call_args_list}
+    assert len(limiters) == 1
 
 
 @pytest.mark.asyncio

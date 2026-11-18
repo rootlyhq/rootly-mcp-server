@@ -23,7 +23,7 @@ from .code_mode import (
     normalize_code_mode_path,
 )
 from .exceptions import RootlyConfigurationError, RootlyMCPError
-from .feedback import register_feedback_tool
+from .feedback import FeedbackRateLimiter, register_feedback_tool
 from .landing_page import McpEndpoints
 from .posthog_analytics import (
     build_posthog_client,
@@ -846,9 +846,12 @@ def main():
 
         all_servers = (*profiled_servers.values(), *profiled_code_mode_servers.values())
         posthog_client = build_posthog_client(logger)
+        # One limiter for every surface, so switching profile or endpoint does
+        # not reset a caller's report allowance.
+        feedback_limiter = FeedbackRateLimiter()
         for mcp_server in all_servers:
             maybe_enable_posthog_mcp_analytics(mcp_server, posthog_client, logger)
-            register_feedback_tool(mcp_server, posthog_client)
+            register_feedback_tool(mcp_server, posthog_client, rate_limiter=feedback_limiter)
         # Hosted auth first, so unauthenticated requests never get a session token.
         http_middleware = [
             *(get_hosted_auth_middleware() or []),
