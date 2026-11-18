@@ -195,3 +195,11 @@ def test_naming_it_in_a_tool_list_is_not_an_invalid_name(monkeypatch, caplog):
         create_rootly_mcp_server(enabled_tools={"list_incidents", FEEDBACK_TOOL_NAME})
 
     assert "Invalid tool names" not in caplog.text
+
+
+async def test_a_tool_list_of_only_feedback_starts(monkeypatch):
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    server = create_rootly_mcp_server(enabled_tools={FEEDBACK_TOOL_NAME})
+    register_feedback_tool(server, cast(Any, FakePostHog()))
+
+    assert await _names(server) == {FEEDBACK_TOOL_NAME}
