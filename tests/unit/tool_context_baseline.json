@@ -1,19 +1,19 @@
 {
   "hosted_core": {
     "tools": 29,
-    "chars": 40770
+    "chars": 41661
   },
   "hosted_full": {
-    "tools": 279,
-    "chars": 501603
+    "tools": 281,
+    "chars": 518559
   },
   "hosted_slim": {
-    "tools": 86,
-    "chars": 165965
+    "tools": 88,
+    "chars": 169926
   },
   "self_hosted": {
-    "tools": 280,
-    "chars": 503122
+    "tools": 282,
+    "chars": 520078
   },
   "code_mode": {
     "tools": 5,

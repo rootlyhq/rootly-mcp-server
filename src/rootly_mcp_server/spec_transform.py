@@ -473,8 +473,9 @@ def _filter_openapi_spec(
         elif "patch" in path_item and "put" in path_item:
             _drop_duplicate_update_verb(path_item)
 
-        allow_delete = path in delete_allowed_set or (
-            _normalize_path_template(path) in delete_allowed_normalized_paths
+        allow_delete = enable_write_tools and (
+            path in delete_allowed_set
+            or _normalize_path_template(path) in delete_allowed_normalized_paths
         )
         if not allow_delete:
             path_item.pop("delete", None)
