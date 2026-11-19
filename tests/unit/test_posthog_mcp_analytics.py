@@ -129,7 +129,10 @@ def test_the_posthog_token_alone_turns_analytics_on(posthog_token, expect_postho
                     "rootly_mcp_server.__main__.create_rootly_mcp_server",
                     return_value=server,
                 ):
-                    with patch("rootly_mcp_server.posthog_analytics.PostHogMCP"):
+                    with (
+                        patch("rootly_mcp_server.posthog_analytics.PostHogMCP"),
+                        patch("rootly_mcp_server.__main__.register_feedback_tool"),
+                    ):
                         with patch(
                             "rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"
                         ) as enable:
@@ -155,7 +158,10 @@ def test_main_shutdown_failure_does_not_mask_exit():
                         "rootly_mcp_server.__main__.build_posthog_client",
                         return_value=posthog_client,
                     ):
-                        with patch("rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"):
+                        with (
+                            patch("rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"),
+                            patch("rootly_mcp_server.__main__.register_feedback_tool"),
+                        ):
                             main()
 
     server.run.assert_called_once()
