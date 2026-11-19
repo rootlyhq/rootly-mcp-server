@@ -445,7 +445,8 @@ argument is dropped before validation.
 
 With the token set, the server also exposes the PostHog SDK's `send_feedback`
 tool, listed under every toolset selection (including `?readonly=true`) and in
-Code Mode. An agent calls it when a capability is missing or a tool failed or
+Code Mode; an explicit `ROOTLY_MCP_ENABLED_TOOLS` / `--enabled-tools` list
+includes it only if it names `send_feedback`. An agent calls it when a capability is missing or a tool failed or
 misled it. Each report is a `$mcp_feedback` event, shown on the **Missing
 capabilities** tab of PostHog MCP analytics. Report fields are
 credential-scrubbed, and each caller can send 5 reports per hour per server

@@ -143,3 +143,32 @@ async def test_listed_and_callable_under_any_toolset_selection(monkeypatch):
             toolsets.requested_selection.reset(reset)
 
     assert len(_feedback_events(captured)) == 3
+
+
+async def test_not_listed_when_turned_off():
+    server = FastMCP("test")
+    client = Posthog("phc_test", send=False)
+    maybe_enable_posthog_mcp_analytics(
+        server, client, logging.getLogger(__name__), collect_feedback=False
+    )
+
+    async with Client(server) as mcp_client:
+        assert FEEDBACK_TOOL not in {tool.name for tool in await mcp_client.list_tools()}
+
+
+def test_naming_it_in_a_tool_list_is_valid(monkeypatch, caplog):
+    # PostHog analytics adds it after the server applies the list, so the
+    # list check must not report it as unknown.
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    with caplog.at_level("WARNING"):
+        create_rootly_mcp_server(enabled_tools={"list_incidents", FEEDBACK_TOOL})
+
+    assert "Invalid tool names" not in caplog.text
+
+
+async def test_a_tool_list_of_only_feedback_starts(monkeypatch):
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "rootly_test")
+    server, _ = _instrumented(create_rootly_mcp_server(enabled_tools={FEEDBACK_TOOL}))
+
+    async with Client(server) as client:
+        assert {tool.name for tool in await client.list_tools()} == {FEEDBACK_TOOL}

@@ -541,9 +541,17 @@ def server_build_from_env() -> str | None:
 
 
 def maybe_enable_posthog_mcp_analytics(
-    server: FastMCP, posthog_client: Client | None, logger: logging.Logger
+    server: FastMCP,
+    posthog_client: Client | None,
+    logger: logging.Logger,
+    *,
+    collect_feedback: bool = True,
 ) -> None:
-    """Instrument *server* with PostHog MCP analytics when a client is configured."""
+    """Instrument *server* with PostHog MCP analytics when a client is configured.
+
+    *collect_feedback* adds the SDK's `send_feedback` tool; main() turns it off
+    when an operator's explicit tool list leaves it out.
+    """
     if posthog_client is None:
         return
     try:
@@ -562,7 +570,11 @@ def maybe_enable_posthog_mcp_analytics(
             # or a broken tool as `$mcp_feedback`, shown on PostHog's Missing
             # capabilities tab. Listed under every toolset selection and in
             # Code Mode; report text is agent-written, so treat it as untrusted.
-            collect_feedback=CollectFeedbackOptions(description=FEEDBACK_TOOL_DESCRIPTION),
+            collect_feedback=(
+                CollectFeedbackOptions(description=FEEDBACK_TOOL_DESCRIPTION)
+                if collect_feedback
+                else False
+            ),
             identify=identify,
             before_send=prepare_posthog_mcp_event,
             server_build=server_build_from_env(),

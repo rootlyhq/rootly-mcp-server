@@ -53,6 +53,10 @@ TOOLSETS: dict[str, str] = {
     "audit": "Audit log.",
 }
 
+# Tools the PostHog SDK adds after the server is built (when analytics is on):
+# valid in an explicit tool list, and the list decides whether they are added.
+SDK_ADDED_TOOLS: frozenset[str] = frozenset({"send_feedback"})
+
 # The default hosted surface: what an assistant needs for most incident work.
 # Kept small on purpose (clients degrade past ~30-50 loaded tools); anything
 # else is one ?toolsets= away and named in the server instructions.

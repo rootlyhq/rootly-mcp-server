@@ -1765,7 +1765,9 @@ def create_rootly_mcp_server(
         registered_names = curated_names | autogen_names
 
         valid_tools = enabled_tools & registered_names
-        invalid_tools = sorted(enabled_tools - registered_names)
+        # SDK-added tools (send_feedback) are added later by PostHog analytics,
+        # so naming one is valid even though it is not registered yet.
+        invalid_tools = sorted(enabled_tools - registered_names - toolsets.SDK_ADDED_TOOLS)
 
         if invalid_tools:
             audit.audit.log_configuration_error(
@@ -1779,7 +1781,7 @@ def create_rootly_mcp_server(
                 ", ".join(invalid_tools),
             )
 
-        if not valid_tools:
+        if not valid_tools and not enabled_tools & toolsets.SDK_ADDED_TOOLS:
             error_msg = "No valid tools found in allowlist"
             audit.audit.log_configuration_error(
                 "no_valid_tools", error_msg, {"requested_tools": sorted(enabled_tools)}
