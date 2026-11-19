@@ -284,7 +284,12 @@ _POSTHOG_MCP_SCRUBBED_PROPERTIES = (
     "$exception_list",
     "$mcp_tool_name",
     "$mcp_resource_name",
+    # Agent-narrated: the send_feedback report is copied here as well as into
+    # the `$mcp_feedback_*` properties, and the SDK redacts only the latter.
+    "$mcp_intent",
 )
+# Every `$mcp_feedback_<field>` property of a send_feedback report.
+_POSTHOG_MCP_SCRUBBED_PREFIXES = ("$mcp_feedback_",)
 
 
 def scrub_posthog_mcp_event(event: Any) -> Any:
@@ -310,8 +315,10 @@ def scrub_posthog_mcp_event(event: Any) -> Any:
 
     properties = event.get("properties")
     if isinstance(properties, dict):
-        for name in _POSTHOG_MCP_SCRUBBED_PROPERTIES:
-            if name in properties:
+        for name in list(properties):
+            if name in _POSTHOG_MCP_SCRUBBED_PROPERTIES or str(name).startswith(
+                _POSTHOG_MCP_SCRUBBED_PREFIXES
+            ):
                 properties[name] = walk(properties[name], 0)
         _drop_retired_arguments(properties.get("$mcp_parameters"), 0)
     return event

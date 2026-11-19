@@ -7,8 +7,10 @@ import functools
 import logging
 import os
 import re
+import threading
 import time
-from collections.abc import Mapping
+from collections import defaultdict, deque
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from typing import Any
 
@@ -18,6 +20,7 @@ from fastmcp.server.middleware import Middleware as MCPMiddleware
 from posthog.client import Client
 from posthog.exception_utils import exceptions_from_error_tuple
 from posthog.mcp import (
+    CollectFeedbackOptions,
     MCPAnalyticsOptions,
     PostHogMCP,
     PostHogMcpStatelessSessionMiddleware,
@@ -33,6 +36,52 @@ from .telemetry_scrubber import redact_telemetry_text, scrub_posthog_mcp_event
 from .transport import get_hosted_authenticated_user
 
 PARENT_TOOL_PROPERTY = "rootly_parent_tool"
+
+FEEDBACK_EVENT = "$mcp_feedback"
+# Per caller, per process, shared by every server: enough for real reports,
+# too few to flood the Missing capabilities tab.
+FEEDBACK_RATE_LIMIT_COUNT = 5
+FEEDBACK_RATE_LIMIT_WINDOW_SECONDS = 3600.0
+FEEDBACK_TOOL_DESCRIPTION = (
+    "Report a problem with this Rootly MCP server to the Rootly team: a capability "
+    "you needed that no tool provides, or a tool that failed, returned something "
+    "unhelpful, or whose description misled you. Call it only when you could not "
+    "work around the problem, not for successful calls or errors you fixed by "
+    "changing your arguments. Name the tool, what you were doing for the user, "
+    "what you expected, and the change that would have helped. It records the "
+    "report only: it changes nothing in the user's Rootly account and adds no "
+    "tools. Leave out secrets and personal details."
+)
+
+
+class FeedbackRateLimiter:
+    """Allows `limit` reports per caller in any rolling `window` seconds."""
+
+    def __init__(
+        self,
+        limit: int = FEEDBACK_RATE_LIMIT_COUNT,
+        window: float = FEEDBACK_RATE_LIMIT_WINDOW_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.limit = limit
+        self.window = window
+        self.clock = clock
+        self._sent: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def allow(self, key: str) -> bool:
+        now = self.clock()
+        with self._lock:
+            sent = self._sent[key]
+            while sent and now - sent[0] >= self.window:
+                sent.popleft()
+            if len(sent) >= self.limit:
+                return False
+            sent.append(now)
+            return True
+
+
+feedback_rate_limiter = FeedbackRateLimiter()
 _IDENTITY_PROPERTIES = ("email", "name")
 
 
@@ -337,7 +386,11 @@ def enrich_posthog_mcp_event(event: Any) -> Any:
 
 def prepare_posthog_mcp_event(event: Any) -> Any:
     """PostHog `before_send`: restore error detail, drop expected exceptions,
-    put the event in the caller's session, scrub."""
+    rate-limit feedback, put the event in the caller's session, scrub."""
+    if isinstance(event, dict) and event.get("event") == FEEDBACK_EVENT:
+        caller = str(event.get("distinct_id") or "")
+        if not feedback_rate_limiter.allow(caller):
+            return None
     enriched = enrich_posthog_mcp_event(event)
     if enriched is None:
         return None
@@ -488,9 +541,17 @@ def server_build_from_env() -> str | None:
 
 
 def maybe_enable_posthog_mcp_analytics(
-    server: FastMCP, posthog_client: Client | None, logger: logging.Logger
+    server: FastMCP,
+    posthog_client: Client | None,
+    logger: logging.Logger,
+    *,
+    collect_feedback: bool = True,
 ) -> None:
-    """Instrument *server* with PostHog MCP analytics when a client is configured."""
+    """Instrument *server* with PostHog MCP analytics when a client is configured.
+
+    *collect_feedback* adds the SDK's `send_feedback` tool; main() turns it off
+    when an operator's explicit tool list leaves it out.
+    """
     if posthog_client is None:
         return
     try:
@@ -505,6 +566,15 @@ def maybe_enable_posthog_mcp_analytics(
             enable_conversation_id=False,
             capture_model=False,
             report_missing=False,
+            # The SDK's `send_feedback` tool: agents report a missing capability
+            # or a broken tool as `$mcp_feedback`, shown on PostHog's Missing
+            # capabilities tab. Listed under every toolset selection and in
+            # Code Mode; report text is agent-written, so treat it as untrusted.
+            collect_feedback=(
+                CollectFeedbackOptions(description=FEEDBACK_TOOL_DESCRIPTION)
+                if collect_feedback
+                else False
+            ),
             identify=identify,
             before_send=prepare_posthog_mcp_event,
             server_build=server_build_from_env(),

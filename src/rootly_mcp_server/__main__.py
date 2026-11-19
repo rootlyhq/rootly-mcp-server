@@ -23,7 +23,6 @@ from .code_mode import (
     normalize_code_mode_path,
 )
 from .exceptions import RootlyConfigurationError, RootlyMCPError
-from .feedback import FEEDBACK_TOOL_NAME, FeedbackRateLimiter, register_feedback_tool
 from .landing_page import McpEndpoints
 from .posthog_analytics import (
     build_posthog_client,
@@ -42,6 +41,7 @@ from .sse_deprecation import (
     SSEDeprecationMiddleware,
     with_sse_deprecation_instructions,
 )
+from .toolsets import SDK_ADDED_TOOLS
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -846,20 +846,17 @@ def main():
 
         all_servers = (*profiled_servers.values(), *profiled_code_mode_servers.values())
         posthog_client = build_posthog_client(logger)
-        # One limiter for every surface, so switching profile or endpoint does
-        # not reset a caller's report allowance.
-        feedback_limiter = FeedbackRateLimiter()
         # An operator's exact tool list (--enabled-tools / ROOTLY_MCP_ENABLED_TOOLS)
-        # still decides: feedback is added only if it names submit_feedback.
-        feedback_enabled = not (
+        # decides whether the SDK's send_feedback tool is added.
+        collect_feedback = not (
             explicit_enabled_tools
             and enabled_tools is not None
-            and FEEDBACK_TOOL_NAME not in enabled_tools
+            and not enabled_tools & SDK_ADDED_TOOLS
         )
         for mcp_server in all_servers:
-            maybe_enable_posthog_mcp_analytics(mcp_server, posthog_client, logger)
-            if feedback_enabled:
-                register_feedback_tool(mcp_server, posthog_client, rate_limiter=feedback_limiter)
+            maybe_enable_posthog_mcp_analytics(
+                mcp_server, posthog_client, logger, collect_feedback=collect_feedback
+            )
         # Hosted auth first, so unauthenticated requests never get a session token.
         http_middleware = [
             *(get_hosted_auth_middleware() or []),

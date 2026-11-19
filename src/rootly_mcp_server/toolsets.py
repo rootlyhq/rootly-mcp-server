@@ -53,10 +53,9 @@ TOOLSETS: dict[str, str] = {
     "audit": "Audit log.",
 }
 
-# Shown under every toolset selection: `submit_feedback` (registered only when
-# PostHog analytics is on) has to be reachable from whatever surface a client
-# picked, or the reports it exists for are never sent.
-ALWAYS_VISIBLE_TOOLS: frozenset[str] = frozenset({"submit_feedback"})
+# Tools the PostHog SDK adds after the server is built (when analytics is on):
+# valid in an explicit tool list, and the list decides whether they are added.
+SDK_ADDED_TOOLS: frozenset[str] = frozenset({"send_feedback"})
 
 # The default hosted surface: what an assistant needs for most incident work.
 # Kept small on purpose (clients degrade past ~30-50 loaded tools); anything
@@ -199,7 +198,6 @@ CURATED_TOOLSETS: dict[str, str] = {
     "update_workflow_task": "workflow_tasks",
     "list_endpoints": "config",
     "get_server_version": "config",
-    "submit_feedback": "config",
     "search_incidents": "incidents",
     "collect_incidents": "incidents",
     "list_incidents": "incidents",
@@ -262,7 +260,7 @@ class ToolSelection:
     def allows(self, name: str, toolset: str | None, read_only_hint: bool | None) -> bool:
         if self.readonly and read_only_hint is not True:
             return False
-        if ALL in self.toolsets or name in ALWAYS_VISIBLE_TOOLS:
+        if ALL in self.toolsets:
             return True
         if CORE in self.toolsets and name in CORE_TOOLS:
             return True
