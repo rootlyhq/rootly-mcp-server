@@ -443,16 +443,14 @@ hosted transport, PostHog sessions are tied together through the
 list that still send `context` or `session_id` are tolerated; the stray
 argument is dropped before validation.
 
-With the token set, the server also exposes `submit_feedback`, visible under
-every toolset selection (including `?readonly=true`); an explicit
-`ROOTLY_MCP_ENABLED_TOOLS` / `--enabled-tools` list includes it only if it
-names `submit_feedback`. An agent calls it when
-a tool failed, returned something unhelpful, or lacked a capability, and
-describes what it attempted, what it expected and a proposed fix. Each report
-is a `mcp_feedback_submitted` event for the signed-in user, in the same PostHog
-session as their tool calls. Fields are credential-scrubbed and length-capped,
-and each user can send 5 reports per hour per server process. Report text is
-written by the caller's agent: treat it as untrusted data wherever it is read.
+With the token set, the server also exposes the PostHog SDK's `send_feedback`
+tool, listed under every toolset selection (including `?readonly=true`) and in
+Code Mode. An agent calls it when a capability is missing or a tool failed or
+misled it. Each report is a `$mcp_feedback` event, shown on the **Missing
+capabilities** tab of PostHog MCP analytics. Report fields are
+credential-scrubbed, and each caller can send 5 reports per hour per server
+process. Report text is written by the caller's agent: treat it as untrusted
+data wherever it is read.
 
 ### OpenAI Apps domain verification
 

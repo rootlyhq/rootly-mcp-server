@@ -1765,9 +1765,7 @@ def create_rootly_mcp_server(
         registered_names = curated_names | autogen_names
 
         valid_tools = enabled_tools & registered_names
-        # Always-visible tools (submit_feedback) are registered later, by main(),
-        # so naming one in the list is valid even though it is not here yet.
-        invalid_tools = sorted(enabled_tools - registered_names - toolsets.ALWAYS_VISIBLE_TOOLS)
+        invalid_tools = sorted(enabled_tools - registered_names)
 
         if invalid_tools:
             audit.audit.log_configuration_error(
@@ -1781,9 +1779,7 @@ def create_rootly_mcp_server(
                 ", ".join(invalid_tools),
             )
 
-        # A list naming only submit_feedback is valid: main() adds it after this
-        # (when PostHog analytics is on).
-        if not valid_tools and not enabled_tools & toolsets.ALWAYS_VISIBLE_TOOLS:
+        if not valid_tools:
             error_msg = "No valid tools found in allowlist"
             audit.audit.log_configuration_error(
                 "no_valid_tools", error_msg, {"requested_tools": sorted(enabled_tools)}

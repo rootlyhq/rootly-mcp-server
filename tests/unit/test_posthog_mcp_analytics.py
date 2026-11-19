@@ -129,10 +129,7 @@ def test_the_posthog_token_alone_turns_analytics_on(posthog_token, expect_postho
                     "rootly_mcp_server.__main__.create_rootly_mcp_server",
                     return_value=server,
                 ):
-                    with (
-                        patch("rootly_mcp_server.posthog_analytics.PostHogMCP"),
-                        patch("rootly_mcp_server.__main__.register_feedback_tool"),
-                    ):
+                    with patch("rootly_mcp_server.posthog_analytics.PostHogMCP"):
                         with patch(
                             "rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"
                         ) as enable:
@@ -158,10 +155,7 @@ def test_main_shutdown_failure_does_not_mask_exit():
                         "rootly_mcp_server.__main__.build_posthog_client",
                         return_value=posthog_client,
                     ):
-                        with (
-                            patch("rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"),
-                            patch("rootly_mcp_server.__main__.register_feedback_tool"),
-                        ):
+                        with patch("rootly_mcp_server.__main__.maybe_enable_posthog_mcp_analytics"):
                             main()
 
     server.run.assert_called_once()
@@ -286,7 +280,8 @@ async def test_our_middleware_keeps_posthog_on():
 
     tools, events = await list_tools_and_capture(server)
 
-    assert tools == ["ping"]
+    # ping, plus the SDK's send_feedback tool.
+    assert tools == ["ping", "send_feedback"]
     assert "$mcp_tools_list" in events
 
 
@@ -311,7 +306,8 @@ async def test_callable_middleware_is_adapted_and_keeps_running():
     )
     assert isinstance(adapted, CallableMiddlewareAdapter)
     assert adapted.inner is duck
-    assert tools == ["ping"]
+    # ping, plus the SDK's send_feedback tool.
+    assert tools == ["ping", "send_feedback"]
     assert "tools/list" in duck.seen
     assert "$mcp_tools_list" in events
 
