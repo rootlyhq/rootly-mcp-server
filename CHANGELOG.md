@@ -1,12 +1,15 @@
 # Changelog
 
-All notable changes to the Rootly MCP Server will be documented in this file.
+**Release notes now live on [GitHub Releases](https://github.com/rootlyhq/rootly-mcp-server/releases).**
+This file is no longer updated: from 3.0.0 on, see each release there.
 
-From 2.4.0 on, release-please writes this file from conventional commit
-messages (`feat:`, `fix:`, ...) when its release PR is merged; don't edit
-version sections by hand. Entries up to 2.3.22 were written by hand in the
-[Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format. The project
-follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+release-please writes the notes from conventional commit messages (`feat:`,
+`fix:`, ...) when its release PR is merged. The project follows
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+The history below covers releases up to 3.0.0. Entries up to 2.3.22 were
+written by hand in the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
+format.
 
 ## Highlights of the first release-please release (after 2.3.22)
 

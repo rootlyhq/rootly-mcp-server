@@ -70,7 +70,8 @@ a major one. `chore:`, `ci:`, `docs:`, `test:` and dependency bumps don't
 trigger a release.
 
 On every push to `main`, release-please keeps one open release PR up to date.
-It bumps the version in `pyproject.toml`, `uv.lock` and `server.json`, and adds
-a `CHANGELOG.md` section. Merging that PR tags the release, creates the GitHub
-Release and publishes the package to PyPI. Don't bump versions or edit released
-`CHANGELOG.md` sections by hand.
+It bumps the version in `pyproject.toml`, `uv.lock` and `server.json`, and its
+description holds the release notes. Merging that PR tags the release, creates
+the GitHub Release with those notes and publishes the package to PyPI. Release
+notes live only on [GitHub Releases](https://github.com/rootlyhq/rootly-mcp-server/releases);
+`CHANGELOG.md` is frozen at 3.0.0. Don't bump versions by hand.
