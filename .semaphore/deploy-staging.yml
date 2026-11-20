@@ -15,16 +15,15 @@ blocks:
     dependencies: []
     task:
       secrets:
-        - name: 'AWS Credentials'
+        - name: 'mcp-server-deploy'
       prologue:
         commands:
-          - export AWS_PROFILE=staging
-          - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          - checkout
+          - source .semaphore/oidc-login.sh "$AWS_ROLE_ARN_STAGING"
           - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
       jobs:
         - name: Deploy
           commands:
-            - checkout
             - |
               export TASK_FAMILY=rootly-mcp-server
               export CONTAINER_NAME=mcp

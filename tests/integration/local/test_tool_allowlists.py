@@ -100,7 +100,13 @@ def _terminate_process(process: subprocess.Popen[str]) -> str:
         (
             "createIncident,createWorkflowTask,listTeams",
             True,
-            ["create_incident", "create_workflow_task", "list_teams"],
+            # The task_params lookup comes with a workflow task write tool.
+            [
+                "create_incident",
+                "create_workflow_task",
+                "get_workflow_task_params_schema",
+                "list_teams",
+            ],
         ),
     ],
 )

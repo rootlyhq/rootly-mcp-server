@@ -10,7 +10,7 @@ import logging
 import os
 import time
 import traceback
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from contextvars import ContextVar
 from typing import Any
 
@@ -25,19 +25,25 @@ from . import (
     server_defaults,
     spec_transform,
     tool_arguments,
+    toolsets,
     transport,
 )
-from .exceptions import GuidedToolError, RootlyAuthenticationError
+from .exceptions import GuidedToolError, RootlyAuthenticationError, is_tool_error_result
 from .landing_page import landing_page
 from .mcp_error import MCPError
 from .security import mask_sensitive_data, sanitize_error_message
 from .telemetry_scrubber import RETIRED_INJECTED_PARAMS
 from .tools.alerts import register_alert_tools
 from .tools.audits import register_audit_tools
-from .tools.incidents import register_incident_tools
+from .tools.incidents import (
+    INCIDENT_SEQUENTIAL_REF_RE,
+    _resolve_incident_reference_to_uuid,
+    register_incident_tools,
+)
 from .tools.investigations import register_investigation_tools
 from .tools.oncall import register_oncall_tools
 from .tools.resources import register_resource_handlers
+from .tools.workflow_tasks import register_workflow_task_tools
 from .transport import upstream_client
 from .utils import (
     OAUTH_AUTHORIZATION_SERVER_PATH,
@@ -128,12 +134,31 @@ def _provider_tool_inventory(
     return curated_names, autogen_provider, autogen_names
 
 
+# POST operations that change or act on existing state rather than only adding
+# a record: an override deletes the overrides it overlaps, a workflow run
+# executes the workflow's tasks (messages, tickets, incident changes), an AI
+# automation run executes the automation's prompt with its allowed tools, and a
+# rotated webhook secret stops the old one working immediately.
+_DESTRUCTIVE_CREATE_OPERATIONS = frozenset(
+    {
+        "acknowledge_alert",
+        "resolve_alert",
+        "create_override_shift",
+        "create_workflow_run",
+        "run_ai_automation",
+        "rotate_ai_automation_webhook_secret",
+    }
+)
+
+
 def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, Any]) -> None:
     """Apply ToolAnnotations to autogen OpenAPI tools based on their HTTP method.
 
-    GET operations are marked read-only; POST/PUT/PATCH are non-destructive writes;
-    DELETE operations are marked destructive. All autogen tools interact with
-    external APIs so open_world_hint is True.
+    GET operations are marked read-only. PUT/PATCH overwrite stored values the
+    caller may not be able to restore, so they are destructive, as is DELETE.
+    POST creates, so it is not -- except the operations in
+    `_DESTRUCTIVE_CREATE_OPERATIONS`, which replace or act on existing state.
+    All autogen tools interact with external APIs so open_world_hint is True.
     """
     _, autogen_provider, autogen_names = _provider_tool_inventory(mcp)
     if autogen_provider is None:
@@ -173,14 +198,14 @@ def _apply_annotations_to_autogen_tools(mcp: FastMCP, openapi_spec: dict[str, An
         elif method in {"put", "patch"}:
             tool.annotations = mt.ToolAnnotations(
                 read_only_hint=False,
-                destructive_hint=False,
+                destructive_hint=True,
                 idempotent_hint=True,
                 open_world_hint=True,
             )
         else:
             tool.annotations = mt.ToolAnnotations(
                 read_only_hint=False,
-                destructive_hint=False,
+                destructive_hint=tool_name in _DESTRUCTIVE_CREATE_OPERATIONS,
                 idempotent_hint=False,
                 open_world_hint=True,
             )
@@ -349,8 +374,7 @@ def _normalize_error_details(value: Any) -> Any:
 def _extract_structured_tool_error(result: Any) -> dict[str, Any]:
     """Extract structured tool error metadata from an MCP error result, if present."""
     structured = getattr(result, "structured_content", None)
-    is_structured_tool_error = isinstance(structured, dict) and structured.get("error") is True
-    if not getattr(result, "is_error", False) and not is_structured_tool_error:
+    if not is_tool_error_result(result):
         return {}
 
     error_event: dict[str, Any] = {"error_type": "ToolError"}
@@ -452,6 +476,42 @@ class CamelCaseAliasMiddleware(fastmcp_middleware.Middleware):
         return await call_next(context)
 
 
+class RemovedToolMiddleware(fastmcp_middleware.Middleware):
+    """Answers a call to a tool removed with its deprecated API endpoint.
+
+    Deprecated operations are never registered (see `_filter_openapi_spec`),
+    but clients that cached an older tool list keep calling them. Without this
+    they get a bare "Unknown tool", or on a read-only connection a refusal
+    that blames read-only mode, and no idea what replaced the tool.
+
+    Runs ahead of tool selection so every connection gets the same answer.
+    `registered` (set once tools are registered) drops any name a live tool
+    still uses, so this can never shadow one.
+    """
+
+    def __init__(self, guidance: Mapping[str, str]) -> None:
+        self._guidance = dict(guidance)
+
+    def exclude(self, registered: Collection[str]) -> None:
+        for name in registered:
+            self._guidance.pop(name, None)
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        name = context.message.name
+        if name not in self._guidance:
+            return await call_next(context)
+        hint = self._guidance[name]
+        raise GuidedToolError(
+            f"Tool '{name}' was removed: the Rootly API deprecated its endpoint."
+            + (f" {hint}" if hint else "")
+            + " Refresh the tool list to see the tools that replace it."
+        )
+
+
 _ARGUMENT_RENAMES: dict[str, dict[str, str]] = {
     "collect_incidents": {
         "end": "started_before",
@@ -509,6 +569,19 @@ _LIST_TO_CSV_ARGS: dict[str, set[str]] = {
         "incident_type_ids",
         "functionality_ids",
     },
+    # The API splits a comma-separated filter value into a list, so a list of
+    # statuses or severities joined here filters on any of them.
+    **dict.fromkeys(
+        ("list_incidents", "collect_incidents"),
+        {
+            "teams",
+            "team_ids",
+            "service_ids",
+            "severity",
+            "status",
+            "custom_field_selected_option_ids",
+        },
+    ),
 }
 
 
@@ -547,18 +620,12 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
 class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
     """Drops retired telemetry arguments that the target tool does not declare.
 
-    Until #223 AgentCat injected a ``context`` parameter into every tool schema,
-    and until session hook mode it injected ``session_id``. Callers with cached
-    schemas (scripts, agents, directory reviewers' harnesses) still send them.
-    Tools reject undeclared arguments, so the whole call failed -- and the
-    pydantic error echoed the caller's text into telemetry. The parameters stay
-    out of the advertised schemas; they are only tolerated.
-
-    AgentCat inserts its own middleware at index 0 of the chain (outermost), so
-    it has already copied the raw arguments before this runs; the event-level
-    scrubber removes them again there. This middleware guarantees that whatever
-    the SDK leaves behind -- or everything, when the SDK is not installed -- is
-    gone before the tool validates its arguments.
+    The retired AgentCat SDK injected ``context`` and ``session_id`` parameters
+    into every tool schema. Callers with cached schemas (scripts, agents,
+    directory reviewers' harnesses) still send them. Tools reject undeclared
+    arguments, so the whole call failed -- and the pydantic error echoed the
+    caller's text into telemetry. The parameters stay out of the advertised
+    schemas; they are only tolerated.
     """
 
     async def on_call_tool(
@@ -578,44 +645,6 @@ class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
                     for name in stray - set(declared):
                         args.pop(name)
         return await call_next(context)
-
-
-# Tools registered by the telemetry SDK rather than by us, with the annotations
-# they should carry. AgentCat 2.1.0 registers `get_more_tools` with only
-# `{"readOnlyHint": True}` (adapters/community.py), so `destructive_hint` and
-# `open_world_hint` fall back to the spec defaults -- both `true`, describing the
-# tool as destructive and open-world. It is neither: its handler returns a fixed
-# string and never reaches the API. Reported upstream; remove this once the SDK
-# sets them itself.
-_INJECTED_TOOL_ANNOTATIONS: dict[str, mt.ToolAnnotations] = {
-    "get_more_tools": mt.ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        open_world_hint=False,
-    ),
-}
-
-
-class InjectedToolAnnotationMiddleware(fastmcp_middleware.Middleware):
-    """Completes safety annotations on tools this server did not register.
-
-    An injected tool cannot be annotated where it is defined, and unset hints do
-    not read as "unknown" -- the MCP spec defaults them to the cautious answer.
-    A client that respects annotations may therefore prompt before every call,
-    and annotation scanners flag the tool.
-    """
-
-    async def on_list_tools(
-        self,
-        context: fastmcp_middleware.MiddlewareContext[mt.ListToolsRequest],
-        call_next: fastmcp_middleware.CallNext[mt.ListToolsRequest, Sequence[Any]],
-    ) -> Sequence[Any]:
-        tools = await call_next(context)
-        for tool in tools:
-            annotations = _INJECTED_TOOL_ANNOTATIONS.get(getattr(tool, "name", ""))
-            if annotations is not None:
-                tool.annotations = annotations
-        return tools
 
 
 def _openapi_path_arguments(tool: Any) -> tuple[str, str, list[str]] | None:
@@ -808,6 +837,166 @@ class PathArgumentValidationMiddleware(fastmcp_middleware.Middleware):
         raise GuidedToolError(message)
 
 
+class IncidentReferenceMiddleware(fastmcp_middleware.Middleware):
+    """Resolves incident numbers to UUIDs on generated ``/v1/incidents/{...}`` tools.
+
+    Models pass the number people use for an incident ("5883", "INC-5883",
+    "#5883") where the nested endpoints need its UUID. The API answers 404, so
+    ``list_incident_events``, ``list_incident_action_items`` and friends failed
+    for roughly 470 calls a week. The curated incident tools already accept
+    these references; this gives the generated ones the same resolution
+    (``filter[sequential_id]``, one extra request). UUIDs and slugs pass
+    through unchanged. An unknown number is answered with a guided error; any
+    other lookup failure leaves the call as it was, for the API to answer.
+    """
+
+    def __init__(self, resolve: Callable[[str], Awaitable[str]]) -> None:
+        self._resolve = resolve
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        if context.fastmcp_context is None:
+            return await call_next(context)
+        tool_name = context.message.name
+        try:
+            tool = await context.fastmcp_context.fastmcp.get_tool(tool_name)
+        except Exception:
+            tool = None
+        route_info = _openapi_path_arguments(tool) if tool is not None else None
+        if route_info is None:
+            return await call_next(context)
+        _method, path, path_args = route_info
+        segments = path.split("/")
+        if len(segments) < 4 or segments[1:3] != ["v1", "incidents"]:
+            return await call_next(context)
+        name = segments[3].strip("{}")
+        args = context.message.arguments or {}
+        value = args.get(name)
+        if name not in path_args or isinstance(value, bool) or not isinstance(value, str | int):
+            return await call_next(context)
+        reference = str(value).strip()
+        if not INCIDENT_SEQUENTIAL_REF_RE.match(reference):
+            return await call_next(context)
+        try:
+            incident_id = await self._resolve(reference)
+        except LookupError as exc:
+            raise GuidedToolError(
+                f"{tool_name}: {exc}. Check the number, or pass the incident's UUID "
+                "(the `id` from list_incidents or get_incident)."
+            ) from None
+        except Exception as exc:
+            logger.debug(
+                "Incident reference %s left unresolved (%s)", reference, type(exc).__name__
+            )
+            return await call_next(context)
+        context.message.arguments = {**args, name: incident_id}
+        bucket = _tool_argument_rewrites.get()
+        if bucket is not None:
+            bucket.append(f"{name}:incident_number->uuid")
+        return await call_next(context)
+
+
+def _read_only_hint(tool: Any) -> bool | None:
+    annotations = getattr(tool, "annotations", None)
+    if annotations is None:
+        return None
+    for attr in ("read_only_hint", "readOnlyHint"):
+        value = getattr(annotations, attr, None)
+        if value is not None:
+            return bool(value)
+    return None
+
+
+class ToolSelectionMiddleware(fastmcp_middleware.Middleware):
+    """Shows and allows only the toolsets a request selected (see ``toolsets``).
+
+    ``tools/list`` is filtered; a ``tools/call`` to a tool outside the
+    selection is refused with the toolset that holds it, so a model (or a
+    user) learns the one-word fix rather than "unknown tool".
+    """
+
+    def __init__(
+        self,
+        tool_toolsets: Mapping[str, str | None],
+        default: frozenset[str],
+        *,
+        toolsets_apply: bool = True,
+        filter_list: bool = True,
+        exempt: Collection[str] = (),
+    ):
+        self.tool_toolsets = dict(tool_toolsets)
+        self.default = default
+        # False under an explicit allowlist (slim, ROOTLY_MCP_ENABLED_TOOLS):
+        # it already fixes which tools exist, so only ?readonly= still applies.
+        self.toolsets_apply = toolsets_apply
+        # Code Mode: its tools/list is five meta-tools and is never filtered;
+        # `execute` is exempt, and the tools it calls are checked one by one.
+        self.filter_list = filter_list
+        self.exempt = frozenset(exempt)
+
+    def _selection(self) -> toolsets.ToolSelection:
+        requested = toolsets.requested_selection.get()
+        readonly = requested.readonly if requested is not None else False
+        if not self.toolsets_apply:
+            return toolsets.ToolSelection(frozenset({toolsets.ALL}), readonly)
+        if requested is None:
+            return toolsets.ToolSelection(self.default)
+        if not requested.toolsets:
+            # ?readonly=true alone: read-only view of the default toolsets.
+            return toolsets.ToolSelection(self.default, readonly)
+        return requested
+
+    def _allows(self, selection: toolsets.ToolSelection, tool: Any) -> bool:
+        name = getattr(tool, "name", "")
+        return selection.allows(name, self.tool_toolsets.get(name), _read_only_hint(tool))
+
+    async def on_list_tools(self, context, call_next):
+        tools = await call_next(context)
+        selection = self._selection()
+        if selection.everything or not self.filter_list:
+            return tools
+        return [tool for tool in tools if self._allows(selection, tool)]
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        selection = self._selection()
+        if selection.everything or context.fastmcp_context is None:
+            return await call_next(context)
+        name = context.message.name
+        if name in self.exempt:
+            return await call_next(context)
+        try:
+            tool = await context.fastmcp_context.fastmcp.get_tool(name)
+        except Exception:
+            tool = None
+        if tool is None and not selection.readonly:
+            return await call_next(context)
+        if tool is not None and self._allows(selection, tool):
+            return await call_next(context)
+        if selection.readonly and (tool is None or _read_only_hint(tool) is not True):
+            # Adding a toolset would not help: the read-only flag still refuses it.
+            raise GuidedToolError(
+                f"{name} is not available here: it writes, and this connection is "
+                "read-only. Remove readonly=true from the server URL (or the "
+                "X-MCP-Readonly header) and reconnect to use it."
+            )
+        toolset = self.tool_toolsets.get(name)
+        enable = sorted({*selection.toolsets, toolset or toolsets.ALL} - {toolsets.ALL}) or [
+            toolsets.ALL
+        ]
+        raise GuidedToolError(
+            f"{name} is not available here: it is in the '{toolset}' toolset, which this "
+            f"connection did not select. Reconnect with ?toolsets={','.join(enable)} on the "
+            "server URL (or the X-MCP-Toolsets header) to use it."
+        )
+
+
 class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
     """Repairs unambiguous JSON:API envelope mistakes in autogen write tool bodies.
 
@@ -818,6 +1007,16 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
     tool's own schema (see ``tool_arguments.repair_jsonapi_body``); anything
     that does not map cleanly reaches the API unchanged.
     """
+
+    def __init__(
+        self,
+        hidden_attributes: Collection[str] = (),
+        task_params_variants: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> None:
+        # Attribute names trimmed from the advertised schemas; still accepted.
+        self.hidden_attributes = frozenset(hidden_attributes)
+        # Workflow task type -> its task_params schema (compact_large_unions).
+        self.task_params_variants = task_params_variants or {}
 
     async def on_call_tool(
         self,
@@ -835,10 +1034,31 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
         if route is None or str(getattr(route, "method", "GET")).upper() == "GET":
             return await call_next(context)
 
+        if context.message.name == "update_alert" and "status" in args:
+            raise GuidedToolError(
+                "update_alert does not accept 'status'. To change alert status, use "
+                "resolve_alert(id=...) or acknowledge_alert(id=...). "
+                "For other updates, put writable fields under data.attributes."
+            )
+
         try:
             repaired, rewrites = tool_arguments.repair_jsonapi_body(
-                args, getattr(tool, "parameters", None)
+                args,
+                getattr(tool, "parameters", None),
+                self.hidden_attributes,
+                body_required=bool(
+                    getattr(getattr(route, "request_body", None), "required", False)
+                ),
+                method=str(getattr(route, "method", "")),
             )
+            if (
+                context.message.name in tool_arguments.WORKFLOW_TASK_WRITE_TOOLS
+                and self.task_params_variants
+            ):
+                repaired, nested = tool_arguments.nest_workflow_task_params(
+                    repaired, self.task_params_variants
+                )
+                rewrites = [*rewrites, *nested]
         except tool_arguments.MalformedJsonApiBody as exc:
             raise GuidedToolError(f"{context.message.name}: {exc}") from None
         if rewrites:
@@ -1004,10 +1224,16 @@ def _drop_null_arguments(
         plural = len(empty_required) > 1
         listed = ", ".join(f"'{name}'" for name in empty_required)
         example = ", ".join(f'"{name}": "<value>"' for name in empty_required)
+        hint = (
+            " For list_incidents, use incidents[*].incident_id, not id. "
+            "For search_incidents, use data[*].id."
+            if "incident_id" in empty_required
+            else ""
+        )
         raise GuidedToolError(
             f"{tool_name} requires the argument{'s' if plural else ''} {listed}, but got "
             f"{tool_arguments.describe_received(empty_required, args)} -- a placeholder, "
-            f"not a value. Retry with {{{example}}}."
+            f"not a value. Retry with {{{example}}}.{hint}"
         )
     if dropped:
         bucket = _tool_argument_rewrites.get()
@@ -1027,6 +1253,7 @@ def create_rootly_mcp_server(
     enable_write_tools: bool | None = None,
     write_allowed_paths: list[str] | None = None,
     enabled_tools: set[str] | None = None,
+    tool_selection: bool = True,
 ) -> FastMCP:
     """
     Create a Rootly MCP Server using FastMCP's OpenAPI integration.
@@ -1057,8 +1284,17 @@ def create_rootly_mcp_server(
         enable_write_tools = server_defaults.write_tools_enabled_from_env(default=True)
     if enabled_tools is None:
         enabled_tools = server_defaults.enabled_tools_from_env(hosted=hosted)
+    # Toolsets apply to the open surface only: an explicit allowlist (the env
+    # var, the slim profile, a caller's set) already says exactly what to show.
+    # ?readonly= still applies to it.
+    toolsets_apply = enabled_tools is None
+    default_selection = toolsets.default_toolsets(hosted=hosted)
     if enabled_tools:
         enabled_tools = server_defaults.canonicalize_tool_names(enabled_tools)
+        # The workflow task write tools describe task_params by type name only
+        # and point at this lookup for the fields, so it comes with them.
+        if enabled_tools & {"create_workflow_task", "update_workflow_task"}:
+            enabled_tools = enabled_tools | {spec_transform.WORKFLOW_TASK_PARAMS_SCHEMA_TOOL}
     if delete_allowed_paths is None:
         delete_allowed_paths = []
     if write_allowed_paths is None:
@@ -1088,6 +1324,7 @@ def create_rootly_mcp_server(
     # The returned camelCase->snake_case map feeds the alias middleware so the
     # historical camelCase names stay callable (but hidden from tools/list).
     camel_to_snake_aliases = snakecase_operation_ids(swagger_spec)
+    removed_tool_guidance = spec_transform.deprecated_operation_guidance(swagger_spec)
     logger.info(f"Normalized {len(camel_to_snake_aliases)} operationIds to snake_case")
 
     # When an allowlist is provided, build the subset that matches real OpenAPI
@@ -1111,6 +1348,11 @@ def create_rootly_mcp_server(
         enable_write_tools=enable_write_tools,
         enabled_operation_ids=autogen_allowlist,
     )
+    # Before tool generation: the 153-type task_params union would otherwise be
+    # inlined into each workflow task write tool (~32k tokens apiece).
+    union_variants = spec_transform.compact_large_unions(filtered_spec)
+    trimmed = spec_transform.trim_tool_schemas(filtered_spec)
+    logger.debug("Trimmed tool schemas: %s", trimmed)
 
     # NOTE: autogen tools whose name collides with a curated `@mcp.tool` are
     # removed AFTER registration by `_remove_autogen_tools_shadowed_by_curated`,
@@ -1170,20 +1412,43 @@ def create_rootly_mcp_server(
         client=http_client,  # type: ignore[arg-type]
         name=name,
         tags={"rootly", "incident-management"},
+        # Only when the default hides tools: then a model can tell the user how
+        # to load the toolset it needs instead of concluding Rootly cannot do it.
+        instructions=(
+            toolsets.server_instructions(default_selection)
+            if tool_selection and toolsets_apply and toolsets.ALL not in default_selection
+            else None
+        ),
     )
     # Alias middleware runs first so the historical camelCase names are rewritten
     # to snake_case before usage logging records the (canonical) tool name.
     mcp.add_middleware(CamelCaseAliasMiddleware(camel_to_snake_aliases))
+    # Inside the alias rewrite, so a camelCase name of a removed tool is
+    # recognised too; ahead of tool selection, so read-only connections get
+    # the replacement rather than a read-only refusal.
+    removed_tool_middleware = RemovedToolMiddleware(removed_tool_guidance)
+    mcp.add_middleware(removed_tool_middleware)
+    # After alias rewriting (so a camelCase call is checked under its real
+    # name), before everything else: a hidden tool is refused before any work.
+    tool_selection_middleware: ToolSelectionMiddleware | None = None
+    if tool_selection:
+        tool_selection_middleware = ToolSelectionMiddleware(
+            {}, default_selection, toolsets_apply=toolsets_apply
+        )
+        mcp.add_middleware(tool_selection_middleware)
     mcp.add_middleware(ArgumentNormalizationMiddleware())
     mcp.add_middleware(LegacyContextArgumentMiddleware())
-    mcp.add_middleware(InjectedToolAnnotationMiddleware())
     mcp.add_middleware(ToolUsageLoggingMiddleware())
     # Inside usage logging, so the logged arg keys are what the caller sent and
     # the applied rewrites (or the rejection) are recorded with them. Scoped to
     # the curated tools once they are registered, below.
     argument_alias_middleware = ToolArgumentAliasMiddleware()
     mcp.add_middleware(argument_alias_middleware)
-    mcp.add_middleware(JsonApiBodyRepairMiddleware())
+    mcp.add_middleware(
+        JsonApiBodyRepairMiddleware(
+            trimmed["removed_property_names"], union_variants.get("task_type", {})
+        )
+    )
     # Innermost, so usage logging still records the rejected call and its arg keys.
     mcp.add_middleware(PathArgumentValidationMiddleware())
 
@@ -1411,6 +1676,13 @@ def create_rootly_mcp_server(
         # Use our custom client with proper error handling instead of bypassing it
         return await http_client.request(method, url, **kwargs)
 
+    # Innermost: after path-argument validation, so only a present reference
+    # is resolved, and on the final argument names.
+    async def _resolve_incident(reference: str) -> str:
+        return await _resolve_incident_reference_to_uuid(reference, make_authenticated_request)
+
+    mcp.add_middleware(IncidentReferenceMiddleware(_resolve_incident))
+
     register_incident_tools(
         mcp=mcp,
         make_authenticated_request=make_authenticated_request,
@@ -1446,6 +1718,8 @@ def create_rootly_mcp_server(
         mcp_error=MCPError,
     )
 
+    register_workflow_task_tools(mcp, union_variants.get("task_type", {}))
+
     register_investigation_tools(
         mcp=mcp,
         make_authenticated_request=make_authenticated_request,
@@ -1457,11 +1731,31 @@ def create_rootly_mcp_server(
     # autogen duplicate so only the richer curated implementation is surfaced.
     _remove_autogen_tools_shadowed_by_curated(mcp)
     argument_alias_middleware.tool_names = frozenset(_provider_tool_inventory(mcp)[0])
+    removed_tool_middleware.exclude(argument_alias_middleware.tool_names)
 
     # Apply MCP tool annotations (read_only_hint, destructive_hint, etc.) to
     # autogen tools based on HTTP method. Curated tools set their own annotations
     # via @mcp.tool(annotations=...) at registration time.
     _apply_annotations_to_autogen_tools(mcp, filtered_spec)
+
+    if tool_selection_middleware is not None:
+        operation_tags = {
+            spec_transform.to_snake_case(operation["operationId"]): (
+                operation.get("tags") or [None]
+            )[0]
+            for path_item in filtered_spec.get("paths", {}).values()
+            for method, operation in path_item.items()
+            if method.lower() in {"get", "post", "put", "patch", "delete"}
+            and isinstance(operation, dict)
+            and operation.get("operationId")
+        }
+        curated_names, _, autogen_names = _provider_tool_inventory(mcp)
+        tool_selection_middleware.tool_toolsets.update(
+            {
+                tool_name: toolsets.toolset_for(tool_name, operation_tags.get(tool_name))
+                for tool_name in curated_names | autogen_names
+            }
+        )
 
     # Validate the allowlist against the fully-registered tool set (autogen + curated).
     # This must happen after all register_*_tools() calls so curated tool names — which
@@ -1471,7 +1765,9 @@ def create_rootly_mcp_server(
         registered_names = curated_names | autogen_names
 
         valid_tools = enabled_tools & registered_names
-        invalid_tools = sorted(enabled_tools - registered_names)
+        # SDK-added tools (send_feedback) are added later by PostHog analytics,
+        # so naming one is valid even though it is not registered yet.
+        invalid_tools = sorted(enabled_tools - registered_names - toolsets.SDK_ADDED_TOOLS)
 
         if invalid_tools:
             audit.audit.log_configuration_error(
@@ -1485,7 +1781,7 @@ def create_rootly_mcp_server(
                 ", ".join(invalid_tools),
             )
 
-        if not valid_tools:
+        if not valid_tools and not enabled_tools & toolsets.SDK_ADDED_TOOLS:
             error_msg = "No valid tools found in allowlist"
             audit.audit.log_configuration_error(
                 "no_valid_tools", error_msg, {"requested_tools": sorted(enabled_tools)}

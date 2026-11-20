@@ -5,7 +5,7 @@
 
 # uv is pinned (Dependabot's docker ecosystem bumps this tag). The binary is
 # copied in rather than pip-installed so it never lands in the runtime image.
-FROM ghcr.io/astral-sh/uv:0.13.6 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
 
 # ---------------------------------------------------------------------------
 # Builder: resolve nothing, install the lock into /opt/venv.
@@ -15,7 +15,7 @@ FROM ghcr.io/astral-sh/uv:0.13.6 AS uv
 # needs a wheel for it: there is no compiler here, so a package without one
 # fails the build instead of being compiled from source.
 # ---------------------------------------------------------------------------
-FROM python:3.14-slim AS builder
+FROM python:3.15-slim AS builder
 
 COPY --from=uv /uv /usr/local/bin/uv
 
@@ -45,38 +45,17 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
-# AgentCat (formerly MCPcat) provides hosted telemetry and is deliberately kept
-# out of the project's dependency graph. The [community] extra provides FastMCP
-# support, which this server relies on. v2 supports the MCP 2026-07-28 spec and
-# tracks sessions via a session_id in the tool list rather than stateful
-# connections — a better fit for our stateless hosted transport.
-#
-# It is installed with every locked version as a constraint, so it can only add
-# its own packages: it can never move a locked dependency (pydantic, mcp,
-# fastmcp, ...). If a future AgentCat needs a version the lock does not allow,
-# this step fails the build rather than shipping an untested combination.
-# `uv pip check` then confirms the final environment is consistent. This step
-# must stay after the last `uv sync`, which removes anything not in the lock.
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv export --quiet --locked --no-dev --no-emit-project --no-hashes -o /tmp/constraints.txt \
-    && uv pip install --python /opt/venv/bin/python \
-        --constraint /tmp/constraints.txt \
-        "agentcat[community]==2.1.0" \
-    && uv pip check --python /opt/venv/bin/python
-
 # ---------------------------------------------------------------------------
 # Runtime: same base image, no compiler, no uv, no build cache.
 # ---------------------------------------------------------------------------
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 # curl stays for container health checks.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# The venv's interpreter symlinks to /usr/local/bin/python3.14, which is the
+# The venv's interpreter symlinks to /usr/local/bin/python3.15, which is the
 # same path in both stages because they share a base image.
 COPY --from=builder /opt/venv /opt/venv
 
@@ -98,6 +77,9 @@ ENV FASTMCP_PORT=8000
 ENV FASTMCP_STATELESS_HTTP=true
 ENV ROOTLY_TRANSPORT=both
 ENV ROOTLY_LOG_LEVEL=INFO
+# The commit this image was built from, recorded as PostHog's $mcp_server_build.
+ARG ROOTLY_MCP_BUILD=""
+ENV ROOTLY_MCP_BUILD=${ROOTLY_MCP_BUILD}
 
 # Switch to non-root user
 USER appuser

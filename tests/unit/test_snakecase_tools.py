@@ -217,3 +217,23 @@ class TestArgumentNormalizationMiddleware:
             "update_incident", {"incident_id": "INC-1", "service_ids": "svc-1,svc-2"}
         )
         assert args["service_ids"] == "svc-1,svc-2"
+
+
+@pytest.mark.asyncio
+class TestIncidentFilterListsBecomeCsv:
+    @pytest.mark.parametrize("tool", ["list_incidents", "collect_incidents"])
+    async def test_status_and_severity_lists_are_joined(self, tool):
+        # A model sent status=["started", "mitigated"]; the tool takes a string
+        # and pydantic rejected the call before it reached the API.
+        _, ctx = await _run_middleware(
+            ArgumentNormalizationMiddleware(),
+            tool,
+            {"status": ["started", "mitigated"], "severity": ["sev0", "sev1"]},
+        )
+        assert ctx["args"] == {"status": "started,mitigated", "severity": "sev0,sev1"}
+
+    async def test_string_status_is_untouched(self):
+        _, ctx = await _run_middleware(
+            ArgumentNormalizationMiddleware(), "list_incidents", {"status": "started"}
+        )
+        assert ctx["args"] == {"status": "started"}

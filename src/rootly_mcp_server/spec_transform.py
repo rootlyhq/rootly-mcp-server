@@ -146,6 +146,38 @@ def snakecase_operation_ids(spec: dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
+_DEPRECATION_PREFIX = re.compile(
+    r"^\s*(?:\[deprecated\]|\*\*deprecated:?\*\*:?|deprecated[.:])\s*", re.IGNORECASE
+)
+
+
+def deprecated_operation_guidance(spec: dict[str, Any]) -> dict[str, str]:
+    """Map each operation the API marks deprecated to what replaces it.
+
+    `_filter_openapi_spec` never makes these tools, so a client with a cached
+    tool list that still calls one would only hear "Unknown tool". The spec's
+    own description names the replacement; this keeps it so the server can say
+    so. Run after `snakecase_operation_ids`: keys are the tool names.
+    """
+    guidance: dict[str, str] = {}
+    for path_item in spec.get("paths", {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for method, op in path_item.items():
+            if method.lower() not in _OPENAPI_METHODS or not isinstance(op, dict):
+                continue
+            op_id = op.get("operationId")
+            if not op_id or op.get("deprecated") is not True:
+                continue
+            description = _DEPRECATION_PREFIX.sub("", op.get("description") or "")
+            # The first sentence names the replacement; the rest restates the
+            # operation ("List Custom fields").
+            first_line = description.strip().split("\n", 1)[0]
+            sentence, dot, _ = first_line.partition(". ")
+            guidance[op_id] = (sentence + dot).strip()
+    return guidance
+
+
 def _load_swagger_spec(swagger_path: str | None = None) -> dict[str, Any]:
     """
     Load the Swagger specification from a file or URL.
@@ -231,6 +263,133 @@ def _fetch_swagger_from_url(url: str = SWAGGER_URL) -> dict[str, Any]:
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse Swagger spec: {e}")
         raise Exception(f"Failed to parse Swagger specification: {e}")
+
+
+_AI_AUTOMATION = (
+    "An AI automation is a saved instruction (prompt) that a Rootly AI agent runs "
+    "on a schedule, on a matching event (incident, alert, Slack message, webhook) "
+    "or on demand. When it runs, the agent may only use the tools listed in the "
+    "automation's `allowed_tool_keys` (all team-allowed tools when null), and it "
+    "posts its answer to the configured destination (a Slack channel or the "
+    "incident timeline), or nowhere when `destination_kind` is none."
+)
+_AI_SKILL = (
+    "An AI skill is reusable written guidance (markdown `body`) that Rootly AI "
+    "agents, users and AI automations can load while they work. Skills keep "
+    "saved versions, readable with list_ai_skill_versions."
+)
+
+# Tool descriptions for operations whose spec text says only which OAuth scope
+# they need. Keyed by snake_case operationId. The spec's own description is kept
+# after this text, so scope, rate-limit and visibility notes still reach the model.
+_OPERATION_DESCRIPTIONS: dict[str, str] = {
+    "list_ai_automations": (
+        "List the team's AI automations: name, prompt, triggers, destination, "
+        "allowed tools, run limits and whether each is enabled. Read-only. " + _AI_AUTOMATION
+    ),
+    "get_ai_automation": (
+        "Get one AI automation by id: its prompt, triggers, destination, allowed "
+        "tools, attached skills and run limits. Read-only. " + _AI_AUTOMATION
+    ),
+    "create_ai_automation": (
+        "Create an AI automation. Set `name` and `prompt`; `triggers` decide when "
+        "it runs, `destination_kind` where its answer is posted, and "
+        "`allowed_tool_keys` which tools the agent may use (null means every tool "
+        "the team allows, so pass an explicit list to keep it narrow). New "
+        "automations are disabled unless `enabled` is true. " + _AI_AUTOMATION
+    ),
+    "update_ai_automation": (
+        "Change an existing AI automation. Only the attributes you send change; "
+        "`triggers`, when sent, replace the automation's triggers. Changing the "
+        "prompt, allowed tools or destination changes what every future run does, "
+        "and the previous values are not kept. " + _AI_AUTOMATION
+    ),
+    "run_ai_automation": (
+        "Run an existing AI automation now, once. The run executes that "
+        "automation's saved prompt with only the tools in its `allowed_tool_keys`, "
+        "and posts the answer to its configured destination; it cannot run "
+        "arbitrary instructions. Pass `incident_id` to run it against an incident, "
+        "or `run_id` to re-run a previous run. "
+        "Returns the run; poll get_ai_automation_run for its status and output. " + _AI_AUTOMATION
+    ),
+    "get_ai_automation_run": (
+        "Get one AI automation run by id: its status, timing, what triggered it, "
+        "the linked incident if any, and the agent's output. Read-only."
+    ),
+    "list_ai_automation_runs": (
+        "List recent runs of one AI automation with status, trigger and timing. Read-only."
+    ),
+    "list_ai_skills": (
+        "List the team's AI skills: name, slug, description, who may invoke each "
+        "and whether it is enabled. Read-only. " + _AI_SKILL
+    ),
+    "get_ai_skill": (
+        "Get one AI skill by id, including its current `body`. Read-only. " + _AI_SKILL
+    ),
+    "create_ai_skill": (
+        "Create an AI skill from a `name`, `description` and markdown `body`. "
+        "`invocable_by` controls who may load it: the model, users, automations. " + _AI_SKILL
+    ),
+    "update_ai_skill": (
+        "Change an AI skill. Only the attributes you send change, and the change "
+        "applies to every agent and automation that loads the skill. " + _AI_SKILL
+    ),
+    "list_ai_skill_versions": (
+        "List the saved versions of one AI skill, newest first. Read-only. " + _AI_SKILL
+    ),
+    "get_ai_skill_version": (
+        "Get one saved version of an AI skill, including the `body` it had at "
+        "that version. Read-only. " + _AI_SKILL
+    ),
+    "update_incident_sub_status": (
+        "Correct one entry in an incident's sub-status history: which sub-status "
+        "it records (`sub_status_id`), when it was assigned (`assigned_at`) or by "
+        "whom (`assigned_by_user_id`). The `id` is the history entry's id, not "
+        "the incident's. This edits the record only; it does not move the "
+        "incident to another sub-status."
+    ),
+    "create_incident_action_item": (
+        "Add a follow-up action item to an incident: a `summary`, optional "
+        "`description`, `kind`, `priority`, `status`, `due_date` and assignee "
+        "(`assigned_to_user_id` or `assigned_to_group_ids`). It can link an "
+        "existing issue (Jira by `jira_issue_key` or `jira_issue_url`, Linear by "
+        "`linear_issue_url`); it does not create one."
+    ),
+    "create_workflow_run": (
+        "Run a Rootly workflow now. The workflow executes its configured tasks "
+        "(for example posting Slack messages, creating tickets, or changing the "
+        "incident), which can act on other systems and cannot be undone by this "
+        "server. Pass the record to run it against (such as `incident_id`) in "
+        "the request attributes; list_workflow_tasks shows what the workflow does."
+    ),
+    "create_workflow_task": (
+        "Add a task to a Rootly workflow. Set `task_params.task_type` to the "
+        "action (for example send_slack_message or create_jira_issue) and the "
+        "parameters that action needs; get_workflow_task_params_schema returns "
+        "them for a task_type. The task runs whenever the workflow runs."
+    ),
+    "update_workflow_task": (
+        "Change a task in a Rootly workflow: its name, position, enabled state "
+        "or `task_params`. The previous values are not kept, and the change "
+        "applies to every future run of the workflow. "
+        "get_workflow_task_params_schema returns the parameters for a task_type."
+    ),
+}
+
+
+def _describe_operations(paths: dict[str, Any]) -> None:
+    """Lead each operation in `_OPERATION_DESCRIPTIONS` with its written description."""
+    for path_item in paths.values():
+        if not isinstance(path_item, dict):
+            continue
+        for method, operation in path_item.items():
+            if method.lower() not in _OPENAPI_METHODS or not isinstance(operation, dict):
+                continue
+            text = _OPERATION_DESCRIPTIONS.get(to_snake_case(operation.get("operationId") or ""))
+            if text is None:
+                continue
+            original = (operation.get("description") or "").strip()
+            operation["description"] = f"{text}\n\n{original}" if original else text
 
 
 def _drop_duplicate_update_verb(path_item: dict[str, Any]) -> None:
@@ -319,6 +478,17 @@ def _filter_openapi_spec(
         )
         if not allow_delete:
             path_item.pop("delete", None)
+        # Operations the API marks deprecated are never tools: they cost every
+        # client context for endpoints with a supported replacement, and an
+        # allowlist entry or a spec refresh must not bring them back.
+        for method in [
+            method
+            for method, operation in path_item.items()
+            if method.lower() in _OPENAPI_METHODS
+            and isinstance(operation, dict)
+            and operation.get("deprecated") is True
+        ]:
+            path_item.pop(method)
         if not any(method.lower() in _OPENAPI_METHODS for method in path_item):
             paths_to_remove.append(path)
     for path in paths_to_remove:
@@ -340,6 +510,8 @@ def _filter_openapi_spec(
                 paths_to_remove.append(path)
         for path in paths_to_remove:
             del filtered_paths[path]
+
+    _describe_operations(filtered_paths)
 
     # Clean up schema references that might be broken
     # Remove problematic schema references from request bodies and parameters
@@ -921,3 +1093,210 @@ def _patch_broken_refs(schema_def: dict[str, Any]) -> dict[str, Any]:
         else:
             result[key] = value
     return result
+
+
+# A request-body union larger than this (serialized, with $refs resolved) is
+# replaced in the tool schema by its discriminator enum. Workflow task_params
+# (153 task types, ~131k chars) is the only union over it today; the
+# escalation-rule and workflow-trigger unions (10-15k) stay inline, since a
+# model writes those in one call and the lookup round trip would cost more.
+LARGE_UNION_MAX_CHARS = 40_000
+
+WORKFLOW_TASK_PARAMS_SCHEMA_TOOL = "get_workflow_task_params_schema"
+
+# Discriminator -> the tool that serves one variant of a compacted union. A
+# union is only compacted when its discriminator has a lookup tool here, so a
+# compacted schema always names a tool that exists.
+UNION_LOOKUP_TOOLS: dict[str, str] = {"task_type": WORKFLOW_TASK_PARAMS_SCHEMA_TOOL}
+
+
+def _single_value_discriminator(variants: list[dict[str, Any]]) -> str | None:
+    """The property every variant pins to one enum value, e.g. ``task_type``."""
+    common: set[str] | None = None
+    for variant in variants:
+        pinned = {
+            name
+            for name, prop in (variant.get("properties") or {}).items()
+            if isinstance(prop, dict)
+            and isinstance(prop.get("enum"), list)
+            and len(prop["enum"]) == 1
+        }
+        common = pinned if common is None else common & pinned
+        if not common:
+            return None
+    return sorted(common)[0] if common else None
+
+
+def _merge_variants(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """One schema accepting either variant's fields."""
+    merged = deepcopy(first)
+    merged["properties"] = {**(second.get("properties") or {}), **(first.get("properties") or {})}
+    required = set(first.get("required") or []) & set(second.get("required") or [])
+    if required:
+        merged["required"] = sorted(required)
+    else:
+        merged.pop("required", None)
+    return merged
+
+
+def compact_large_unions(
+    spec: dict[str, Any], *, max_chars: int = LARGE_UNION_MAX_CHARS
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Replace oversized discriminated unions in request schemas, in place.
+
+    ``task_params`` on the workflow task write tools is a oneOf/anyOf of 153
+    task types, inlined into each tool's input schema: about 32k tokens per
+    tool, sent to every client on every ``tools/list``. The union becomes an
+    open object whose discriminator is an enum of the variant names, and the
+    variants are returned (``{discriminator: {value: schema}}``) so a lookup
+    tool can serve one at a time.
+
+    Only unions whose every variant pins the same property to a single enum
+    value are compacted; anything else is left untouched.
+    """
+    schemas = spec.get("components", {}).get("schemas", {})
+
+    def resolve(node: Any) -> Any:
+        if isinstance(node, dict) and isinstance(node.get("$ref"), str):
+            target = schemas.get(node["$ref"].split("/")[-1])
+            return deepcopy(target) if isinstance(target, dict) else node
+        return node
+
+    found: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def visit(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                visit(item)
+            return
+        if not isinstance(node, dict):
+            return
+        for key in ("oneOf", "anyOf"):
+            raw = node.get(key)
+            if not isinstance(raw, list) or len(raw) < 2:
+                continue
+            # A broken $ref was already patched to a bare open object (see
+            # _patch_broken_refs); it names no fields, so it is not a variant.
+            variants = [
+                resolved
+                for resolved in (resolve(item) for item in raw)
+                if resolved != {"type": "object", "additionalProperties": True}
+            ]
+            if not all(isinstance(item, dict) for item in variants):
+                continue
+            if len(json.dumps(variants)) <= max_chars:
+                continue
+            discriminator = _single_value_discriminator(variants)
+            if discriminator is None or discriminator not in UNION_LOOKUP_TOOLS:
+                continue
+            by_value: dict[str, dict[str, Any]] = {}
+            for variant in variants:
+                value = str(variant["properties"][discriminator]["enum"][0])
+                existing = by_value.get(value)
+                # The spec reuses a value across variants (e.g. Quip and
+                # Google Docs both declare create_google_docs_page): keep every
+                # field, require only what all of them require.
+                by_value[value] = (
+                    variant if existing is None else _merge_variants(existing, variant)
+                )
+            found.setdefault(discriminator, {}).update(by_value)
+            description = node.get("description")
+            node.clear()
+            node.update(
+                {
+                    "type": "object",
+                    "description": (
+                        (f"{description.rstrip('.')}. " if isinstance(description, str) else "")
+                        + f"Set `{discriminator}` to one of the {len(by_value)} values below. "
+                        "Each takes its own fields, which this schema leaves out to keep the "
+                        f"tool small: call {UNION_LOOKUP_TOOLS[discriminator]}"
+                        f"({discriminator}=...) for them before writing."
+                    ),
+                    "properties": {
+                        discriminator: {"type": "string", "enum": sorted(by_value)},
+                    },
+                    "additionalProperties": True,
+                }
+            )
+            return
+        for value in node.values():
+            visit(value)
+
+    visit(spec.get("paths", {}))
+    for schema in schemas.values():
+        visit(schema)
+    return found
+
+
+# Property descriptions that mark a field the API ignores or no longer wants.
+# The field is left out of the tool schema; a client that still sends it is
+# unaffected (attributes pass through and the API ignores or derives them).
+_IGNORED_PROPERTY_PREFIXES = (
+    "accepted for json:api client compatibility, but ignored",
+    "deprecated.",
+    "[deprecated]",
+)
+
+# An enum this long is a reference list, not a choice a model makes from the
+# schema: the IANA time zone list (~308 names) appeared 8 times, ~36k chars.
+_LONG_ENUM_MIN_VALUES = 100
+_TIME_ZONE_HINT = "IANA time zone name, e.g. 'America/New_York' or 'Europe/Paris'."
+
+
+def _is_time_zone_enum(values: list[Any]) -> bool:
+    return (
+        len(values) >= _LONG_ENUM_MIN_VALUES
+        and {"America/New_York", "Etc/UTC"} & set(map(str, values)) != set()
+    )
+
+
+def trim_tool_schemas(spec: dict[str, Any]) -> dict[str, Any]:
+    """Drop schema detail that costs context and tells a model nothing, in place.
+
+    * properties the API documents as ignored or deprecated (the JSON:API
+      ``data.id`` on updates, ``slug`` derived from ``name``, ...);
+    * the IANA time zone enum, replaced by a string with an example.
+
+    Returns counts of what was trimmed and ``removed_property_names``: body
+    repair still treats those as known attributes, so a caller that sends
+    ``slug`` in a flat body is repaired as before rather than refused.
+    """
+    counts: dict[str, Any] = {"ignored_properties": 0, "time_zone_enums": 0}
+    removed: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                visit(item)
+            return
+        if not isinstance(node, dict):
+            return
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            ignored = [
+                name
+                for name, prop in properties.items()
+                if isinstance(prop, dict)
+                and str(prop.get("description", "")).lower().startswith(_IGNORED_PROPERTY_PREFIXES)
+            ]
+            for name in ignored:
+                del properties[name]
+            if ignored and isinstance(node.get("required"), list):
+                node["required"] = [name for name in node["required"] if name not in ignored]
+                if not node["required"]:
+                    del node["required"]
+            counts["ignored_properties"] += len(ignored)
+            removed.update(ignored)
+        values = node.get("enum")
+        if isinstance(values, list) and _is_time_zone_enum(values):
+            del node["enum"]
+            description = str(node.get("description", "")).strip()
+            node["description"] = f"{description} {_TIME_ZONE_HINT}".strip()
+            counts["time_zone_enums"] += 1
+        for value in node.values():
+            visit(value)
+
+    visit(spec.get("paths", {}))
+    visit(spec.get("components", {}).get("schemas", {}))
+    counts["removed_property_names"] = frozenset(removed)
+    return counts

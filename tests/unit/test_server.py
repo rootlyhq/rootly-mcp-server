@@ -408,8 +408,6 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "get_catalog_entity" in tool_names
         assert "list_catalog_properties" in tool_names
         assert "get_catalog_property" in tool_names
-        assert "list_catalog_entity_properties" in tool_names
-        assert "get_catalog_entity_property" in tool_names
         assert "list_causes" in tool_names
         assert "get_cause" in tool_names
         assert "list_dashboard_panels" in tool_names
@@ -438,8 +436,6 @@ class TestBundledIncidentFormFieldSelectionTools:
         assert "update_workflow_form_field_condition" in tool_names
         assert "create_catalog_property" in tool_names
         assert "update_catalog_property" in tool_names
-        assert "create_catalog_entity_property" in tool_names
-        assert "update_catalog_entity_property" in tool_names
         assert "create_dashboard_panel" in tool_names
         assert "update_dashboard_panel" in tool_names
         assert "delete_alert_event" not in tool_names
@@ -1666,7 +1662,8 @@ class TestApplyAnnotationsToAutogenTools:
         assert ann.idempotent_hint is False
         assert ann.open_world_hint is True
 
-    def test_put_marked_idempotent(self):
+    def test_put_marked_idempotent_and_destructive(self):
+        # An update overwrites values the caller may not be able to restore.
         mcp, tools = self._make_mock_mcp(["update_item"])
         spec = {"paths": {"/items/{id}": {"put": {"operationId": "update_item"}}}}
 
@@ -1674,7 +1671,7 @@ class TestApplyAnnotationsToAutogenTools:
 
         ann = tools["update_item"].annotations
         assert ann.read_only_hint is False
-        assert ann.destructive_hint is False
+        assert ann.destructive_hint is True
         assert ann.idempotent_hint is True
 
     def test_patch_marked_idempotent(self):
@@ -1685,7 +1682,27 @@ class TestApplyAnnotationsToAutogenTools:
 
         ann = tools["patch_item"].annotations
         assert ann.read_only_hint is False
+        assert ann.destructive_hint is True
         assert ann.idempotent_hint is True
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "create_override_shift",
+            "create_workflow_run",
+            "run_ai_automation",
+            "rotate_ai_automation_webhook_secret",
+        ],
+    )
+    def test_posts_that_replace_or_act_on_state_are_destructive(self, name):
+        mcp, tools = self._make_mock_mcp([name])
+        spec = {"paths": {"/x": {"post": {"operationId": name}}}}
+
+        server_module._apply_annotations_to_autogen_tools(mcp, spec)
+
+        ann = tools[name].annotations
+        assert ann.destructive_hint is True
+        assert ann.idempotent_hint is False
 
     def test_delete_marked_destructive(self):
         mcp, tools = self._make_mock_mcp(["delete_item"])
@@ -1734,78 +1751,6 @@ class TestApplyAnnotationsToAutogenTools:
 
 
 @pytest.mark.unit
-class TestInjectedToolAnnotations:
-    """The telemetry SDK registers `get_more_tools` with only read_only_hint.
-
-    Unset hints are not "unknown" -- the MCP spec defaults destructive_hint and
-    open_world_hint to true, so the tool advertises itself as destructive and
-    open-world. It is neither. We cannot annotate a tool we did not register, so
-    the listing is completed on the way out.
-    """
-
-    @staticmethod
-    async def _list_through_middleware(tools):
-        from typing import Any, cast
-
-        from rootly_mcp_server.server import InjectedToolAnnotationMiddleware
-
-        async def call_next(context):
-            return tools
-
-        # The hook reads nothing off the context, so a placeholder is enough to
-        # exercise it without building a full MiddlewareContext.
-        return await InjectedToolAnnotationMiddleware().on_list_tools(cast(Any, None), call_next)
-
-    @pytest.mark.asyncio
-    async def test_completes_the_injected_tools_annotations(self):
-        injected = SimpleNamespace(
-            name="get_more_tools",
-            annotations=mt.ToolAnnotations(read_only_hint=True),
-        )
-
-        result = await self._list_through_middleware([injected])
-
-        ann = result[0].annotations
-        assert ann.read_only_hint is True
-        assert ann.destructive_hint is False
-        assert ann.open_world_hint is False
-
-    @pytest.mark.asyncio
-    async def test_leaves_our_own_tools_alone(self):
-        ours = SimpleNamespace(
-            name="list_incidents",
-            annotations=mt.ToolAnnotations(read_only_hint=True, open_world_hint=True),
-        )
-
-        result = await self._list_through_middleware([ours])
-
-        assert result[0].annotations.open_world_hint is True
-        assert result[0].annotations.destructive_hint is None
-
-    @pytest.mark.asyncio
-    async def test_a_tool_with_no_annotations_is_untouched(self):
-        bare = SimpleNamespace(name="something_else", annotations=None)
-
-        result = await self._list_through_middleware([bare])
-
-        assert result[0].annotations is None
-
-    def test_the_key_matches_the_name_the_sdk_registers(self):
-        """The patch is keyed by name, so an upstream rename disables it silently.
-
-        Compared against the SDK's own constant rather than a literal, so an
-        upgrade that renames the tool fails here. `agentcat` is installed only in
-        the container image, not by `uv sync --dev`, so this skips in the unit
-        test jobs and runs wherever the SDK is actually present.
-        """
-        constants = pytest.importorskip("agentcat.modules.constants")
-
-        from rootly_mcp_server.server import _INJECTED_TOOL_ANNOTATIONS
-
-        assert constants.GET_MORE_TOOLS_NAME in _INJECTED_TOOL_ANNOTATIONS
-
-
-@pytest.mark.unit
 class TestEveryToolDeclaresItsSafety:
     """No tool may leave a safety hint unset.
 
@@ -1849,3 +1794,63 @@ class TestEveryToolDeclaresItsSafety:
         unannotated = [tool.name for tool in await server.list_tools() if tool.annotations is None]
 
         assert unannotated == [], f"tools with no annotations: {sorted(unannotated)}"
+
+
+@pytest.mark.unit
+class TestDirectoryReviewFindings:
+    """What the OpenAI directory review flagged, checked on the served tool list."""
+
+    _OVERWRITING = [
+        "update_incident",
+        "patch_alert_route",
+        "update_alerts_source",
+        "update_escalation_path",
+        "update_functionality",
+        "update_incident_action_item",
+        "update_on_call_role",
+        "update_service",
+        "update_team",
+        "update_ai_automation",
+        "create_override_shift",
+        "create_workflow_run",
+        "run_ai_automation",
+    ]
+    _DESCRIBED = [
+        "list_ai_automations",
+        "get_ai_automation",
+        "create_ai_automation",
+        "update_ai_automation",
+        "run_ai_automation",
+        "get_ai_automation_run",
+        "list_ai_skills",
+        "get_ai_skill",
+        "create_ai_skill",
+        "update_ai_skill",
+        "list_ai_skill_versions",
+        "get_ai_skill_version",
+        "create_workflow_run",
+        "create_workflow_task",
+        "update_workflow_task",
+        "update_incident_sub_status",
+        "create_incident_action_item",
+    ]
+
+    @pytest.fixture
+    async def tools(self, mock_environment_token):
+        from rootly_mcp_server.server import create_rootly_mcp_server
+
+        server = create_rootly_mcp_server(hosted=True)
+        return {tool.name: tool for tool in await server.list_tools()}
+
+    @pytest.mark.parametrize("name", _OVERWRITING)
+    async def test_overwriting_tools_are_destructive(self, tools, name):
+        assert name in tools
+        assert tools[name].annotations.destructive_hint is True
+
+    @pytest.mark.parametrize("name", _DESCRIBED)
+    async def test_description_says_what_the_tool_does(self, tools, name):
+        description = tools[name].description or ""
+        # Not the spec's scope-only text ("Requires OAuth scope ...").
+        assert not description.startswith("Requires OAuth scope"), description
+        first_paragraph = description.split("\n\n", 1)[0]
+        assert len(first_paragraph) > 60, first_paragraph

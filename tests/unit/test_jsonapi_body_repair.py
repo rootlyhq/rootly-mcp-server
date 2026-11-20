@@ -299,3 +299,183 @@ async def test_double_encoded_data_says_so(server, sent):
     assert result.is_error
     assert "a string (JSON encoded more than once?)" in _text(result)
     assert sent == []
+
+
+TASK_ID = "task-1"
+
+
+async def _call(server: FastMCP, tool: str, arguments: dict[str, Any]) -> Any:
+    async with Client(server) as client:
+        return await client.call_tool(tool, arguments, raise_on_error=False)
+
+
+async def test_required_body_without_data_is_rejected_before_the_api(server, sent):
+    # ROOTLY-MCP-31K: createAlertRoute marks its requestBody required but not
+    # `data` itself, so a bare call used to go out as an empty body.
+    result = await _call(server, "create_alert_route", {})
+
+    assert result.is_error
+    assert "the request body goes in `data`, which was not provided" in _text(result)
+    assert sent == []
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param({"type": "groups", "attributes": {}}, id="empty-attributes"),
+        pytest.param({"type": "groups"}, id="no-attributes"),
+        pytest.param({}, id="empty-data"),
+    ],
+)
+async def test_update_with_nothing_to_change_is_rejected_before_the_api(server, sent, data):
+    result = await _call(server, "update_team", {"id": "team-1", "data": data})
+
+    assert result.is_error
+    text = _text(result)
+    assert "`data.attributes` is empty, so there is nothing to update" in text
+    assert '"attributes": {"name": "..."}' in text
+    accepted = text.split("Fields this tool accepts: ", 1)[1]
+    assert "description" in accepted
+    # Deprecated (submitted value ignored) and compatibility-only names stay out.
+    assert "slug" not in accepted
+    assert sent == []
+
+
+async def test_update_with_attributes_still_goes_through(server, sent):
+    result = await _call(
+        server,
+        "update_team",
+        {"id": "team-1", "data": {"type": "groups", "attributes": {"name": "X"}}},
+    )
+
+    assert not result.is_error, _text(result)
+    assert [r.url.path for r in sent] == ["/v1/teams/team-1"]
+    assert json.loads(sent[-1].content)["data"]["attributes"] == {"name": "X"}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"id": INCIDENT_ID, "status": "resolved"},
+        {
+            "id": INCIDENT_ID,
+            "status": "resolved",
+            "data": {"type": "alerts", "attributes": {"summary": "updated"}},
+        },
+    ],
+)
+async def test_update_alert_status_points_to_the_status_actions(server, sent, arguments):
+    result = await _call(server, "update_alert", arguments)
+
+    assert result.is_error
+    assert "does not accept 'status'" in _text(result)
+    assert "resolve_alert(id=...)" in _text(result)
+    assert "acknowledge_alert(id=...)" in _text(result)
+    assert sent == []
+
+
+async def test_update_alert_without_body_is_rejected_despite_optional_request_body(server, sent):
+    result = await _call(server, "update_alert", {"id": INCIDENT_ID})
+
+    assert result.is_error
+    assert "the request body goes in `data`" in _text(result)
+    assert sent == []
+
+
+async def test_flat_writable_alert_attribute_is_still_repaired(server, sent):
+    result = await _call(server, "update_alert", {"id": INCIDENT_ID, "summary": "updated"})
+
+    assert not result.is_error
+    request = next(req for req in sent if req.method == "PATCH")
+    assert json.loads(request.content) == {
+        "data": {"type": "alerts", "attributes": {"summary": "updated"}}
+    }
+
+
+@pytest.mark.parametrize("tool", ["resolve_alert", "acknowledge_alert"])
+async def test_alert_status_actions_can_still_post_without_a_body(server, sent, tool):
+    registered = await server.get_tool(tool)
+    assert registered.annotations is not None
+    assert registered.annotations.read_only_hint is False
+    assert registered.annotations.destructive_hint is True
+
+    result = await _call(server, tool, {"id": INCIDENT_ID})
+
+    assert not result.is_error
+    assert any(req.method == "POST" for req in sent)
+
+
+def test_alert_status_actions_are_not_exposed_when_writes_are_disabled(monkeypatch):
+    monkeypatch.setenv("ROOTLY_API_TOKEN", "test-token")
+    readonly = create_rootly_mcp_server(
+        swagger_path=SWAGGER_PATH, hosted=False, enable_write_tools=False
+    )
+    _, _, tools = _provider_tool_inventory(readonly)
+
+    assert "resolve_alert" not in tools
+    assert "acknowledge_alert" not in tools
+
+
+async def test_task_settings_beside_task_params_move_into_it(server, sent):
+    # ROOTLY-MCP-31S: "unknown attribute 'headers'".
+    data = {
+        "type": "workflow_tasks",
+        "attributes": {
+            "name": "Call hook",
+            "headers": '{"X-Token": "t"}',
+            "task_params": {"task_type": "http_client", "url": "https://x"},
+        },
+    }
+    result = await _call(server, "update_workflow_task", {"id": TASK_ID, "data": data})
+
+    assert not result.is_error, _text(result)
+    attributes = json.loads(sent[-1].content)["data"]["attributes"]
+    assert attributes == {
+        "name": "Call hook",
+        "task_params": {
+            "task_type": "http_client",
+            "url": "https://x",
+            "headers": '{"X-Token": "t"}',
+        },
+    }
+
+
+async def test_stray_task_type_moves_with_its_settings(server, sent):
+    data = {
+        "type": "workflow_tasks",
+        "attributes": {"task_type": "invite_to_slack_channel", "channel": {"id": "C1"}},
+    }
+    result = await _call(server, "update_workflow_task", {"id": TASK_ID, "data": data})
+
+    assert not result.is_error, _text(result)
+    attributes = json.loads(sent[-1].content)["data"]["attributes"]
+    assert attributes == {
+        "task_params": {"task_type": "invite_to_slack_channel", "channel": {"id": "C1"}}
+    }
+
+
+async def test_value_already_in_task_params_is_not_overwritten(server, sent):
+    data = {
+        "type": "workflow_tasks",
+        "attributes": {
+            "headers": "outer",
+            "task_params": {"task_type": "http_client", "headers": "inner"},
+        },
+    }
+    result = await _call(server, "update_workflow_task", {"id": TASK_ID, "data": data})
+
+    assert not result.is_error, _text(result)
+    attributes = json.loads(sent[-1].content)["data"]["attributes"]
+    assert attributes["headers"] == "outer"
+    assert attributes["task_params"] == {"task_type": "http_client", "headers": "inner"}
+
+
+async def test_task_settings_without_a_task_type_are_explained(server, sent):
+    data = {"type": "workflow_tasks", "attributes": {"headers": '{"X": "y"}'}}
+    result = await _call(server, "update_workflow_task", {"id": TASK_ID, "data": data})
+
+    assert result.is_error
+    text = _text(result)
+    assert "'headers' belong inside `data.attributes.task_params`" in text
+    assert "get_workflow_task_params_schema" in text
+    assert sent == []

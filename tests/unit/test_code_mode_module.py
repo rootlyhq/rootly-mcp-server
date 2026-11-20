@@ -14,6 +14,7 @@ from rootly_mcp_server.code_mode import (
     EXECUTE_DESCRIPTION,
     ExecuteCallShapeMiddleware,
     GetSchemaArgumentShapeMiddleware,
+    ListToolsArgumentMiddleware,
     RootlyCodeMode,
     _format_execute_exception,
     build_code_mode_transform,
@@ -23,6 +24,7 @@ from rootly_mcp_server.code_mode import (
     create_rootly_codemode_server,
     resolve_tool_name,
 )
+from rootly_mcp_server.server import ToolSelectionMiddleware
 
 
 def test_code_mode_enabled_from_env_defaults_true():
@@ -104,8 +106,10 @@ def test_create_rootly_codemode_server_adds_code_mode_transform():
     assert isinstance(server._transform, CodeMode)  # type: ignore[attr-defined]  # noqa: SLF001
     middleware = server._middleware  # type: ignore[attr-defined]  # noqa: SLF001
     assert [type(m) for m in middleware] == [
+        ToolSelectionMiddleware,
         ExecuteCallShapeMiddleware,
         GetSchemaArgumentShapeMiddleware,
+        ListToolsArgumentMiddleware,
     ]
     mock_create.assert_called_once_with(
         swagger_path="swagger.json",
@@ -116,6 +120,7 @@ def test_create_rootly_codemode_server_adds_code_mode_transform():
         transport="streamable-http",
         enable_write_tools=True,
         enabled_tools={"list_incidents", "getIncident"},
+        tool_selection=False,
     )
 
 
@@ -488,10 +493,10 @@ def test_format_execute_exception_maps_undefined_tool_names():
     assert close is not None
     assert "'list_shifts'" in close
 
-    # A plain script typo that resembles no tool keeps the original error.
-    assert (
-        _format_execute_exception(Exception("NameError: name 'qqq' is not defined"), tools) is None
-    )
+    generic = _format_execute_exception(Exception("NameError: name 'qqq' is not defined"), tools)
+    assert generic is not None
+    assert "Define this variable before using it" in generic
+    assert "Rootly tool" not in generic
 
 
 def test_undefined_name_hint_builds_the_example_from_the_tool_schema():

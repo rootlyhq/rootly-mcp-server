@@ -19,7 +19,7 @@ import difflib
 import json
 import re
 import typing
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -552,7 +552,12 @@ class MalformedJsonApiBody(ValueError):
 
 
 def repair_jsonapi_body(
-    arguments: Mapping[str, Any], schema: Mapping[str, Any] | None
+    arguments: Mapping[str, Any],
+    schema: Mapping[str, Any] | None,
+    hidden_attributes: Collection[str] = (),
+    *,
+    body_required: bool = False,
+    method: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Fix unambiguous JSON:API envelope mistakes in an OpenAPI write tool's ``data``.
 
@@ -565,16 +570,47 @@ def repair_jsonapi_body(
     A ``data`` string that is not valid JSON raises ``MalformedJsonApiBody``:
     Rootly's 400 for it ("data: Expected hash") echoes the whole string back
     without saying where it broke.
+
+    ``hidden_attributes`` are attribute names trimmed from the advertised
+    schema (``spec_transform.trim_tool_schemas``) that a caller may still send;
+    they count as attributes so the rest of the body is still repaired.
+
+    ``body_required`` is the operation's ``requestBody.required``. A few
+    operations (``createAlertRoute``) set it without listing ``data`` as
+    required in the schema, so a call without ``data`` went out empty and came
+    back as "data: Expected hash" (ROOTLY-MCP-31K). ``method`` lets a PUT or
+    PATCH with nothing to change be answered here instead of by Rootly's
+    "carries no attributes or relationships to update", even when the spec
+    marks the body optional. Bodyless POST actions remain valid.
     """
     resource_type, attribute_properties = _jsonapi_data_schema(schema)
     if not attribute_properties:
         return dict(arguments), []
+    # What the tool itself advertises as writable, for guidance: not the
+    # compatibility-only hidden names, nor deprecated or read-only fields.
+    writable = sorted(
+        name
+        for name, prop in attribute_properties.items()
+        if not (isinstance(prop, dict) and (prop.get("deprecated") or prop.get("readOnly")))
+    ) or sorted(attribute_properties)
+    attribute_properties = {
+        **{
+            name: {}
+            for name in hidden_attributes
+            if name not in _JSONAPI_ENVELOPE_KEYS and name not in _properties(schema)
+        },
+        **attribute_properties,
+    }
     result = dict(arguments)
     rewrites: list[str] = []
     if "data" not in result:
         result, rewrites = _collect_flat_body(result, schema, attribute_properties)
         if "data" not in result:
-            if "data" not in ((schema or {}).get("required") or []):
+            if (
+                not body_required
+                and "data" not in ((schema or {}).get("required") or [])
+                and (method or "").upper() not in ("PUT", "PATCH")
+            ):
                 return result, rewrites
             example = json.dumps({"type": resource_type or "<type>", "attributes": {}})
             stray = sorted(key for key in result if key not in _properties(schema))
@@ -634,5 +670,86 @@ def repair_jsonapi_body(
     if "attributes" in data and "type" not in data and resource_type is not None:
         data = {"type": resource_type, **data}
         rewrites.append("data.type")
+    if (
+        (method or "").upper() in ("PUT", "PATCH")
+        and not data.get("attributes")
+        and not data.get("relationships")
+        and not any(key not in _JSONAPI_ENVELOPE_KEYS for key in data)
+    ):
+        names = writable
+        field = "name" if "name" in names else names[0]
+        example = json.dumps({"type": resource_type or "<type>", "attributes": {field: "..."}})
+        raise MalformedJsonApiBody(
+            f"`data.attributes` is empty, so there is nothing to update. Put the fields "
+            f"to change under `data.attributes`, e.g. {example}. Fields this tool "
+            f"accepts: {', '.join(names)}."
+        )
     result["data"] = data
     return result, rewrites
+
+
+# The attributes a workflow task itself has; everything else a task does is
+# configured inside task_params.
+_WORKFLOW_TASK_ATTRIBUTES = frozenset(
+    {"name", "position", "skip_on_failure", "enabled", "task_params"}
+)
+WORKFLOW_TASK_WRITE_TOOLS = frozenset({"create_workflow_task", "update_workflow_task"})
+
+
+def nest_workflow_task_params(
+    arguments: Mapping[str, Any], variants: Mapping[str, Mapping[str, Any]]
+) -> tuple[dict[str, Any], list[str]]:
+    """Move task settings sent beside ``task_params`` into it.
+
+    Models put a task's own fields (``headers``, ``channel``, ``query_value``)
+    on ``data.attributes`` next to ``task_params``, and Rootly answers 422
+    "unknown attribute 'headers'" (ROOTLY-MCP-31S, 2ZC, 2Z8). A key moves only
+    when the body names its ``task_type`` and that type's schema declares the
+    key, and only when ``task_params`` does not already hold a value for it.
+    A stray ``task_type`` moves too. A task field sent with no ``task_type`` to
+    check it against raises ``MalformedJsonApiBody`` instead of guessing.
+    """
+    data = arguments.get("data")
+    if not isinstance(data, dict):
+        return dict(arguments), []
+    attributes = data.get("attributes")
+    if not isinstance(attributes, dict):
+        return dict(arguments), []
+    task_params = attributes.get("task_params", {})
+    if not isinstance(task_params, dict):
+        return dict(arguments), []
+    stray = [key for key in attributes if key not in _WORKFLOW_TASK_ATTRIBUTES]
+    if not stray:
+        return dict(arguments), []
+
+    task_params = dict(task_params)
+    remaining = dict(attributes)
+    rewrites: list[str] = []
+
+    def move(key: str) -> None:
+        task_params[key] = remaining.pop(key)
+        rewrites.append(f"data.attributes.{key}->data.attributes.task_params.{key}")
+
+    if "task_type" in remaining and "task_type" not in task_params:
+        move("task_type")
+    task_type = task_params.get("task_type")
+    variant = variants.get(task_type) if isinstance(task_type, str) else None
+    if variant is None:
+        known = {name for schema in variants.values() for name in _properties(schema)}
+        misplaced = sorted(key for key in remaining if key in known and key != "task_params")
+        if misplaced and not isinstance(task_type, str):
+            raise MalformedJsonApiBody(
+                f"{', '.join(repr(key) for key in misplaced)} belong inside "
+                "`data.attributes.task_params`, together with `task_type` (the task "
+                "type these settings are for). get_workflow_task_params_schema "
+                "lists each type's fields."
+            )
+    else:
+        accepted = _properties(variant)
+        for key in list(remaining):
+            if key not in _WORKFLOW_TASK_ATTRIBUTES and key in accepted and key not in task_params:
+                move(key)
+    if not rewrites:
+        return dict(arguments), []
+    remaining["task_params"] = task_params
+    return {**arguments, "data": {**data, "attributes": remaining}}, rewrites

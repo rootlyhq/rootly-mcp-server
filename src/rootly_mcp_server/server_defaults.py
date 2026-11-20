@@ -81,6 +81,7 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_shift_incidents",
         "get_team",
         "get_user",
+        "get_workflow_task_params_schema",
         "list_alert_events",
         "list_alert_routes",
         "list_alert_routing_rules",
@@ -279,6 +280,8 @@ DEFAULT_ALLOWED_PATHS = [
     "/incidents/{incident_id}/alerts",
     "/alerts",
     "/alerts/{id}",
+    "/alerts/{id}/acknowledge",
+    "/alerts/{id}/resolve",
     "/severities",
     "/severities/{severity_id}",
     "/teams",
@@ -355,8 +358,6 @@ DEFAULT_ALLOWED_PATHS = [
     "/catalog_entities/{id}",
     "/catalogs/{catalog_id}/properties",
     "/catalog_properties/{id}",
-    "/catalog_entities/{catalog_entity_id}/properties",
-    "/catalog_entity_properties/{id}",
     "/causes",
     "/causes/{id}",
     # Alert events
@@ -443,8 +444,6 @@ DEFAULT_ALLOWED_PATHS = [
     # Incident-related expanded endpoints
     "/incidents/{incident_id}/events",
     "/incident_events/{id}",
-    "/incidents/{incident_id}/custom_field_selections",
-    "/incident_custom_field_selections/{id}",
     # No incident-scoped route exists for a retrospective or its steps; the id
     # comes from the incident's `incident_post_mortem` relationship.
     "/incident_retrospective_steps/{id}",
@@ -458,10 +457,6 @@ DEFAULT_ALLOWED_PATHS = [
     "/meeting_recordings/{id}",
     "/incidents/{incident_id}/meeting_recordings",
     # Advanced form management
-    "/custom_fields",
-    "/custom_fields/{id}",
-    "/custom_field_options",
-    "/custom_field_options/{id}",
     "/form_sets",
     "/form_sets/{id}",
     "/form_field_placements",
@@ -550,6 +545,8 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/teams/{team_id}",
     # Alert management - create + update
     "/alerts/{alert_id}/events",
+    "/alerts/{id}/acknowledge",
+    "/alerts/{id}/resolve",
     "/alert_groups",
     "/alert_groups/{id}",
     "/alert_routes",
@@ -564,7 +561,6 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/alert_events/{id}",
     "/action_items/{id}",
     "/incidents/{incident_id}/action_items",
-    "/incidents/{incident_id}/custom_field_selections",
     "/incidents/{incident_id}/events",
     "/incidents/{incident_id}/form_field_selections",
     "/incident_form_field_selections/{id}",
@@ -651,8 +647,6 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/catalog_entities/{id}",
     "/catalogs/{catalog_id}/properties",
     "/catalog_properties/{id}",
-    "/catalog_entities/{catalog_entity_id}/properties",
-    "/catalog_entity_properties/{id}",
     # Sub-statuses - create + update
     "/sub_statuses",
     "/sub_statuses/{id}",
@@ -667,16 +661,11 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/user_phone_numbers/{id}",
     # Extended incident management
     "/incident_events/{id}",
-    "/incident_custom_field_selections/{id}",
     # `/post_mortems/{id}` is absent deliberately: the read is exposed, the
     # write is not.
     "/incident_retrospective_steps/{id}",
     "/incident_status_pages/{id}",
     # Form and field management - create + update
-    "/custom_fields",
-    "/custom_fields/{id}",
-    "/custom_field_options",
-    "/custom_field_options/{id}",
     "/form_sets",
     "/form_sets/{id}",
     "/form_field_placements/{id}",

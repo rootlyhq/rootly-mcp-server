@@ -199,6 +199,7 @@ test_output/
 !CONTRIBUTING.md
 !CHANGELOG.md
 !SECURITY.md
+!.github/pull_request_template.md
 !docs/databricks-marketplace.md
 .beads/
 .claude/

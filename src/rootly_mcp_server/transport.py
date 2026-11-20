@@ -24,6 +24,7 @@ from .exceptions import RootlyValidationError
 from .security import mask_sensitive_data
 from .utils import (
     OAUTH_PROTECTED_RESOURCE_PATH,
+    _fingerprint_auth_header,
     _sanitize_log_excerpt,
     auth_header_state,
     resolve_mcp_server_url,
@@ -155,6 +156,11 @@ def _extract_rootly_user_identity(payload: Any) -> dict[str, str] | None:
     name = attrs.get("full_name") or attrs.get("name")
     if isinstance(name, str) and name:
         user["name"] = name
+
+    organization = attrs.get("organization")
+    organization_id = organization.get("id") if isinstance(organization, dict) else None
+    if isinstance(organization_id, int | str) and str(organization_id):
+        user["organization_id"] = str(organization_id)
 
     return user
 
@@ -409,6 +415,28 @@ class AuthCaptureMiddleware:
 
             request = Request(scope)
             headers = _normalize_headers(dict(request.headers))
+            # Toolsets / read-only chosen by this request (?toolsets=, headers);
+            # read by ToolSelectionMiddleware for tools/list and tools/call.
+            from urllib.parse import parse_qsl
+
+            from .toolsets import (
+                log_tool_profile_deprecated,
+                requested_selection,
+                selection_from_request,
+                tool_profile_in_request,
+            )
+
+            query = dict(parse_qsl((scope.get("query_string") or b"").decode("latin-1")))
+            requested_selection.set(selection_from_request(query, headers))
+            if legacy_profile := tool_profile_in_request(query, headers):
+                try:
+                    log_tool_profile_deprecated(
+                        *legacy_profile,
+                        headers,
+                        _fingerprint_auth_header(headers.get("authorization", "")),
+                    )
+                except Exception:  # pragma: no cover - logging must never break a request
+                    logger.debug("Failed to log tool_profile deprecation", exc_info=True)
             effective_transport = _infer_transport_from_path(
                 path,
                 self._streamable_path,
@@ -1141,8 +1169,28 @@ class AuthenticatedHTTPXClient:
                 logger.debug(f"Transformed parameter: '{key}' -> '{original_key}'")
         return transformed
 
+    @staticmethod
+    def _refuse_writes_when_readonly(method: str) -> None:
+        """Second line of read-only defence, below the tool layer.
+
+        ToolSelectionMiddleware hides and refuses write tools on a read-only
+        connection; this refuses any non-GET request to the Rootly API on one,
+        so a read-only connection cannot write even through a tool whose
+        annotation is wrong. (Every curated tool that sends POST/PUT is a
+        write tool, so no read path is affected.)
+        """
+        from .toolsets import requested_selection
+
+        selection = requested_selection.get()
+        if selection is not None and selection.readonly and method.upper() not in {"GET", "HEAD"}:
+            raise RootlyValidationError(
+                f"Refused {method.upper()} to the Rootly API: this connection is read-only "
+                "(readonly=true / X-MCP-Readonly). Remove it and reconnect to make changes."
+            )
+
     async def request(self, method: str, url: str, **kwargs):
         """Override request to transform parameters and ensure correct headers."""
+        self._refuse_writes_when_readonly(method)
         self._check_for_unfilled_path_params(method, url)
         # Transform query parameters
         if "params" in kwargs:
@@ -1224,6 +1272,7 @@ class AuthenticatedHTTPXClient:
             method, url, response
         )
         response = self._maybe_annotate_404_response(method, url, response)
+        response = self._maybe_annotate_user_lookup_404(method, url, response)
         response = self._maybe_annotate_alert_routing_deprecation(method, url, response)
         response = self._maybe_annotate_offset_pagination_limit(method, url, response)
         response = self._maybe_annotate_unsortable_field(response)
@@ -1410,6 +1459,45 @@ class AuthenticatedHTTPXClient:
             response._content = json.dumps(body).encode()  # noqa: SLF001
         except Exception:  # nosec B110 - Safe fallback; annotation is best-effort
             pass
+        return response
+
+    _USER_LOOKUP_PATH = re.compile(r"^/v\d+/users/(?!me$)[^/]+$")
+
+    @staticmethod
+    def _maybe_annotate_user_lookup_404(
+        method: str, url: str, response: httpx2.Response
+    ) -> httpx2.Response:
+        """Say where user ids come from when ``GET /v1/users/{id}`` is a 404.
+
+        get_user was the most-retried 404 in MCP telemetry: agents loop on an id
+        that is not a user this token can see, often a guess, an email, or the
+        id of another record (a schedule member, an on-call shift). The upstream
+        body says only "Not found or unauthorized". The hint names the two ways
+        to get a real id.
+        """
+        if response.status_code != 404 or method.upper() != "GET":
+            return response
+        path = AuthenticatedHTTPXClient._path_for_url(url)
+        if not AuthenticatedHTTPXClient._USER_LOOKUP_PATH.match(path):
+            return response
+        try:
+            body = response.json()
+        except Exception:  # nosec B110 - best-effort annotation
+            return response
+        hint = (
+            "No user with this id is visible to this token. Do not retry the same id. "
+            "For the caller, use get_current_user. To find someone, use list_users with "
+            "filter_email or filter_search and pass the `id` it returns."
+        )
+        if isinstance(body, dict):
+            # The plan-gating annotator runs first and treats a non-numeric,
+            # non-UUID id (an email, a name) as a collection; its "upgrade your
+            # plan" advice is wrong here and would contradict this hint.
+            body.pop("_plan_gating_hint", None)
+            body.setdefault("_lookup_hint", hint)
+        else:
+            body = {"original_response": body, "_lookup_hint": hint}
+        response._content = json.dumps(body).encode()  # noqa: SLF001
         return response
 
     @staticmethod
@@ -1762,6 +1850,7 @@ class AuthenticatedHTTPXClient:
         Headers are enforced by the event hook, so we just delegate to the inner client.
         Alert response stripping is also applied here for forward compatibility.
         """
+        self._refuse_writes_when_readonly(request.method)
         self._check_for_unfilled_path_params(request.method, request.url)
         # In hosted mode, ensure Authorization header is present in the request.
         # The _session_auth_token ContextVar is set by AuthCaptureMiddleware
@@ -1832,6 +1921,7 @@ class AuthenticatedHTTPXClient:
         # gating hint matters most here: Rootly answers 404 for endpoints locked
         # to a subscription tier, which is what these tools hit.
         response = self._maybe_annotate_404_response(request.method, str(request.url), response)
+        response = self._maybe_annotate_user_lookup_404(request.method, str(request.url), response)
         response = self._maybe_annotate_alert_routing_deprecation(
             request.method, str(request.url), response
         )

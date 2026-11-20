@@ -354,6 +354,9 @@ async def test_call_shape_values_stay_data_in_the_sandbox():
     ("code", "expected"),
     [
         ("return datetime.now()", "Add `import datetime` first"),
+        ("return data", "Define this variable before using it"),
+        ("return __INC__", "Replace template placeholders"),
+        ('return __import__("json")', "Use an import statement"),
         ("return dir()", "Introspection builtins"),
         ("return globals()", "Use tool_search / get_schema"),
         ("items = [1, 2]\nreturn next(items)", "`next(iter(items), None)`"),
@@ -371,6 +374,12 @@ async def test_call_shape_values_stay_data_in_the_sandbox():
         ("return {'ok': true}", "write True, not the JSON/JavaScript literal true"),
         ("return [null]", "write None"),
         ("import requests\nreturn 1", "no third-party packages, network or filesystem"),
+        (
+            "import re\nreturn re.sub('a', lambda m: 'b', 'a')",
+            "Use a string replacement instead of a callable",
+        ),
+        ("import os\nreturn os.getenv('ROOTLY_API_TOKEN')", "cannot read the host environment"),
+        ("import os\nreturn dict(os.environ)", "cannot read the host environment"),
     ],
 )
 async def test_sandbox_errors_carry_an_actionable_hint(client: Client, code: str, expected: str):
@@ -385,6 +394,8 @@ async def test_sandbox_errors_carry_an_actionable_hint(client: Client, code: str
         "a = {'x': 1}\nb = {'y': 2}\nreturn a | b",
         "import datetime\nreturn datetime.datetime.now(datetime.timezone.utc).isoformat()",
         "import datetime\nreturn datetime.date.today().isoformat()",
+        "import re\nreturn re.sub('a', '[redacted]', 'abc')",
+        "a = '2026-11-10T00:00:00Z'\nb = '2026-11-11T00:00:00Z'\nreturn a < b",
         "import json\nreturn json.loads('{\"a\": 1}')",
     ],
 )
@@ -422,7 +433,8 @@ async def test_sandbox_has_no_host_filesystem_or_environment(
 @pytest.mark.parametrize(
     "message",
     [
-        # Shapes observed in Sentry from earlier Monty releases.
+        # Shapes observed in Sentry/PostHog from earlier Monty releases.
+        "AttributeError: type object 'datetime.datetime' has no attribute 'fromisoformat'",
         "TypeError: '<' not supported between instances of 'list' and 'list'",
         "KeyError: value",
         "TypeError: list indices must be integers or slices, not str",
@@ -470,6 +482,103 @@ async def test_json_dumps_options_the_sandbox_supports_still_work(client: Client
     assert '"a": 2' in text
 
 
+async def test_missing_await_is_explained(client: Client):
+    # ROOTLY-MCP-1W0
+    code = "result = call_tool('list_incidents', {})\nreturn result.get('data')"
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert "'coroutine' object" in text
+    assert "await call_tool(name, params)" in text
+
+
+async def test_async_with_is_explained(client: Client):
+    # ROOTLY-MCP-KZ
+    code = "async with session() as s:\n    pass\nreturn await call_tool('list_incidents', {})"
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert "async with" in text
+    assert "await call_tool(name, params)" in text
+
+
+async def test_gather_keyword_arguments_are_explained(client: Client):
+    # ROOTLY-MCP-2J8
+    code = (
+        "import asyncio\n"
+        "async def f(i):\n"
+        "    return i\n"
+        "return await asyncio.gather(f(1), f(2), return_exceptions=True)"
+    )
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert "gather() does not yet support keyword arguments" in text
+    assert "return_exceptions is not available" in text
+
+
+def test_suspension_limit_is_explained():
+    # ROOTLY-MCP-2NC
+    message = "RuntimeError: suspension limit 1000 exceeded"
+    hint = _format_execute_exception(Exception(message))
+
+    assert hint is not None
+    assert hint.startswith(message)
+    assert "split the work across several execute calls" in hint
+
+
+async def test_list_tools_filter_points_to_tool_search(client: Client):
+    # ROOTLY-MCP-F1
+    result = await client.call_tool("list_tools", {"tag": "workflow"}, raise_on_error=False)
+
+    assert result.is_error
+    text = " ".join(getattr(block, "text", "") for block in result.content)
+    assert "list_tools takes only `detail`, not 'tag'" in text
+    assert "tool_search(query='workflow')" in text
+
+
+async def test_list_tools_with_detail_still_works(client: Client):
+    result = await client.call_tool("list_tools", {"detail": "brief"}, raise_on_error=False)
+
+    assert not result.is_error
+
+
+async def test_del_statement_is_explained(client: Client):
+    # ROOTLY-MCP-8F
+    code = "d = {'a': 1, 'b': 2}\ndel d['a']\nreturn d"
+    is_error, text = await _execute(client, {"code": code})
+
+    assert is_error
+    assert "does not yet support" in text
+    assert "Code Mode runs a subset of Python" in text
+
+
+@pytest.mark.parametrize(
+    ("name", "hint"),
+    [
+        ("sleep", "await asyncio.sleep(seconds)"),  # ROOTLY-MCP-32A
+        ("client", "There is no client or session object"),  # ROOTLY-MCP-32E
+        ("sort", "sorted(items, key=...)"),  # ROOTLY-MCP-32G
+    ],
+)
+async def test_sandbox_names_are_explained(client: Client, name: str, hint: str):
+    is_error, text = await _execute(client, {"code": f"return {name}"})
+
+    assert is_error
+    assert f"name '{name}' is not defined" in text
+    assert hint in text
+
+
+def test_memory_limit_is_explained():
+    # ROOTLY-MCP-2RJ
+    message = "MemoryError: the worker exceeded its memory limit and was terminated"
+    hint = _format_execute_exception(Exception(message))
+
+    assert hint is not None
+    assert hint.startswith(message)
+    assert "smaller pages" in hint
+
+
 def test_format_execute_exception_leaves_call_tool_failures_alone():
     message = (
         "Exception: call_tool('list_incidents') failed: start_time: Unexpected keyword "
@@ -491,8 +600,18 @@ def test_format_execute_exception_leaves_call_tool_failures_alone():
         {"tool": "get_incident"},
         {"tools": "get_incident"},
         {"tool_name": ["get_incident"]},
+        {"tool_names": ["get_incident"]},
+        {"names": ["get_incident"]},
     ],
-    ids=["tool_name", "name", "tool", "tools-string", "tool_name-list"],
+    ids=[
+        "tool_name",
+        "name",
+        "tool",
+        "tools-string",
+        "tool_name-list",
+        "tool_names",
+        "names",
+    ],
 )
 async def test_get_schema_accepts_a_single_tool_name(client: Client, arguments: dict[str, Any]):
     result = await client.call_tool("get_schema", arguments, raise_on_error=False)
@@ -501,6 +620,18 @@ async def test_get_schema_accepts_a_single_tool_name(client: Client, arguments: 
     assert not result.is_error, text
     assert "get_incident" in text
     assert "incident_id" in text
+
+
+@pytest.mark.parametrize("arguments", [{}, {"tools": []}, {"detail": "full"}])
+async def test_get_schema_without_a_tool_says_how_to_find_one(
+    client: Client, arguments: dict[str, Any]
+):
+    result = await client.call_tool("get_schema", arguments, raise_on_error=False)
+    text = "\n".join(getattr(item, "text", "") for item in result.content)
+
+    assert result.is_error
+    assert "tool_search" in text
+    assert "Missing required argument" not in text
 
 
 async def test_get_schema_with_tools_ignores_the_alias_keys(client: Client):

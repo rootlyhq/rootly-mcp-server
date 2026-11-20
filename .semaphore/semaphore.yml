@@ -17,24 +17,27 @@ agent:
 blocks:
   - name: 'Build'
     dependencies: []
+    run:
+      when: "branch = 'main' OR branch = 'staging'"
     task:
       secrets:
-        - name: 'AWS Credentials'
+        - name: 'mcp-server-deploy'
       prologue:
         commands:
+          - checkout
           - |
             if [ "$SEMAPHORE_GIT_BRANCH" = "staging" ]; then
-              export AWS_PROFILE=staging
+              export AWS_ROLE_ARN="$AWS_ROLE_ARN_STAGING"
               export ECR_PUSH_ENABLED=true
             elif [ "$SEMAPHORE_GIT_BRANCH" = "main" ]; then
-              export AWS_PROFILE=production
+              export AWS_ROLE_ARN="$AWS_ROLE_ARN_PRODUCTION"
               export ECR_PUSH_ENABLED=true
             else
               export ECR_PUSH_ENABLED=false
             fi
           - |
             if [ "$ECR_PUSH_ENABLED" = "true" ]; then
-              export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+              source .semaphore/oidc-login.sh "$AWS_ROLE_ARN"
               aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
               # us-west-2 passive standby (PLA-1145): the same image is published to
               # us-west-2 ECR so rootly-mcp-server can start there after a failover.
@@ -45,17 +48,16 @@ blocks:
       jobs:
         - name: Build
           commands:
-            - checkout
             - export BUILDKIT_PROGRESS=plain
             - |
               if [ "$SEMAPHORE_GIT_BRANCH" = "staging" ]; then
-                docker build --push \
+                docker build --push --build-arg ROOTLY_MCP_BUILD=${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:staging \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-west-2.amazonaws.com/rootly/mcp:staging .
               elif [ "$SEMAPHORE_GIT_BRANCH" = "main" ]; then
-                docker build --push \
+                docker build --push --build-arg ROOTLY_MCP_BUILD=${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:${SEMAPHORE_GIT_SHA} \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:latest \
                   -t ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rootly/mcp:production \

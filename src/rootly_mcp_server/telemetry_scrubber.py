@@ -1,9 +1,9 @@
 """Scrubbing of credentials from telemetry strings.
 
-AgentCat's redaction hook is `Callable[[str], str]`: one string at a time, no
-field name, and the result replaces that string in every event field. So a rule
-that over-matches destroys diagnostics -- an earlier version returned a constant
-and collapsed every error message into one Sentry issue.
+Used by the PostHog MCP analytics `before_send` hook. The text scrubber sees one
+string at a time with no field name, so a rule that over-matches destroys
+diagnostics -- an earlier version returned a constant and collapsed every error
+message into one issue.
 
 Nothing here keys off value length. `hunter2` is a credential and `Token
 expired` is a diagnostic, and both are short.
@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import re
 from typing import Any
-
-from .exceptions import GUIDED_ERROR_TYPE_NAMES
 
 REDACTED = "[redacted]"
 
@@ -84,14 +82,12 @@ CREDENTIAL_KEYS_EXACT = frozenset({"auth", "token", "session"})
 # AgentCat's correlation handle, and is now a retired argument (see below).
 NON_CREDENTIAL_KEYS = frozenset({"session_id"})
 
-# Parameters AgentCat used to inject into every tool schema and no longer does.
-# `context` went with #223 (intent capture off); `session_id` went when session
-# correlation moved to the SDK's hook mode (`resolve_session_id`). Clients
-# holding a cached tool list still send both. Two places act on this set: the
-# call middleware in `server.py` drops them before the tool validates its
-# arguments, and `scrub_event_arguments` below removes them from the published
-# event, because AgentCat records the raw arguments before any of our
-# middleware runs.
+# Parameters the retired AgentCat SDK used to inject into every tool schema.
+# Clients holding a cached tool list still send both. Two places act on this
+# set: the call middleware in `server.py` drops them before the tool validates
+# its arguments, and `scrub_posthog_mcp_event` below removes them from the
+# published event, because posthog.mcp records the raw arguments before any of
+# our middleware runs.
 RETIRED_INJECTED_PARAMS: frozenset[str] = frozenset({"context", "session_id"})
 
 
@@ -251,103 +247,10 @@ TELEMETRY_REDACTIONS: tuple[tuple[re.Pattern[str], Any], ...] = (
 )
 
 
-# Depth past which an argument subtree is replaced instead of walked. AgentCat
-# truncates events to depth 5 anyway, and this runs before that, so the limit is
-# generous -- it exists to bound the walk, not to shape the payload.
+# Depth past which an argument subtree is replaced instead of walked. The limit
+# is generous -- it exists to bound the walk over attacker-shaped JSON, not to
+# shape the payload.
 _MAX_ARGUMENT_DEPTH = 32
-
-
-def scrub_event_arguments(event: Any) -> Any:
-    """Scrub credential-named arguments from an event, keys included.
-
-    Registered as AgentCat's `redact_event` hook, which -- unlike
-    `redact_sensitive_information` -- receives the whole event rather than one
-    string at a time. That is the only place the field name is visible: the SDK
-    walks the argument dict and hands the string hook bare values, so `hunter2`
-    arrives with nothing to say it came from a field called `password`.
-
-    Also removes what a cached client still sends from the retired injected
-    parameters, and clears `user_intent`. AgentCat sits at index 0 of the
-    middleware chain and copies the raw arguments before our call middleware
-    strips them, and it fills `user_intent` from a `context` argument whenever
-    one is present, even with `enable_tool_call_context` off. Intent capture
-    is off on purpose (#223): a narrative of the user's goal is not something
-    this server collects, so neither field may reach the exporter.
-
-    Beyond that only `parameters` is touched. `response` and `error` are free
-    text with no keys to read, so they stay with the string scrubber.
-    """
-
-    def walk(node: Any, depth: int) -> Any:
-        # Past the limit the subtree is replaced rather than descended into.
-        # Arguments are attacker-shaped JSON, and an unbounded walk raises
-        # RecursionError on deep nesting or on a cycle -- which AgentCat turns
-        # into a dropped event. Replacing keeps the failure on the safe side:
-        # a value is never published just because it was buried deeply.
-        if depth > _MAX_ARGUMENT_DEPTH:
-            return REDACTED
-        if isinstance(node, dict):
-            return {
-                key: REDACTED if is_credential_key(str(key)) else walk(value, depth + 1)
-                for key, value in node.items()
-            }
-        if isinstance(node, list):
-            return [walk(item, depth + 1) for item in node]
-        if isinstance(node, tuple):
-            # JSON cannot produce one, but a credential inside a tuple would
-            # otherwise be published: the SDK's own walker skips them too.
-            return tuple(walk(item, depth + 1) for item in node)
-        return node
-
-    parameters = getattr(event, "parameters", None)
-    if parameters:
-        scrubbed = walk(parameters, 0)
-        arguments = scrubbed.get("arguments") if isinstance(scrubbed, dict) else None
-        if isinstance(arguments, dict):
-            for name in RETIRED_INJECTED_PARAMS:
-                arguments.pop(name, None)
-        event.parameters = scrubbed
-    if getattr(event, "user_intent", None) is not None:
-        event.user_intent = None
-    return event
-
-
-def is_guided_error(error: Any) -> bool:
-    """Whether an AgentCat error payload is one of the server's guided answers.
-
-    Guided answers are raised as GuidedToolError or GuidedScriptError
-    (exceptions.py). AgentCat records the raised type and its cause chain by
-    name; a guided error re-raised by a wrapper -- fastmcp's "Error calling
-    tool" ToolError, or Code Mode's call_tool failure -- shows up in the chain.
-    """
-    if not isinstance(error, dict):
-        return False
-    if error.get("type") in GUIDED_ERROR_TYPE_NAMES:
-        return True
-    chain = error.get("chained_errors")
-    return isinstance(chain, list) and any(
-        isinstance(link, dict) and link.get("type") in GUIDED_ERROR_TYPE_NAMES for link in chain
-    )
-
-
-def mark_expected_tool_errors(event: Any) -> Any:
-    """Publish guided tool errors as non-errors so they open no Sentry issue.
-
-    A guided error is the server answering a mistake it anticipated, with a
-    message telling the model how to retry; as Sentry issues these bury real
-    failures. AgentCat's Sentry exporter creates an issue for every event with
-    `is_error` set and the SDK offers no per-exporter filter, so the flag is
-    cleared on the event itself. `error` is left in place: the Sentry log and
-    transaction still carry the message for anyone looking.
-    """
-    if getattr(event, "is_error", False) and is_guided_error(getattr(event, "error", None)):
-        event.is_error = False
-    return event
-
-
-def prepare_telemetry_event(event: Any) -> Any:
-    """AgentCat `redact_event` hook: scrub arguments, then mark guided errors."""
-    return mark_expected_tool_errors(scrub_event_arguments(event))
 
 
 class TelemetryScrubber:
@@ -365,8 +268,8 @@ class TelemetryScrubber:
 _DEFAULT_SCRUBBER = TelemetryScrubber()
 
 
-def redact_agentcat_telemetry_text(value: str) -> str:
-    """AgentCat's `redact_sensitive_information` hook."""
+def redact_telemetry_text(value: str) -> str:
+    """Remove credentials from one telemetry string."""
     return _DEFAULT_SCRUBBER.scrub(value)
 
 
@@ -381,14 +284,19 @@ _POSTHOG_MCP_SCRUBBED_PROPERTIES = (
     "$exception_list",
     "$mcp_tool_name",
     "$mcp_resource_name",
+    # Agent-narrated: the send_feedback report is copied here as well as into
+    # the `$mcp_feedback_*` properties, and the SDK redacts only the latter.
+    "$mcp_intent",
 )
+# Every `$mcp_feedback_<field>` property of a send_feedback report.
+_POSTHOG_MCP_SCRUBBED_PREFIXES = ("$mcp_feedback_",)
 
 
 def scrub_posthog_mcp_event(event: Any) -> Any:
     """PostHog MCP analytics' `before_send` hook.
 
-    Applies both AgentCat rules in one pass: credential-named keys are
-    replaced, and every remaining string goes through the text scrubber.
+    Two rules in one pass: credential-named keys are replaced, and every
+    remaining string goes through the text scrubber.
     """
 
     def walk(node: Any, depth: int) -> Any:
@@ -407,8 +315,10 @@ def scrub_posthog_mcp_event(event: Any) -> Any:
 
     properties = event.get("properties")
     if isinstance(properties, dict):
-        for name in _POSTHOG_MCP_SCRUBBED_PROPERTIES:
-            if name in properties:
+        for name in list(properties):
+            if name in _POSTHOG_MCP_SCRUBBED_PROPERTIES or str(name).startswith(
+                _POSTHOG_MCP_SCRUBBED_PREFIXES
+            ):
                 properties[name] = walk(properties[name], 0)
         _drop_retired_arguments(properties.get("$mcp_parameters"), 0)
     return event
@@ -420,7 +330,7 @@ def _drop_retired_arguments(node: Any, depth: int) -> None:
     posthog.mcp up to 7.60 recorded the arguments dict our middleware had
     already stripped in place; later versions record a copy of the whole
     request (`request.params.arguments`) taken before it runs, so a cached
-    client's `context` text arrived intact. Mirrors `scrub_event_arguments`.
+    client's `context` text arrived intact.
     """
     if depth > _MAX_ARGUMENT_DEPTH:
         return

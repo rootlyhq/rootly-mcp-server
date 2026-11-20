@@ -33,9 +33,10 @@ from pydantic import Field
 from pydantic import ValidationError as PydanticValidationError
 
 from .exceptions import GuidedScriptError, GuidedToolError, is_guided_exception
-from .server import create_rootly_mcp_server
+from .server import ToolSelectionMiddleware, create_rootly_mcp_server
 from .spec_transform import to_snake_case
 from .tool_arguments import suggest_parameter, valid_parameters_line
+from .toolsets import ALL
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -84,6 +85,24 @@ _MAX_TOOL_SUGGESTIONS = 3
 _UNDEFINED_NAME = re.compile(r"name '([^']+)' is not defined")
 _CALL_TOOL_FAILURE = re.compile(r"call_tool\('[^']*'\) failed: ")
 _INTROSPECTION_BUILTINS = frozenset({"dir", "globals", "locals", "vars"})
+# Names scripts reach for that the sandbox does not define, and what to write.
+_CLIENT_HINT = (
+    "There is no client or session object in Code Mode: call tools directly with "
+    "`await call_tool(name, params)`."
+)
+_SANDBOX_NAME_HINTS = {
+    "__import__": (
+        "Use an import statement, e.g. `import json`, instead of __import__(). "
+        "Only the sandbox's supported modules are available; "
+        "use `await call_tool(name, params)` for Rootly operations."
+    ),
+    "sleep": "Use `import asyncio` and `await asyncio.sleep(seconds)`.",
+    "sort": "Use `sorted(items, key=...)`, or `items.sort(key=...)` on a list.",
+    "client": _CLIENT_HINT,
+    "session": _CLIENT_HINT,
+    "rootly": _CLIENT_HINT,
+    "mcp": _CLIENT_HINT,
+}
 # JSON / JavaScript literals scripts write in place of Python's.
 _FOREIGN_LITERALS = {"true": "True", "false": "False", "null": "None", "undefined": "None"}
 _DISPLAY_LINE_NUMBER = re.compile(r'^\s*File "[^"]*", line (\d+)')
@@ -322,8 +341,8 @@ def _example_arguments(tool: Tool) -> str:
     return repr(example)
 
 
-def _undefined_name_message(missing: str, tools: Sequence[Tool]) -> str | None:
-    """Teach the call convention when a script used a tool name as a bare name."""
+def _undefined_name_message(missing: str, tools: Sequence[Tool]) -> str:
+    """Explain an undefined script variable or the tool it may refer to."""
     resolution = resolve_tool_name(missing, tools)
     if resolution.tool is not None:
         canonical = resolution.tool.name
@@ -335,7 +354,12 @@ def _undefined_name_message(missing: str, tools: Sequence[Tool]) -> str | None:
         )
     candidates = resolution.ambiguous or resolution.suggestions
     if not candidates:
-        return None
+        return (
+            f"NameError: name '{missing}' is not defined. Define this variable before using it. "
+            "Each execute call starts with fresh variables; pass needed values in the code "
+            "or fetch them with `await call_tool(name, params)`. "
+            "Replace template placeholders with actual values."
+        )
     options = ", ".join(repr(name) for name in candidates)
     lead = (
         f"It could mean the Rootly tools {options}"
@@ -415,12 +439,85 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
                 "available in the Code Mode sandbox. Use tool_search / get_schema to "
                 "discover tools and their parameters, and `return` a value to inspect it."
             )
+        if missing in _SANDBOX_NAME_HINTS:
+            return f"{message}. {_SANDBOX_NAME_HINTS[missing]}"
         if missing == "datetime":
             return (
                 f"{message}. Add `import datetime` first; the current UTC time is "
                 "datetime.datetime.now(datetime.timezone.utc)."
             )
         return _undefined_name_message(missing, tools)
+
+    if "datetime" in message and "has no attribute 'fromisoformat'" in message:
+        return (
+            f"{message}. Code Mode's datetime has no fromisoformat(). Keep API "
+            "timestamps as ISO 8601 strings; compare them as strings only when they "
+            "use the same UTC format, or return them for conversion outside execute."
+        )
+
+    if "callable replacement is not yet supported in re.sub()" in message:
+        return (
+            f"{message}. Use a string replacement instead of a callable, e.g. "
+            "`re.sub(pattern, '[redacted]', value)`."
+        )
+
+    if any(f"'os.{name}' is not supported" in message for name in ("getenv", "environ")):
+        return (
+            f"{message}. Code Mode cannot read the host environment or local files. "
+            "Pass needed non-secret inputs in the script and use "
+            "`await call_tool(name, params)` for authenticated Rootly operations."
+        )
+
+    if "worker exceeded its memory limit" in message:
+        return (
+            f"{message}. Keep less in memory: request smaller pages (page_size), keep "
+            "only the fields you need from each result, and return a summary instead "
+            "of whole API responses. Split large jobs across several execute calls."
+        )
+
+    if "gather() does not yet support keyword arguments" in message:
+        return (
+            f"{message}. Call asyncio.gather(*calls) with no keyword arguments; "
+            "return_exceptions is not available. To keep going past a failed call, "
+            "wrap each one: `async def safe(name, params):` with try/except around "
+            "`await call_tool(name, params)`, then gather the safe(...) calls."
+        )
+
+    if "suspension limit" in message:
+        return (
+            f"{message}. The script awaited too many times in one execute call. Await "
+            "less: use list tools with filters and a larger page_size instead of one "
+            "call per item, drop polling loops and asyncio.sleep, or split the work "
+            "across several execute calls."
+        )
+
+    if "async context managers" in message or "async with" in message:
+        return (
+            f"{message}. Code Mode has no `async with` (and no clients or sessions to "
+            "open): call tools directly with `result = await call_tool(name, params)` "
+            "and `return` the value."
+        )
+
+    unsupported = re.search(r"does not yet support (?:the )?(.+?)(?: statement)?$", message)
+    if unsupported:
+        feature = unsupported.group(1)
+        example = (
+            " For `del`, build a new dict or list without the item, e.g. "
+            "`d = {k: v for k, v in d.items() if k != 'key'}`."
+            if "del" in feature
+            else ""
+        )
+        return (
+            f"{message}. Code Mode runs a subset of Python; rewrite this without "
+            f"{feature}.{example}"
+        )
+
+    if "'coroutine' object" in message:
+        return (
+            f"{message}. call_tool and the tool functions are async: write "
+            "`result = await call_tool(name, params)` (or `await list_incidents(...)`), "
+            "then read the result."
+        )
 
     if "object is not an iterator" in message:
         return (
@@ -730,11 +827,14 @@ class ExecuteCallShapeMiddleware(fastmcp_middleware.Middleware):
 
 
 _GET_SCHEMA_TOOL_NAME = "get_schema"
-_GET_SCHEMA_NAME_KEYS = ("tool_name", "name", "tool")
+_GET_SCHEMA_NAME_KEYS = ("tool_names", "names", "tool_name", "name", "tool")
 
 
 class GetSchemaArgumentShapeMiddleware(fastmcp_middleware.Middleware):
     """Accepts ``get_schema(tool_name="x")`` as ``get_schema(tools=["x"])``.
+
+    ``tool_names=[...]`` (the commonest wrong spelling) maps the same way, and
+    a call naming no tool at all is answered with how to find one.
 
     Models ask for one schema by name, the way they call ``execute``'s
     ``tool`` (see ExecuteCallShapeMiddleware), and get_schema's only required
@@ -752,6 +852,16 @@ class GetSchemaArgumentShapeMiddleware(fastmcp_middleware.Middleware):
         call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
     ) -> Any:
         arguments = context.message.arguments
+        if context.message.name == self._tool_name and not (arguments or {}).get("tools"):
+            if not arguments or _first_present(arguments, _GET_SCHEMA_NAME_KEYS) is None:
+                # Called with nothing to look up. Pydantic would answer
+                # "Missing required argument", which does not say where the
+                # names come from.
+                raise GuidedToolError(
+                    "get_schema needs the tools to describe: "
+                    'get_schema(tools=["list_incidents"]). Find tool names with '
+                    "tool_search or list_tools first."
+                )
         if context.message.name == self._tool_name and arguments:
             tools = arguments.get("tools")
             if isinstance(tools, str) and tools.strip():
@@ -770,6 +880,48 @@ class GetSchemaArgumentShapeMiddleware(fastmcp_middleware.Middleware):
                     arguments.pop(key)
                     arguments["tools"] = names
                     logger.info("Rewrote get_schema(%s=...) into tools=[...]", key)
+        return await call_next(context)
+
+
+_LIST_TOOLS_TOOL_NAME = "list_tools"
+_LIST_TOOLS_PARAMETERS = frozenset({"detail"})
+
+
+class ListToolsArgumentMiddleware(fastmcp_middleware.Middleware):
+    """Answers ``list_tools(tag="workflow")`` with how to filter instead.
+
+    fastmcp's list_tools takes only ``detail``. Models pass a filter (``tag``
+    most often, ROOTLY-MCP-F1) and pydantic answers "Unexpected keyword
+    argument", which does not say that tool_search is the filter. Registered
+    only on the Code Mode server.
+    """
+
+    def __init__(self, tool_name: str = _LIST_TOOLS_TOOL_NAME) -> None:
+        self._tool_name = tool_name
+
+    async def on_call_tool(
+        self,
+        context: fastmcp_middleware.MiddlewareContext[mt.CallToolRequestParams],
+        call_next: fastmcp_middleware.CallNext[mt.CallToolRequestParams, Any],
+    ) -> Any:
+        arguments = context.message.arguments or {}
+        if context.message.name == self._tool_name:
+            extra = sorted(key for key in arguments if key not in _LIST_TOOLS_PARAMETERS)
+            if extra:
+                terms = [
+                    value
+                    for key in extra
+                    for value in (
+                        arguments[key] if isinstance(arguments[key], list) else [arguments[key]]
+                    )
+                    if isinstance(value, str) and value.strip()
+                ]
+                query = " ".join(terms) or "incidents"
+                raise GuidedToolError(
+                    f"list_tools takes only `detail`, not {', '.join(repr(k) for k in extra)}. "
+                    f"To find tools on a topic, call tool_search(query={query!r}); "
+                    "list_tools() with no filter lists every tool."
+                )
         return await call_next(context)
 
 
@@ -813,9 +965,23 @@ def create_rootly_codemode_server(
         transport="streamable-http",
         enable_write_tools=enable_write_tools,
         enabled_tools=enabled_tools,
+        # Code Mode already lists five meta-tools; its catalog is the whole surface.
+        tool_selection=False,
     )
     transform = build_code_mode_transform()
     mcp.add_transform(transform)
+    # ?readonly=true holds in Code Mode too: `execute` is let through and each
+    # tool it calls is checked, so a read-only script cannot reach a write.
+    mcp.add_middleware(
+        ToolSelectionMiddleware(
+            {},
+            frozenset({ALL}),
+            toolsets_apply=False,
+            filter_list=False,
+            exempt={transform.execute_tool_name},
+        )
+    )
     mcp.add_middleware(ExecuteCallShapeMiddleware(transform.execute_tool_name))
     mcp.add_middleware(GetSchemaArgumentShapeMiddleware())
+    mcp.add_middleware(ListToolsArgumentMiddleware())
     return mcp
