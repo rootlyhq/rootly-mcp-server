@@ -45,8 +45,8 @@ class TestServerDefaultsModule:
         assert "/functionalities/{id}/uptime_chart" in DEFAULT_ALLOWED_PATHS
         assert "/alert_groups" in DEFAULT_ALLOWED_PATHS
         assert "/alert_groups/{id}" in DEFAULT_ALLOWED_PATHS
-        assert "/alert_routing_rules" in DEFAULT_ALLOWED_PATHS
-        assert "/alert_routing_rules/{id}" in DEFAULT_ALLOWED_PATHS
+        assert "/alert_routing_rules" not in DEFAULT_ALLOWED_PATHS
+        assert "/alert_routing_rules/{id}" not in DEFAULT_ALLOWED_PATHS
         assert "/alert_sources" in DEFAULT_ALLOWED_PATHS
         assert "/alert_sources/{id}" in DEFAULT_ALLOWED_PATHS
         assert "/alert_urgencies" in DEFAULT_ALLOWED_PATHS
