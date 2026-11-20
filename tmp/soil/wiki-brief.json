@@ -1,0 +1,25 @@
+{
+  "pages": [
+    {
+      "path": "repos/rootly/wiki/remote-mcp-connectors.md",
+      "title": "Remote MCP connectors",
+      "stale": false,
+      "stalePaths": [],
+      "summary": "## Entry points and connector lifecycle Remote MCP has two paths: **connection setup**, which creates a team-owned source and obtains credentials, and **agent execution**, which lists and invokes tools on that source. `RemoteMcp::Client` is the Streamable HTTP JSON-RPC client; OAuth is handled separately by `RemoteMcpSources::AuthorizeRemoteMcpSourceService`. The catalog service uses the client for `tools/list`, and `Ai::Tools::RemoteMcpTool` uses it for remote tool invocation. [Client responsibilities](https://github.com/rootlyhq/rootly/blob/8c81596327976a2d6cca622a6dac3d42af46ada8/app/clients/remote_mcp/client.rb#L3-L22) The principal setup entry points are: - `Account::Ai::Agent::Data::RemoteMcpSourcesController`: renders generic provider setup, rejects unknown providers and providers disabled for the current team, and includes `RemoteMcpSourceConnectable`. [Generic controller](https:…"
+    },
+    {
+      "path": "repos/rootly/wiki/testing-and-local-development.md",
+      "title": "Testing and local development",
+      "stale": false,
+      "stalePaths": [],
+      "summary": "## Start a local environment The recommended entry point is **[rootlyhq/rootly-dev-env](https://github.com/rootlyhq/rootly-dev-env)**: a Tilt-based setup that runs the monolith alongside the notification system, scheduler, Postgres, Redis, DynamoDB, OpenSearch, and Redpanda. The repository README also documents a manual setup path. [Setup overview](https://github.com/rootlyhq/rootly/blob/5e011a9cea12102cf19ac4882cefea143ec98862/README.md#L18-L22) ### Prerequisites and bootstrap Before setup, obtain access to 1Password, Semaphore, Linear, and Notion, then clone the repository over SSH. [Access requirements and clone command](https://github.com/rootlyhq/rootly/blob/5e011a9cea12102cf19ac4882cefea143ec98862/README.md#L25-L47) Install Homebrew, activate mise in your shell, and install the repository’s pinned runtimes. At this revision, `.tool-versions` pins Ruby **4.0.10**, Node **24.22.3**, …"
+    },
+    {
+      "path": "repos/rootly/wiki/ai-sre-agent-mycelium.md",
+      "title": "AI SRE agent (Mycelium)",
+      "stale": false,
+      "stalePaths": [],
+      "summary": "## Entry points and investigation flow Mycelium is an **experimental, admin-only AI SRE pipeline** selected as `mycelium (experimental)` on `/admin/sre-runs`, in eval settings, or during a batch rerun. Its README says real runs default to progressive, not Mycelium. It hands an alert or incident to an external agent engine, exposes connected tools through an in-process read-only gateway, and writes a verdict from recorded observations. [Mycelium README](https://github.com/rootlyhq/rootly/blob/64ca2dd269e6504079df7226a39cc8906a68a615/app/services/ai/agent/sre/mycelium/README.md#L1-L8) The following is the documented end-to-end boundary flow; the supplied files do not expose the admin controller or engine-dispatch implementation. The gateway’s concrete tool invocation is `ReadOnlyCall.call(tool, arguments)`. [Pipeline boundary](https://github.com/rootlyhq/rootly/blob/64ca2dd269e6504079df722…"
+    }
+  ]
+}

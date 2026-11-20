@@ -1,0 +1,92 @@
+#!/bin/sh
+set -u
+dir=$(cd "$(dirname "$0")/.." && pwd)/pids
+usage() {
+  echo "usage: bg run <name> <command...> | bg wait <name> [seconds] | bg stop <name> | bg status <name>" >&2
+  exit 2
+}
+[ $# -ge 2 ] || usage
+verb=$1
+name=$2
+shift 2
+case $name in
+  *[!A-Za-z0-9_.-]* | "") echo "bg: a name is letters, digits, '.', '_' or '-'" >&2; exit 2 ;;
+esac
+mkdir -p "$dir"
+pidf="$dir/$name.pid"
+outf="$dir/$name.out"
+exitf="$dir/$name.exit"
+alive() { [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; }
+tailout() { echo "--- last $1 lines of $outf"; tail -n "$1" "$outf" 2>/dev/null; }
+finished() {
+  code=$(cat "$exitf")
+  echo "bg $name: exited $code"
+  tailout 40
+  rm -f "$pidf"
+  exit "$code"
+}
+case $verb in
+  run)
+    [ $# -ge 1 ] || usage
+    if alive; then
+      echo "bg $name: already running (pid $(cat "$pidf")); bg stop $name first" >&2
+      exit 1
+    fi
+    rm -f "$exitf"
+    set -m
+    if [ $# -eq 1 ]; then
+      (sh -c "$1"; echo $? > "$exitf") > "$outf" 2>&1 < /dev/null &
+    else
+      ("$@"; echo $? > "$exitf") > "$outf" 2>&1 < /dev/null &
+    fi
+    echo $! > "$pidf"
+    echo "bg $name: started (pid $!), output in $outf. Collect it with: sh tmp/soil/bin/bg wait $name <seconds>"
+    ;;
+  wait)
+    limit=${1:-100}
+    case $limit in *[!0-9]* | "") usage ;; esac
+    waited=0
+    while [ ! -f "$exitf" ] && alive; do
+      if [ "$waited" -ge "$limit" ]; then
+        echo "bg $name: still running after ${limit}s (pid $(cat "$pidf")); wait again or bg stop $name"
+        tailout 20
+        exit 124
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    [ -f "$exitf" ] && finished
+    if [ -f "$pidf" ] || [ -f "$outf" ]; then
+      echo "bg $name: ended without an exit code (stopped or killed)"
+      tailout 40
+      rm -f "$pidf"
+      exit 143
+    fi
+    echo "bg $name: no such run" >&2
+    exit 2
+    ;;
+  stop)
+    if alive; then
+      pid=$(cat "$pidf")
+      kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+      i=0
+      while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 10 ]; do
+        sleep 1
+        i=$((i + 1))
+      done
+      kill -0 "$pid" 2>/dev/null && kill -KILL -- "-$pid" 2>/dev/null
+      echo "bg $name: stopped"
+    else
+      echo "bg $name: not running"
+    fi
+    rm -f "$pidf"
+    tailout 20
+    ;;
+  status)
+    if alive; then echo "bg $name: running (pid $(cat "$pidf"))"
+    elif [ -f "$exitf" ]; then echo "bg $name: exited $(cat "$exitf")"
+    else echo "bg $name: not running"
+    fi
+    ;;
+  *) usage ;;
+esac

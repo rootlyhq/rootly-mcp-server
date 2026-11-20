@@ -1,0 +1,34 @@
+{
+  "skip": [
+    "plan",
+    "qa",
+    "council",
+    "ship",
+    "babysit"
+  ],
+  "depth": {
+    "level": "medium"
+  },
+  "noCode": true,
+  "noCodeConfidence": 1,
+  "contextDepth": "full",
+  "rationale": "jev: no-code yes (p=1.00), context full, risk medium (p=0.79); unsure, defaulted to the safe level: context_depth",
+  "confidence": 0.79,
+  "routingConfidence": 0.44,
+  "riskConfidence": 0.79,
+  "defaulted": [
+    "contextDepth"
+  ],
+  "source": "jev",
+  "subagentClass": "L",
+  "askKind": "question",
+  "classChoice": {
+    "shift": 1,
+    "subagentClass": "L",
+    "repo": "rootly-mcp-server",
+    "coordinatorOffset": 0,
+    "subagentOffset": 0,
+    "roundedUp": true,
+    "exploring": null
+  }
+}

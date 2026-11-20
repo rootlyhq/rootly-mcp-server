@@ -1,0 +1,406 @@
+{
+  "generatedAt": "2026-11-20T09:30:35.140Z",
+  "query": "human-s-ask-verbatim-go-deep-on-the-codebase-ana Assess Rootly MCP server quality and completeness Human's ask verbatim: \"go deep on the codebase analyze if it's well written what most modern python apps do, is anaconda something that we need to keep or drop etc. Append on existin artifact also make sure that you assess how complete is the project in comparison with our competitors incidet.io mcp etc. Like the execute tool is not really an execute one does not allow you to access programatically our API and stitch a logic up.\" Deliver a deep, evidence-based review of the Rootly Python MCP server, appending to the EXISTING private analysis artifact without removing prior content. Repo discovery found src/rootly_mcp_server in rootlyhq/rootly-mcp-server (actual implementation); terraform-rootly only contains infrastructure references, rootly-docs contains integrations/mcp-server.mdx, agent-skills contains install/safety references. Attach rootlyhq/rootly-mcp-server as primary. This is ana",
+  "requirements": [
+    {
+      "claim": "human-s-ask-verbatim-go-deep-on-the-codebase-ana: Assess Rootly MCP server quality and completeness",
+      "source": "ticket",
+      "confidence": 1
+    },
+    {
+      "claim": "Human's ask verbatim: \"go deep on the codebase analyze if it's well written what most modern python apps do, is anaconda something that we need to keep or drop etc. Append on existin artifact also make sure that you assess how complete is the project in comparison with our competitors incidet.io mcp etc. Like the execute tool is not really an execute one does not allow you to access programatically our API and stitch a logic up.\" Deliver a deep, evidence-based review of the Rootly Python MCP server, appending to the EXISTING private analysis artifact without removing prior content. Repo discovery found src/rootly_mcp_server in rootlyhq/rootly-mcp-server (actual implementation); terraform-rootly only contains infrastructure references, rootl",
+      "source": "instruction",
+      "confidence": 1
+    }
+  ],
+  "changeSurface": [
+    {
+      "path": "src/rootly_mcp_server/posthog_analytics.py",
+      "symbols": [
+        "PARENT_TOOL_PROPERTY",
+        "FEEDBACK_EVENT",
+        "FEEDBACK_RATE_LIMIT_COUNT",
+        "FEEDBACK_RATE_LIMIT_WINDOW_SECONDS",
+        "FEEDBACK_TOOL_DESCRIPTION",
+        "FeedbackRateLimiter"
+      ],
+      "role": "entry point",
+      "reason": "vector+lexical match for the lane ask at src/rootly_mcp_server/posthog_analytics.py:1-140",
+      "confidence": 0.98,
+      "consumers": [
+        "src/rootly_mcp_server/__main__.py",
+        "src/rootly_mcp_server/exceptions.py",
+        "src/rootly_mcp_server/legacy_server.py"
+      ],
+      "dependencies": [
+        "src/rootly_mcp_server/exceptions.py",
+        "src/rootly_mcp_server/posthog_sessions.py",
+        "src/rootly_mcp_server/telemetry_scrubber.py",
+        "src/rootly_mcp_server/transport.py",
+        "src/rootly_mcp_server/monitoring.py",
+        "src/rootly_mcp_server/security.py"
+      ],
+      "evidence": [
+        {
+          "kind": "code-search",
+          "ref": "src/rootly_mcp_server/posthog_analytics.py:1-140"
+        }
+      ]
+    },
+    {
+      "path": "src/rootly_mcp_server/__main__.py",
+      "symbols": [
+        "setup_logging",
+        "check_api_token",
+        "get_server",
+        "_get_sorted_tool_names",
+        "_forward_streamable_http_request"
+      ],
+      "role": "entry point",
+      "reason": "vector+lexical match for the lane ask at src/rootly_mcp_server/__main__.py:227-361",
+      "confidence": 0.98,
+      "consumers": [
+        "scripts/audit_openapi.py",
+        "scripts/swagger_diff.py",
+        "scripts/tool_context_report.py"
+      ],
+      "dependencies": [
+        "src/rootly_mcp_server/server_defaults.py",
+        "src/rootly_mcp_server/code_mode.py",
+        "src/rootly_mcp_server/sse_deprecation.py",
+        "src/rootly_mcp_server/posthog_analytics.py",
+        "src/rootly_mcp_server/server.py",
+        "src/rootly_mcp_server/exceptions.py"
+      ],
+      "evidence": [
+        {
+          "kind": "code-search",
+          "ref": "src/rootly_mcp_server/__main__.py:227-361"
+        }
+      ]
+    },
+    {
+      "path": "src/rootly_mcp_server/server.py",
+      "symbols": [
+        "get_hosted_auth_middleware",
+        "SWAGGER_URL",
+        "ALERT_ESSENTIAL_ATTRIBUTES",
+        "DEFAULT_ALLOWED_PATHS",
+        "DEFAULT_DELETE_ALLOWED_PATHS",
+        "DEFAULT_WRITE_ALLOWED_PATHS"
+      ],
+      "role": "entry point",
+      "reason": "vector+lexical match for the lane ask at src/rootly_mcp_server/server.py:1-134",
+      "confidence": 0.98,
+      "consumers": [
+        "src/rootly_mcp_server/__main__.py",
+        "scripts/audit_openapi.py",
+        "src/rootly_mcp_server/code_mode.py",
+        "src/rootly_mcp_server/tool_context.py",
+        "src/rootly_mcp_server/legacy_server.py",
+        "scripts/swagger_diff.py"
+      ],
+      "dependencies": [
+        "src/rootly_mcp_server/utils.py",
+        "src/rootly_mcp_server/tool_arguments.py",
+        "src/rootly_mcp_server/exceptions.py",
+        "src/rootly_mcp_server/transport.py",
+        "src/rootly_mcp_server/spec_transform.py",
+        "src/rootly_mcp_server/toolsets.py"
+      ],
+      "evidence": [
+        {
+          "kind": "code-search",
+          "ref": "src/rootly_mcp_server/server.py:1-134"
+        }
+      ]
+    },
+    {
+      "path": "scripts/audit_openapi.py",
+      "symbols": [
+        "REPO_ROOT",
+        "SRC_ROOT",
+        "_prefixed_paths",
+        "_load_source",
+        "_print_findings",
+        "_apply_baseline"
+      ],
+      "role": "constant/function definitions",
+      "reason": "vector match for the lane ask at scripts/audit_openapi.py:1-92",
+      "confidence": 0.98,
+      "consumers": [
+        "scripts/swagger_diff.py",
+        "scripts/tool_context_report.py",
+        "src/rootly_mcp_server/__main__.py"
+      ],
+      "dependencies": [
+        "src/rootly_mcp_server/spec_transform.py",
+        "src/rootly_mcp_server/server.py",
+        "src/rootly_mcp_server/server_defaults.py",
+        "src/rootly_mcp_server/__main__.py",
+        "scripts/swagger_diff.py",
+        "scripts/tool_context_report.py"
+      ],
+      "evidence": [
+        {
+          "kind": "code-search",
+          "ref": "scripts/audit_openapi.py:1-92"
+        }
+      ]
+    },
+    {
+      "path": "src/rootly_mcp_server/server_defaults.py",
+      "symbols": [
+        "HOSTED_TOOL_PROFILE_SLIM",
+        "HOSTED_TOOL_PROFILE_FULL",
+        "EnvVars",
+        "_parse_csv_set",
+        "DEFAULT_HOSTED_ENABLED_TOOLS"
+      ],
+      "role": "entry point",
+      "reason": "vector+lexical match for the lane ask at src/rootly_mcp_server/server_defaults.py:1-142",
+      "confidence": 0.98,
+      "consumers": [
+        "src/rootly_mcp_server/__main__.py",
+        "src/rootly_mcp_server/server.py",
+        "scripts/audit_openapi.py",
+        "src/rootly_mcp_server/tool_context.py"
+      ],
+      "dependencies": [
+        "src/rootly_mcp_server/spec_transform.py",
+        "src/rootly_mcp_server/monitoring.py"
+      ],
+      "evidence": [
+        {
+          "kind": "code-search",
+          "ref": "src/rootly_mcp_server/server_defaults.py:1-142"
+        }
+      ]
+    }
+  ],
+  "executionPaths": [
+    {
+      "kind": "inferred-dependency-path",
+      "hops": [
+        "src/rootly_mcp_server/__main__.py",
+        "src/rootly_mcp_server/posthog_analytics.py",
+        "src/rootly_mcp_server/exceptions.py"
+      ],
+      "confidence": "candidate"
+    },
+    {
+      "kind": "inferred-dependency-path",
+      "hops": [
+        "scripts/audit_openapi.py",
+        "src/rootly_mcp_server/__main__.py",
+        "src/rootly_mcp_server/server_defaults.py"
+      ],
+      "confidence": "candidate"
+    },
+    {
+      "kind": "inferred-dependency-path",
+      "hops": [
+        "src/rootly_mcp_server/__main__.py",
+        "src/rootly_mcp_server/server.py",
+        "src/rootly_mcp_server/utils.py"
+      ],
+      "confidence": "candidate"
+    },
+    {
+      "kind": "inferred-dependency-path",
+      "hops": [
+        "scripts/swagger_diff.py",
+        "scripts/audit_openapi.py",
+        "src/rootly_mcp_server/spec_transform.py"
+      ],
+      "confidence": "candidate"
+    },
+    {
+      "kind": "inferred-dependency-path",
+      "hops": [
+        "src/rootly_mcp_server/__main__.py",
+        "src/rootly_mcp_server/server_defaults.py",
+        "src/rootly_mcp_server/spec_transform.py"
+      ],
+      "confidence": "candidate"
+    }
+  ],
+  "testContracts": [
+    {
+      "candidatePath": "tests/unit/test_server.py",
+      "productionPaths": [
+        "src/rootly_mcp_server/server.py"
+      ],
+      "runner": {
+        "gate": "pytest",
+        "command": "pytest -q",
+        "where": "lane",
+        "scope": "file",
+        "tool": {
+          "bin": "pytest"
+        }
+      },
+      "observable": "pytest convention match for get_hosted_auth_middleware",
+      "confidence": "candidate"
+    }
+  ],
+  "priorArt": [
+    {
+      "commit": "41f57c3742a1b912d663af026428571867822349",
+      "title": "feat: replace submit_feedback with PostHog's send_feedback tool (#352)",
+      "candidatePaths": [
+        "src/rootly_mcp_server/__main__.py",
+        "src/rootly_mcp_server/posthog_analytics.py",
+        "src/rootly_mcp_server/server.py"
+      ],
+      "coChangedPaths": [
+        "README.md",
+        "src/rootly_mcp_server/feedback.py",
+        "src/rootly_mcp_server/telemetry_scrubber.py",
+        "src/rootly_mcp_server/toolsets.py",
+        "tests/unit/test_feedback.py",
+        "tests/unit/test_main_transport.py",
+        "tests/unit/test_posthog_feedback.py",
+        "tests/unit/test_posthog_mcp_analytics.py"
+      ]
+    },
+    {
+      "commit": "b32551c3085ff0b42475828ae3c51157edd6d1fb",
+      "title": "feat: submit_feedback tool records agent reports in PostHog (#351)",
+      "candidatePaths": [
+        "src/rootly_mcp_server/__main__.py",
+        "src/rootly_mcp_server/server.py"
+      ],
+      "coChangedPaths": [
+        "README.md",
+        "src/rootly_mcp_server/feedback.py",
+        "src/rootly_mcp_server/toolsets.py",
+        "tests/unit/test_feedback.py",
+        "tests/unit/test_main_transport.py",
+        "tests/unit/test_posthog_mcp_analytics.py"
+      ]
+    },
+    {
+      "commit": "4259523b9b74ac1bfe7e46ab46749e79ea8ca93d",
+      "title": "fix: classify returned upstream errors and guide script failures (#341)",
+      "candidatePaths": [
+        "src/rootly_mcp_server/posthog_analytics.py",
+        "src/rootly_mcp_server/server.py"
+      ],
+      "coChangedPaths": [
+        "src/rootly_mcp_server/code_mode.py",
+        "src/rootly_mcp_server/tools/audits.py",
+        "src/rootly_mcp_server/tools/investigations.py",
+        "tests/integration/local/test_posthog_code_mode.py",
+        "tests/unit/test_audits_tool.py",
+        "tests/unit/test_code_mode_guidance.py",
+        "tests/unit/test_code_mode_module.py",
+        "tests/unit/test_investigation_tools.py",
+        "tests/unit/test_posthog_mcp_analytics.py",
+        "tests/unit/test_tool_argument_aliases.py"
+      ]
+    },
+    {
+      "commit": "2dea4e832943b41b3c6230ea5696b971f767b211",
+      "title": "feat(analytics): record Code Mode's inner tool calls and caller sessions in PostHog (#337)",
+      "candidatePaths": [
+        "src/rootly_mcp_server/posthog_analytics.py",
+        "src/rootly_mcp_server/server.py"
+      ],
+      "coChangedPaths": [
+        "src/rootly_mcp_server/exceptions.py",
+        "src/rootly_mcp_server/posthog_sessions.py",
+        "src/rootly_mcp_server/transport.py",
+        "tests/integration/local/test_posthog_code_mode.py",
+        "tests/unit/test_posthog_mcp_analytics.py",
+        "tests/unit/test_posthog_sessions.py",
+        "tests/unit/test_transport_module.py"
+      ]
+    },
+    {
+      "commit": "c66c04c967552a74c1aef03dc151d1f1c5ffb97a",
+      "title": "fix: guide alert status changes and classify caller errors (#339)",
+      "candidatePaths": [
+        "src/rootly_mcp_server/posthog_analytics.py",
+        "src/rootly_mcp_server/server.py",
+        "src/rootly_mcp_server/server_defaults.py"
+      ],
+      "coChangedPaths": [
+        "src/rootly_mcp_server/code_mode.py",
+        "src/rootly_mcp_server/tool_arguments.py",
+        "tests/unit/test_code_mode_guidance.py",
+        "tests/unit/test_jsonapi_body_repair.py",
+        "tests/unit/test_posthog_mcp_error_detail.py"
+      ]
+    },
+    {
+      "commit": "a518a00d4f5aec36b6fa970e52222d4d583d6025",
+      "title": "feat!: remove AgentCat; PostHog is the only MCP telemetry (#332)",
+      "candidatePaths": [
+        "src/rootly_mcp_server/__main__.py",
+        "src/rootly_mcp_server/posthog_analytics.py",
+        "src/rootly_mcp_server/server.py"
+      ],
+      "coChangedPaths": [
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "README.md",
+        "src/rootly_mcp_server/exceptions.py",
+        "src/rootly_mcp_server/telemetry_scrubber.py",
+        "tests/integration/local/test_agentcat_posthog_parallel.py",
+        "tests/integration/local/test_agentcat_tracking.py",
+        "tests/unit/test_dependency_pins.py",
+        "tests/unit/test_expected_tool_errors.py",
+        "tests/unit/test_guided_errors_capture_path.py",
+        "tests/unit/test_legacy_context_argument.py",
+        "tests/unit/test_main_transport.py"
+      ]
+    },
+    {
+      "commit": "9d8932aff5d150b94a2e75d43e85c80f999668e2",
+      "title": "fix: mark overwriting tools destructive and describe AI automation/skill tools (#333)",
+      "candidatePaths": [
+        "src/rootly_mcp_server/server.py"
+      ],
+      "coChangedPaths": [
+        "src/rootly_mcp_server/spec_transform.py",
+        "src/rootly_mcp_server/tools/incidents.py",
+        "tests/unit/test_server.py"
+      ]
+    },
+    {
+      "commit": "c586b17b15b4347e86cc08bf8b5ea39aaf31ea7a",
+      "title": "feat: keep expected MCP failures out of PostHog Error Tracking (#330)",
+      "candidatePaths": [
+        "src/rootly_mcp_server/posthog_analytics.py"
+      ],
+      "coChangedPaths": [
+        "tests/unit/test_posthog_mcp_error_detail.py"
+      ]
+    }
+  ],
+  "contracts": [
+    {
+      "path": "scripts/audit_openapi.py",
+      "symbols": [
+        "REPO_ROOT",
+        "SRC_ROOT",
+        "_prefixed_paths",
+        "_load_source",
+        "_print_findings",
+        "_apply_baseline"
+      ],
+      "consumers": [
+        "scripts/swagger_diff.py",
+        "scripts/tool_context_report.py",
+        "src/rootly_mcp_server/__main__.py"
+      ],
+      "reason": "Shared contract or persisted/configured surface; verify every consumer remains compatible."
+    }
+  ],
+  "unknowns": [],
+  "provenance": {
+    "codeSearch": "hybrid",
+    "partial": false
+  }
+}
