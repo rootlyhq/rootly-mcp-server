@@ -81,7 +81,14 @@ def normalize_transport(value: str) -> TransportName:
 
 
 def normalize_transport_or_default(value: str, default: TransportName = "stdio") -> TransportName:
-    """Normalize transport value, falling back to default when invalid."""
+    """Normalize transport value, falling back to default when invalid.
+
+    The removed ``sse`` value is not a typo to recover from: it fails, so an
+    operator learns the deployment needs reconfiguring instead of silently
+    getting stdio.
+    """
+    if value.strip().lower() == "sse":
+        raise RootlyConfigurationError(CLI_SSE_REMOVED_ERROR)
     try:
         return normalize_transport(value)
     except argparse.ArgumentTypeError as error:

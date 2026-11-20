@@ -20,6 +20,7 @@ from rootly_mcp_server.__main__ import (
     run_profiled_streamable_http_server,
     streamable_http_stateless_enabled,
 )
+from rootly_mcp_server.exceptions import RootlyConfigurationError
 from rootly_mcp_server.sse_removal import SSEGoneMiddleware
 
 
@@ -1014,3 +1015,22 @@ def test_main_feedback_respects_an_explicit_tool_list(enabled_tools, expect_feed
             main()
 
     assert enable.call_args.kwargs["collect_feedback"] is expect_feedback
+
+
+@pytest.mark.parametrize("value", ["sse", " SSE "])
+def test_get_server_refuses_the_removed_sse_transport(value):
+    # A removed setting fails loudly; an unknown one still falls back to stdio.
+    with patch.dict("os.environ", {"ROOTLY_TRANSPORT": value}, clear=True):
+        with patch("rootly_mcp_server.__main__.create_rootly_mcp_server") as mock_create:
+            with pytest.raises(RootlyConfigurationError, match="was removed"):
+                get_server()
+
+    mock_create.assert_not_called()
+
+
+def test_get_server_falls_back_to_stdio_for_an_unknown_transport():
+    with patch.dict("os.environ", {"ROOTLY_TRANSPORT": "carrier-pigeon"}, clear=True):
+        with patch("rootly_mcp_server.__main__.create_rootly_mcp_server") as mock_create:
+            get_server()
+
+    assert mock_create.call_args.kwargs["transport"] == "stdio"
