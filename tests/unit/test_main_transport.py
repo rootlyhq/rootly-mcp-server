@@ -20,13 +20,14 @@ from rootly_mcp_server.__main__ import (
     run_profiled_streamable_http_server,
     streamable_http_stateless_enabled,
 )
+from rootly_mcp_server.exceptions import RootlyConfigurationError
+from rootly_mcp_server.sse_removal import SSEGoneMiddleware
 
 
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
         ("stdio", "stdio"),
-        ("sse", "sse"),
         ("streamable-http", "streamable-http"),
         ("streamable", "streamable-http"),
         ("http", "streamable-http"),
@@ -493,7 +494,8 @@ def test_main_hosted_streamable_http_with_explicit_enabled_tools_skips_profiled_
     main_server.run.assert_called_once()
     assert main_server.run.call_args.kwargs["transport"] == "streamable-http"
     assert main_server.run.call_args.kwargs["stateless_http"] is True
-    assert main_server.run.call_args.kwargs["middleware"] == []
+    # Only the 410 for the removed SSE paths; no hosted auth here.
+    assert [m.cls for m in main_server.run.call_args.kwargs["middleware"]] == [SSEGoneMiddleware]
 
 
 def test_main_instruments_main_and_code_mode_servers_with_posthog():
@@ -604,6 +606,8 @@ async def test_run_profiled_streamable_http_server_routes_requests_by_profile():
     fake_fastmcp = cast(Any, ModuleType("fastmcp"))
     fake_fastmcp.settings = SimpleNamespace(
         streamable_http_path="/mcp",
+        sse_path="/sse",
+        message_path="/messages/",
         stateless_http=False,
         json_response=False,
         debug=False,
@@ -1011,3 +1015,22 @@ def test_main_feedback_respects_an_explicit_tool_list(enabled_tools, expect_feed
             main()
 
     assert enable.call_args.kwargs["collect_feedback"] is expect_feedback
+
+
+@pytest.mark.parametrize("value", ["sse", " SSE "])
+def test_get_server_refuses_the_removed_sse_transport(value):
+    # A removed setting fails loudly; an unknown one still falls back to stdio.
+    with patch.dict("os.environ", {"ROOTLY_TRANSPORT": value}, clear=True):
+        with patch("rootly_mcp_server.__main__.create_rootly_mcp_server") as mock_create:
+            with pytest.raises(RootlyConfigurationError, match="was removed"):
+                get_server()
+
+    mock_create.assert_not_called()
+
+
+def test_get_server_falls_back_to_stdio_for_an_unknown_transport():
+    with patch.dict("os.environ", {"ROOTLY_TRANSPORT": "carrier-pigeon"}, clear=True):
+        with patch("rootly_mcp_server.__main__.create_rootly_mcp_server") as mock_create:
+            get_server()
+
+    assert mock_create.call_args.kwargs["transport"] == "stdio"
