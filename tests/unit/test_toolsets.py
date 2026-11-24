@@ -8,6 +8,7 @@ from fastmcp.exceptions import ToolError
 
 from rootly_mcp_server import toolsets
 from rootly_mcp_server.server import ToolSelectionMiddleware, create_rootly_mcp_server
+from rootly_mcp_server.spec_transform import _filter_openapi_spec
 from rootly_mcp_server.toolsets import (
     ALL,
     CORE,
@@ -83,6 +84,26 @@ async def test_retired_investigation_progress_is_not_exposed_or_callable(token, 
     async with Client(server) as client:
         with pytest.raises(ToolError, match="[Uu]nknown tool|not found"):
             await client.call_tool("get_investigation_progress", {"investigation_id": "inv-1"})
+
+
+@pytest.mark.parametrize("parameter", ["id", "investigation_id"])
+def test_retired_progress_is_removed_even_when_explicitly_allowed(parameter):
+    detail = f"/v1/ai/investigations/{{{parameter}}}"
+    progress = f"{detail}/progress"
+    spec = {
+        "openapi": "3.0.0",
+        "info": {"title": "Legacy investigations API", "version": "1.0"},
+        "paths": {
+            detail: {"get": {"operationId": "get_investigation"}},
+            progress: {"get": {"operationId": "get_investigation_progress"}},
+        },
+    }
+
+    filtered = _filter_openapi_spec(spec, allowed_paths=[detail, progress])
+
+    assert detail in filtered["paths"]
+    assert progress not in filtered["paths"]
+    assert progress in spec["paths"]
 
 
 async def test_requested_toolsets_add_their_tools(token):
