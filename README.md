@@ -38,6 +38,7 @@ Every client loads the whole tool list into the model's context: the full surfac
 | `config` | Severities, causes, incident types, forms, retrospective processes, dashboards |
 | `users` | Users, notification rules, contact methods |
 | `ai` | AI SRE investigations and AI skills |
+| `investigations` | AI SRE investigations without AI skills |
 | `automations` | AI automations: prompts Rootly AI runs on its own, on a schedule or trigger |
 | `observability` | Rootly Observability logs and patterns |
 | `audit` | Audit log |
@@ -628,8 +629,7 @@ The default tool surface depends on deployment profile:
 - `find_related_incidents`
 - `get_incident` - retrieve a single incident for direct verification, including PIR-related fields
 - `get_alert_by_short_id`
-- `get_investigation` - an AI SRE investigation's verdict, evidence, causal chain and open questions (by id, or latest for an alert/incident)
-- `get_investigation_progress` - follow a running investigation; call again with `after_cursor` until `done`
+- `get_investigation` - an AI SRE investigation's current status, outcome, summary and root cause (by id, or latest for an alert/incident)
 - `get_oncall_handoff_summary`
 - `get_oncall_schedule_summary`
 - `get_oncall_shift_metrics`
@@ -642,6 +642,10 @@ The default tool surface depends on deployment profile:
 - `search_incidents`
 - `start_investigation`, `cancel_investigation` - start or cancel an AI SRE investigation; write tools
 - `suggest_solutions`
+
+The retired `get_investigation_progress` tool has been removed. Use
+`get_investigation` to check the current status and result after starting an
+investigation; the API no longer provides a step-by-step progress stream.
 - `update_incident` - update native incident fields with severity validation; retrospective status changes require the Rootly UI
 
 ### OpenAPI-Generated Tools

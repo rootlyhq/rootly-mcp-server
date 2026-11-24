@@ -72,6 +72,19 @@ async def test_self_hosted_default_is_everything(token):
     assert len(await _names(server)) > 200
 
 
+@pytest.mark.parametrize("hosted", [True, False])
+async def test_retired_investigation_progress_is_not_exposed_or_callable(token, hosted):
+    server = create_rootly_mcp_server(hosted=hosted, enable_write_tools=True)
+
+    names = await _names(server)
+
+    assert "get_investigation" in names
+    assert "get_investigation_progress" not in names
+    async with Client(server) as client:
+        with pytest.raises(ToolError, match="[Uu]nknown tool|not found"):
+            await client.call_tool("get_investigation_progress", {"investigation_id": "inv-1"})
+
+
 async def test_requested_toolsets_add_their_tools(token):
     server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
     placed = _selection_middleware(server).tool_toolsets
@@ -112,6 +125,54 @@ async def test_the_automations_toolset_brings_them_back(token):
     names = await _names(server, ToolSelection(frozenset({"automations"})))
 
     assert _AUTOMATION_TOOLS <= names
+
+
+async def test_investigations_selection_excludes_skills_automations_and_observability(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    selected = frozenset(set(TOOLSETS) - {"ai", "automations", "observability"})
+
+    names = await _names(server, ToolSelection(selected))
+    placed = _selection_middleware(server).tool_toolsets
+
+    assert {
+        "list_investigations",
+        "get_investigation",
+        "start_investigation",
+        "cancel_investigation",
+        "list_schedules",
+    } <= names
+    excluded = {
+        name for name, group in placed.items() if group in {"ai", "automations", "observability"}
+    }
+    assert excluded
+    assert not excluded & names
+    assert not any(
+        marker in name
+        for name in names
+        for marker in ("ai_skill", "ai_automation", "observability")
+    )
+    # Hiding discovery must also prevent callers from invoking a tool by name.
+    reset = toolsets.requested_selection.set(ToolSelection(selected))
+    try:
+        async with Client(server) as client:
+            with pytest.raises(ToolError, match="not available here"):
+                await client.call_tool("list_ai_skills", {})
+    finally:
+        toolsets.requested_selection.reset(reset)
+
+
+async def test_combined_ai_selection_keeps_existing_investigation_access(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    combined = await _names(server, ToolSelection(frozenset({"ai"})))
+    investigations = await _names(server, ToolSelection(frozenset({"investigations"})))
+
+    assert investigations
+    assert investigations < combined
+    assert {"list_ai_skills", "start_investigation"} <= combined
+    assert "list_ai_skills" not in investigations
+    readonly = await _names(server, ToolSelection(frozenset({"investigations"}), readonly=True))
+    assert {"list_investigations", "get_investigation"} <= readonly
+    assert not {"start_investigation", "cancel_investigation"} & readonly
 
 
 _WORKFLOW_TASK_SETUP_TOOLS = {
@@ -331,6 +392,9 @@ async def test_toolsets_query_param_reaches_the_filter_over_http(token):
     assert await listed("/mcp?toolsets=core") == set(CORE_TOOLS)
     alerts = await listed("/mcp?toolsets=alerts")
     assert "create_alert_route" in alerts and "create_incident" not in alerts
+    investigations = await listed("/mcp?toolsets=investigations")
+    assert {"list_investigations", "start_investigation"} <= investigations
+    assert not {"list_ai_skills", "list_ai_automations", "list_observability_logs"} & investigations
     assert len(await listed("/mcp?tool_profile=full")) > 200
 
 

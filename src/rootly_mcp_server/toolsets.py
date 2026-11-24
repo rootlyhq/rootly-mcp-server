@@ -48,6 +48,7 @@ TOOLSETS: dict[str, str] = {
     "config": "Severities, causes, incident types, forms, retrospective processes, dashboards.",
     "users": "Users, notification rules, contact methods.",
     "ai": "AI SRE investigations and AI skills.",
+    "investigations": "AI SRE investigations without AI skills.",
     "automations": "AI automations: prompts Rootly AI runs on its own, on a schedule or trigger.",
     "observability": "Rootly Observability logs and patterns.",
     "audit": "Audit log.",
@@ -182,7 +183,7 @@ TAG_TOOLSETS: dict[str, str] = {
     # ai
     "AIAutomations": "automations",
     "AISkills": "ai",
-    "Investigations": "ai",
+    "Investigations": "investigations",
     # observability
     "Observability": "observability",
     # audit
@@ -221,11 +222,10 @@ CURATED_TOOLSETS: dict[str, str] = {
     "create_override_recommendation": "oncall",
     "check_oncall_health_risk": "oncall",
     "get_workflow_task_params_schema": "workflow_tasks",
-    "list_investigations": "ai",
-    "get_investigation": "ai",
-    "get_investigation_progress": "ai",
-    "start_investigation": "ai",
-    "cancel_investigation": "ai",
+    "list_investigations": "investigations",
+    "get_investigation": "investigations",
+    "start_investigation": "investigations",
+    "cancel_investigation": "investigations",
     "list_audits": "audit",
 }
 
@@ -263,6 +263,10 @@ class ToolSelection:
         if ALL in self.toolsets:
             return True
         if CORE in self.toolsets and name in CORE_TOOLS:
+            return True
+        # Keep the existing combined AI selection compatible while allowing
+        # clients to select investigations without exposing AI skills.
+        if toolset == "investigations" and "ai" in self.toolsets:
             return True
         return toolset is not None and toolset in self.toolsets
 
