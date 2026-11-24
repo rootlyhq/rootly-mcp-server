@@ -542,19 +542,6 @@ def _stub_response(request: httpx2.Request, template: str | None) -> httpx2.Resp
         body = _list([_investigation()])
     elif template == "/v1/ai/investigations/{id}":
         body = {"data": _investigation()}
-    elif template == "/v1/ai/investigations/{id}/progress":
-        body = {
-            "data": {
-                "id": INVESTIGATION_UUID,
-                "type": "investigation_progress",
-                "attributes": {
-                    "status": "completed",
-                    "done": True,
-                    "entries": [],
-                    "next_cursor": None,
-                },
-            }
-        }
     elif template == "/v1/audits":
         body = _list(
             [
@@ -913,11 +900,6 @@ SCENARIOS: list[tuple[str, str, dict[str, Any]] | tuple[str, str, dict[str, Any]
         "get_investigation/by_alert",
         "get_investigation",
         {"alert_id": "alert-1"},
-    ),
-    (
-        "get_investigation_progress",
-        "get_investigation_progress",
-        {"investigation_id": INVESTIGATION_UUID, "after_cursor": "1793223109000000:x"},
     ),
     ("start_investigation", "start_investigation", {"alert_id": "alert-1", "rerun": True}),
     ("cancel_investigation", "cancel_investigation", {"investigation_id": INVESTIGATION_UUID}),

@@ -102,6 +102,43 @@ async def test_well_formed_body_is_sent_unchanged(server, sent):
     assert _sent_body(sent) == EXPECTED_BODY
 
 
+@pytest.mark.parametrize(
+    ("tool", "path_arguments", "method", "path"),
+    [
+        (
+            "create_status_page_template",
+            {"status_page_id": INCIDENT_ID},
+            "POST",
+            f"/v1/status-pages/{INCIDENT_ID}/templates",
+        ),
+        (
+            "update_status_page_template",
+            {"id": INCIDENT_ID},
+            "PUT",
+            f"/v1/templates/{INCIDENT_ID}",
+        ),
+    ],
+)
+async def test_status_page_template_writes_use_the_api_request_contract(
+    server, sent, tool, path_arguments, method, path
+):
+    data = {
+        "type": "status_page_templates",
+        "attributes": {"title": "Synthetic template", "body": "Synthetic update."},
+    }
+    async with Client(server) as client:
+        result = await client.call_tool(
+            tool, {**path_arguments, "data": data}, raise_on_error=False
+        )
+
+    assert not result.is_error, _text(result)
+    requests = [
+        request for request in sent if request.method == method and request.url.path == path
+    ]
+    assert len(requests) == 1
+    assert json.loads(requests[0].content) == {"data": data}
+
+
 def test_undeclared_keys_on_data_are_left_for_the_api():
     schema = {
         "type": "object",

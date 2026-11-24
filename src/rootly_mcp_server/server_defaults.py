@@ -135,7 +135,6 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "update_workflow_task",
         "cancel_investigation",
         "get_investigation",
-        "get_investigation_progress",
         "list_investigations",
         "start_investigation",
     }

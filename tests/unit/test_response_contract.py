@@ -985,13 +985,11 @@ def _build_tools(run: ResponseRun) -> dict[str, Any]:
     register_audit_tools(
         mcp=mcp, make_authenticated_request=make_authenticated_request, mcp_error=mcp_error
     )
-    # A poll interval longer than the wait budget makes progress return after one fetch.
     register_investigation_tools(
         mcp=mcp,
         make_authenticated_request=make_authenticated_request,
         mcp_error=mcp_error,
         enable_write_tools=True,
-        poll_interval=60,
     )
     return mcp.tools
 

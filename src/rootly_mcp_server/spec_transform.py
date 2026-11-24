@@ -410,6 +410,30 @@ def _drop_duplicate_update_verb(path_item: dict[str, Any]) -> None:
         path_item.pop("put")
 
 
+def _repair_status_page_template_request_refs(spec: dict[str, Any]) -> None:
+    """Use the bundled write contracts where Swagger references a response model.
+
+    The API's create/update contracts require a JSON:API data envelope. Its
+    response attribute schema instead advertises flat fields and requires
+    server-owned timestamps. Leave fixed or custom request schemas untouched.
+    """
+    contracts = {
+        "create_status_page_template": "new_status_page_template",
+        "update_status_page_template": "update_status_page_template",
+    }
+    schemas = spec.get("components", {}).get("schemas", {})
+    for item in spec.get("paths", {}).values():
+        for method, operation in item.items():
+            if method.lower() not in {"post", "put", "patch"}:
+                continue
+            contract = contracts.get(to_snake_case(operation.get("operationId", "")))
+            if not contract or contract not in schemas:
+                continue
+            for media in operation.get("requestBody", {}).get("content", {}).values():
+                if media.get("schema") == {"$ref": "#/components/schemas/status_page_template"}:
+                    media["schema"] = {"$ref": f"#/components/schemas/{contract}"}
+
+
 def _filter_openapi_spec(
     spec: dict[str, Any],
     allowed_paths: list[str],
@@ -442,6 +466,10 @@ def _filter_openapi_spec(
 
     filtered_paths = {}
     for path, path_item in original_paths.items():
+        # Older bundled specs still include this retired endpoint. Do not
+        # regenerate a progress tool after removing the curated implementation.
+        if _normalize_path_template(path) == "/v1/ai/investigations/{}/progress":
+            continue
         if path in allowed_path_set:
             filtered_paths[path] = path_item
             continue
@@ -512,6 +540,7 @@ def _filter_openapi_spec(
             del filtered_paths[path]
 
     _describe_operations(filtered_paths)
+    _repair_status_page_template_request_refs(filtered_spec)
 
     # Clean up schema references that might be broken
     # Remove problematic schema references from request bodies and parameters
