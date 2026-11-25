@@ -330,9 +330,8 @@ DEFAULT_ALLOWED_PATHS = [
     # Alert configuration visibility (read-only by default)
     "/alert_groups",
     "/alert_groups/{id}",
-    # Advanced alert routing — the successor to `/alert_routing_rules`. Advanced
-    # Alert Routing is enabled for every team, so the legacy endpoints 403 on
-    # every call and are no longer exposed as tools.
+    # Advanced alert routing replaces `/alert_routing_rules`. Organizations using
+    # it reject the legacy endpoints, so the default surface exposes routes.
     "/alert_routes",
     "/alert_routes/{id}",
     "/alert_sources",
