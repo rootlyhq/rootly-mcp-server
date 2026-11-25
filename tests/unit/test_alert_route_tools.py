@@ -12,6 +12,7 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from mcp.types import Tool
 
+from rootly_mcp_server import server_defaults
 from rootly_mcp_server.server import create_rootly_mcp_server
 
 pytestmark = pytest.mark.unit
@@ -44,8 +45,13 @@ async def test_legacy_routing_rule_tools_are_not_exposed(
             "core,incidents,alerts,oncall,workflows,workflow_tasks,catalog,"
             "status_pages,config,users,investigations,audit",
         )
+    hosted = profile != "self_hosted"
+    enabled_tools = server_defaults.enabled_tools_from_env(
+        hosted=hosted,
+        hosted_tool_profile=server_defaults.hosted_tool_profile_from_env(),
+    )
     server = create_rootly_mcp_server(
-        hosted=profile != "self_hosted", enable_write_tools=enable_write_tools
+        hosted=hosted, enable_write_tools=enable_write_tools, enabled_tools=enabled_tools
     )
     async with Client(server) as client:
         tools = {tool.name for tool in await client.list_tools()}
@@ -54,7 +60,9 @@ async def test_legacy_routing_rule_tools_are_not_exposed(
             await client.call_tool("list_alert_routing_rules", {})
 
     assert "list_alert_routes" in tools
-    if profile != "slim":
+    if profile == "slim":
+        assert not {"get_alert_route", "create_alert_route", "update_alert_route"} & tools
+    else:
         assert "get_alert_route" in tools
         writes = {"create_alert_route", "update_alert_route"}
         if enable_write_tools:
