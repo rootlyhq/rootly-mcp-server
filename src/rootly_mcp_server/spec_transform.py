@@ -374,6 +374,23 @@ _OPERATION_DESCRIPTIONS: dict[str, str] = {
         "applies to every future run of the workflow. "
         "get_workflow_task_params_schema returns the parameters for a task_type."
     ),
+    "list_alert_routes": (
+        "List the team's alert routes: the routing rules that decide where each "
+        "incoming alert goes. To find the route that routed an alert, take the "
+        "rule ids from get_alert's `data.attributes.data.routing_rules[].id` "
+        "in its JSON:API response; request the alert's data field if using sparse "
+        "fieldsets. list_alerts omits this metadata. Match the rule id against "
+        "`data[].attributes.rules[].id` and use the matching route's `data[].id`. "
+        "Follow pagination until a match is found or the routes are exhausted. "
+        "Replacing rules may assign new ids, so historical alerts may match no "
+        "current rule; report that the historical route could not be verified."
+    ),
+    "get_alert_route": (
+        "Get one alert route by its route id. A rule id from an alert's "
+        "`data.attributes.data.routing_rules[].id` is not a route id; to go from "
+        "a rule id to its route, use list_alert_routes and match "
+        "`data[].attributes.rules[].id`."
+    ),
 }
 
 

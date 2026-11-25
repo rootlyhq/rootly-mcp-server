@@ -84,7 +84,6 @@ DEFAULT_HOSTED_ENABLED_TOOLS: frozenset[str] = frozenset(
         "get_workflow_task_params_schema",
         "list_alert_events",
         "list_alert_routes",
-        "list_alert_routing_rules",
         "list_alert_urgencies",
         "list_alerts",
         "list_alerts_sources",
@@ -331,12 +330,8 @@ DEFAULT_ALLOWED_PATHS = [
     # Alert configuration visibility (read-only by default)
     "/alert_groups",
     "/alert_groups/{id}",
-    "/alert_routing_rules",
-    "/alert_routing_rules/{id}",
-    # Advanced alert routing — the successor to alert_routing_rules.  When a
-    # tenant has the Advanced Alert Routing feature enabled, `/alert_routing_rules`
-    # returns 403 and this endpoint is the replacement.  Both are exposed so the
-    # model can fall back automatically based on the per-tenant feature flag.
+    # Advanced alert routing replaces `/alert_routing_rules`. Organizations using
+    # it reject the legacy endpoints, so the default surface exposes routes.
     "/alert_routes",
     "/alert_routes/{id}",
     "/alert_sources",
@@ -550,8 +545,6 @@ DEFAULT_WRITE_ALLOWED_PATHS = [
     "/alert_groups/{id}",
     "/alert_routes",
     "/alert_routes/{id}",
-    "/alert_routing_rules",
-    "/alert_routing_rules/{id}",
     "/alert_urgencies",
     "/alert_urgencies/{id}",
     "/alert_sources",

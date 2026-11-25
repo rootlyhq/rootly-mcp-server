@@ -19,14 +19,24 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Load reviewed scanner policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY_REF: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/hol-policy"
+          gh api "repos/$GITHUB_REPOSITORY/contents/.plugin-scanner.toml?ref=$POLICY_REF" \
+            --header 'Accept: application/vnd.github.raw+json' \
+            > "$RUNNER_TEMP/hol-policy/scanner.toml"
+
       - name: Scan plugin
         uses: hashgraph-online/ai-plugin-scanner-action@013b123a036a252a6d74ddb52836ee923498150c # v1.2.817
         with:
           plugin_dir: "."
-          config: ".plugin-scanner.toml"
+          config: ${{ runner.temp }}/hol-policy/scanner.toml
           min_score: "80"
           fail_on_severity: high
-          # v1.2.786+ ignores .plugin-scanner.toml unless the repo policy is
-          # trusted. Trust it on main and same-repo PRs only, so a fork PR
-          # cannot widen ignore_paths to hide a secret.
-          trust_repository_policy: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+          # Scan PR code using the policy from its immutable base commit.
+          # PR changes cannot widen the reviewed exceptions. Pushes use
+          # the policy from the exact commit being scanned.
+          trust_repository_policy: "true"
