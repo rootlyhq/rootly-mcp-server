@@ -493,10 +493,10 @@ def test_format_execute_exception_maps_undefined_tool_names():
     assert close is not None
     assert "'list_shifts'" in close
 
-    # A plain script typo that resembles no tool keeps the original error.
-    assert (
-        _format_execute_exception(Exception("NameError: name 'qqq' is not defined"), tools) is None
-    )
+    generic = _format_execute_exception(Exception("NameError: name 'qqq' is not defined"), tools)
+    assert generic is not None
+    assert "Define this variable before using it" in generic
+    assert "Rootly tool" not in generic
 
 
 def test_undefined_name_hint_builds_the_example_from_the_tool_schema():

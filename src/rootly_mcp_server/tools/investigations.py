@@ -2,27 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Protocol
 
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-PROGRESS_POLL_INTERVAL_SECONDS = 3.0
-MAX_WAIT_SECONDS = 15
-MAX_PROGRESS_PAGES = 5
-
 InvestigationId = Annotated[str, Field(description="Investigation id (UUID).")]
-WaitSeconds = Annotated[
-    int,
-    Field(
-        ge=0,
-        le=MAX_WAIT_SECONDS,
-        description="How long to wait for new progress before returning (0-15s).",
-    ),
-]
 
 
 class MCPErrorLike(Protocol):
@@ -57,27 +43,11 @@ def _api_error(exc: Exception) -> dict[str, Any] | None:
     return None
 
 
-def _progress_instruction(done: bool, next_cursor: str | None, has_more: bool = False) -> str:
-    if has_more:
-        return (
-            "More progress is already waiting. Call get_investigation_progress again now with "
-            f"after_cursor={next_cursor!r} and wait_seconds=0."
-        )
-    if done:
-        return "The investigation has finished. Call get_investigation for the verdict."
-    return (
-        "The investigation is still running. Call get_investigation_progress again with "
-        f"after_cursor={next_cursor!r} until done is true."
-    )
-
-
 def register_investigation_tools(
     mcp: Any,
     make_authenticated_request: Callable[..., Awaitable[Any]],
     mcp_error: MCPErrorLike,
     enable_write_tools: bool = True,
-    poll_interval: float = PROGRESS_POLL_INTERVAL_SECONDS,
-    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
 ) -> None:
     """Register investigation tools. Start and cancel need write tools enabled."""
 
@@ -93,15 +63,9 @@ def register_investigation_tools(
         if api_error:
             code = api_error.get("code")
             message = f"{api_error['title']} ({code})" if code else api_error["title"]
-        return mcp_error.tool_error(message, error_type)
-
-    async def _fetch_progress(investigation_id: str, after_cursor: str | None) -> dict[str, Any]:
-        params = {"after": after_cursor} if after_cursor else None
-        body = await _request(
-            "GET", f"/v1/ai/investigations/{investigation_id}/progress", params=params
-        )
-        attributes: dict[str, Any] = body["data"]["attributes"]
-        return attributes
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        details = {"upstream_status": status} if isinstance(status, int) else None
+        return mcp_error.tool_error(message, error_type, details)
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -163,9 +127,9 @@ def register_investigation_tools(
             str | None, Field(description="Use the latest investigation of this incident.")
         ] = None,
     ) -> dict[str, Any]:
-        """Get an investigation's verdict: summary, root cause, confidence, hypotheses,
-        evidence, causal chain and open_questions (what Rootly couldn't verify, so you
-        can check them with tools only you have)."""
+        """Get an investigation's current status, outcome, summary and root cause.
+        While it is pending or running, call this tool later to check its status.
+        The API returns a snapshot; it does not expose a step-by-step progress stream."""
         try:
             if not investigation_id:
                 if not (alert_id or incident_id):
@@ -184,54 +148,6 @@ def register_investigation_tools(
             return {"investigation": _flatten(body["data"])}
         except Exception as exc:
             return _error(exc)
-
-    @mcp.tool(
-        annotations=ToolAnnotations(
-            read_only_hint=True, destructive_hint=False, open_world_hint=True
-        ),
-    )
-    async def get_investigation_progress(
-        investigation_id: InvestigationId,
-        after_cursor: Annotated[
-            str | None, Field(description="next_cursor from the previous call.")
-        ] = None,
-        wait_seconds: WaitSeconds = MAX_WAIT_SECONDS,
-    ) -> dict[str, Any]:
-        """Follow a running investigation. Returns new steps and tool calls since
-        after_cursor, waiting up to wait_seconds for them. Keep calling with
-        after_cursor=next_cursor until done is true."""
-        deadline = time.monotonic() + wait_seconds
-        entries: list[dict[str, Any]] = []
-        cursor = after_cursor
-        pages = 0
-        try:
-            while True:
-                page = await _fetch_progress(investigation_id, cursor)
-                pages += 1
-                entries.extend(page.get("entries", []))
-                cursor = page.get("next_cursor") or cursor
-                if page.get("has_more") and pages < MAX_PROGRESS_PAGES:
-                    continue
-                remaining = deadline - time.monotonic()
-                if entries or page.get("done") or remaining <= 0:
-                    break
-                await sleep(min(poll_interval, remaining))
-        except Exception as exc:
-            return _error(exc)
-        has_more = bool(page.get("has_more"))
-        done = bool(page.get("done")) and not has_more
-        return {
-            "investigation_id": investigation_id,
-            "status": page.get("status"),
-            "outcome": page.get("outcome"),
-            "done": done,
-            "phases": page.get("phases", []),
-            "open_questions": page.get("open_questions", []),
-            "entries": entries,
-            "has_more": has_more,
-            "next_cursor": cursor,
-            "next_step": _progress_instruction(done, cursor, has_more),
-        }
 
     if not enable_write_tools:
         return
@@ -257,8 +173,8 @@ def register_investigation_tools(
             ),
         ] = False,
     ) -> dict[str, Any]:
-        """Start an AI SRE investigation on one alert or incident. Then follow it with
-        get_investigation_progress."""
+        """Start an AI SRE investigation on one alert or incident. Then check its
+        status and result with get_investigation."""
         if bool(alert_id) == bool(incident_id):
             return mcp_error.tool_error(
                 "Pass exactly one of alert_id or incident_id.", "validation_error"
@@ -279,8 +195,8 @@ def register_investigation_tools(
         investigation = _flatten(body["data"])
         return {
             "investigation": investigation,
-            "next_step": "Call get_investigation_progress with "
-            f"investigation_id={investigation['id']!r} to follow it.",
+            "next_step": "Call get_investigation with "
+            f"investigation_id={investigation['id']!r} to check its status and result.",
         }
 
     @mcp.tool(

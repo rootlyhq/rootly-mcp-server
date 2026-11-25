@@ -38,15 +38,25 @@ TOOLSETS: dict[str, str] = {
     "incidents": "Incidents in depth: action items, events, roles, retrospectives, form fields.",
     "alerts": "Alerts, alert sources, routes and routing rules, urgencies, heartbeats.",
     "oncall": "Schedules, rotations, shifts, overrides, escalation policies and paths.",
-    "workflows": "Workflows, workflow tasks and runs, playbooks.",
+    "workflows": "Workflows, workflow runs and playbooks; view a workflow's steps.",
+    "workflow_tasks": (
+        "Add or edit the steps a workflow runs: post to Slack, page on-call, "
+        "open a ticket, call a URL."
+    ),
     "catalog": "Services, functionalities, teams, environments, catalogs.",
     "status_pages": "Status pages, templates and pulses.",
     "config": "Severities, causes, incident types, forms, retrospective processes, dashboards.",
     "users": "Users, notification rules, contact methods.",
-    "ai": "AI SRE investigations, AI automations and skills.",
+    "ai": "AI SRE investigations and AI skills.",
+    "investigations": "AI SRE investigations without AI skills.",
+    "automations": "AI automations: prompts Rootly AI runs on its own, on a schedule or trigger.",
     "observability": "Rootly Observability logs and patterns.",
     "audit": "Audit log.",
 }
+
+# Tools the PostHog SDK adds after the server is built (when analytics is on):
+# valid in an explicit tool list, and the list decides whether they are added.
+SDK_ADDED_TOOLS: frozenset[str] = frozenset({"send_feedback"})
 
 # The default hosted surface: what an assistant needs for most incident work.
 # Kept small on purpose (clients degrade past ~30-50 loaded tools); anything
@@ -171,17 +181,22 @@ TAG_TOOLSETS: dict[str, str] = {
     "UserEmailAddresses": "users",
     "UserPhoneNumbers": "users",
     # ai
-    "AIAutomations": "ai",
+    "AIAutomations": "automations",
     "AISkills": "ai",
-    "Investigations": "ai",
+    "Investigations": "investigations",
     # observability
     "Observability": "observability",
     # audit
     "Audits": "audit",
 }
 
-# Curated (hand-written) tools -> toolset.
+# Tool name -> toolset, checked before the OpenAPI tag: curated (hand-written)
+# tools, and generated tools that belong somewhere other than their tag.
 CURATED_TOOLSETS: dict[str, str] = {
+    # One tool, 151 task types, each run by Rootly on every later workflow
+    # run. Kept apart so a connection can have workflows without them.
+    "create_workflow_task": "workflow_tasks",
+    "update_workflow_task": "workflow_tasks",
     "list_endpoints": "config",
     "get_server_version": "config",
     "search_incidents": "incidents",
@@ -206,12 +221,11 @@ CURATED_TOOLSETS: dict[str, str] = {
     "check_responder_availability": "oncall",
     "create_override_recommendation": "oncall",
     "check_oncall_health_risk": "oncall",
-    "get_workflow_task_params_schema": "workflows",
-    "list_investigations": "ai",
-    "get_investigation": "ai",
-    "get_investigation_progress": "ai",
-    "start_investigation": "ai",
-    "cancel_investigation": "ai",
+    "get_workflow_task_params_schema": "workflow_tasks",
+    "list_investigations": "investigations",
+    "get_investigation": "investigations",
+    "start_investigation": "investigations",
+    "cancel_investigation": "investigations",
     "list_audits": "audit",
 }
 
@@ -249,6 +263,10 @@ class ToolSelection:
         if ALL in self.toolsets:
             return True
         if CORE in self.toolsets and name in CORE_TOOLS:
+            return True
+        # Keep the existing combined AI selection compatible while allowing
+        # clients to select investigations without exposing AI skills.
+        if toolset == "investigations" and "ai" in self.toolsets:
             return True
         return toolset is not None and toolset in self.toolsets
 

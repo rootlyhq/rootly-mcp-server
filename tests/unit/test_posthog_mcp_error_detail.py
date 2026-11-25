@@ -12,8 +12,10 @@ from typing import Any
 from unittest.mock import patch
 
 import httpx2
+import pytest
 from fastmcp import Client, FastMCP
 from posthog import Posthog
+from pydantic import TypeAdapter
 
 from rootly_mcp_server import __version__
 from rootly_mcp_server.exceptions import GuidedToolError
@@ -40,6 +42,16 @@ def _server() -> FastMCP:
     @server.tool
     def guided() -> str:
         raise GuidedToolError("guided: pass `id`, not `name`")
+
+    @server.tool
+    def requires_argument(value: int) -> str:
+        return str(value)
+
+    @server.tool
+    def body_validation() -> str:
+        # Model validation inside a tool is a server bug, not a bad call.
+        TypeAdapter(int).validate_python("not-an-integer")
+        return "unreachable"
 
     @server.tool
     def not_found() -> str:
@@ -183,6 +195,20 @@ async def test_expected_failures_open_no_error_tracking_issue():
         assert _events(captured, "$exception", tool)
 
 
+async def test_argument_validation_is_expected_but_validation_inside_a_tool_is_not():
+    captured = await _capture("requires_argument", "body_validation")
+
+    call = _events(captured, "$mcp_tool_call", "requires_argument")[0]
+    assert call["$mcp_error_type"] == "ValidationError"
+    assert call["mcp_error_expected"] is True
+    assert call["mcp_error_expected_reason"] == "invalid_arguments"
+    assert _events(captured, "$exception", "requires_argument") == []
+
+    internal = _events(captured, "$mcp_tool_call", "body_validation")[0]
+    assert internal["mcp_error_expected"] is False
+    assert _events(captured, "$exception", "body_validation")
+
+
 def _sdk_event(name: str, **properties: Any) -> dict[str, Any]:
     return {"event": name, "properties": {"$mcp_is_error": True, **properties}}
 
@@ -218,3 +244,34 @@ def test_expected_is_read_from_the_event_when_the_exception_was_not_seen():
     assert kept is not None
     assert kept["properties"]["$mcp_error_status"] == "422"
     assert kept["properties"]["mcp_error_expected"] is False
+
+
+@pytest.mark.parametrize("module", ["fastmcp.exceptions", "pydantic_core._pydantic_core", None])
+def test_fallback_validation_requires_the_fastmcp_exception_module(module):
+    from rootly_mcp_server.posthog_analytics import enrich_posthog_mcp_event
+
+    event = _sdk_event(
+        "$exception",
+        **{"$exception_list": [{"type": "ValidationError", "module": module}]},
+    )
+    result = enrich_posthog_mcp_event(event)
+
+    if module == "fastmcp.exceptions":
+        assert result is None
+    else:
+        assert result is not None
+        assert result["properties"]["mcp_error_expected"] is False
+
+
+@pytest.mark.parametrize("status", [400, 422, 500])
+def test_request_shape_and_upstream_server_errors_still_reach_error_tracking(status):
+    from rootly_mcp_server.posthog_analytics import enrich_posthog_mcp_event
+
+    event = _sdk_event(
+        "$exception",
+        **{"$mcp_error_message": f"HTTP error {status}: upstream rejected the request"},
+    )
+    result = enrich_posthog_mcp_event(event)
+
+    assert result is not None
+    assert result["properties"]["mcp_error_expected"] is False

@@ -5,10 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from rootly_mcp_server.tools.investigations import (
-    MAX_PROGRESS_PAGES,
-    register_investigation_tools,
-)
+from rootly_mcp_server.tools.investigations import register_investigation_tools
 
 
 class FakeMCP:
@@ -34,7 +31,10 @@ class FakeMCPError:
         error_type: str = "execution_error",
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {"error": True, "error_type": error_type, "message": error_message}
+        result: dict[str, Any] = {"error": True, "error_type": error_type, "message": error_message}
+        if details:
+            result["details"] = details
+        return result
 
 
 class _HTTPError(Exception):
@@ -58,25 +58,6 @@ def _investigation(investigation_id: str = "inv-1", **attributes: Any) -> dict:
     }
 
 
-def _progress(entries: list, done: bool, cursor: str | None, has_more: bool = False) -> dict:
-    return {
-        "data": {
-            "id": "inv-1",
-            "type": "investigation_progress",
-            "attributes": {
-                "status": "completed" if done else "running",
-                "outcome": None,
-                "done": done,
-                "has_more": has_more,
-                "phases": [{"key": "gather", "status": "running"}],
-                "open_questions": [{"key": "pods", "question": "Were pods OOMKilled?"}],
-                "entries": entries,
-                "next_cursor": cursor,
-            },
-        }
-    }
-
-
 def _register(request: AsyncMock, enable_write_tools: bool = True) -> dict[str, Any]:
     mcp = FakeMCP()
     register_investigation_tools(
@@ -84,8 +65,6 @@ def _register(request: AsyncMock, enable_write_tools: bool = True) -> dict[str, 
         make_authenticated_request=request,
         mcp_error=FakeMCPError(),
         enable_write_tools=enable_write_tools,
-        poll_interval=0.01,
-        sleep=AsyncMock(),
     )
     return mcp.tools
 
@@ -95,7 +74,6 @@ def test_write_tools_are_gated():
     assert set(read_only) == {
         "list_investigations",
         "get_investigation",
-        "get_investigation_progress",
     }
 
     all_tools = _register(AsyncMock())
@@ -154,103 +132,21 @@ async def test_get_investigation_needs_an_identifier():
 
 
 @pytest.mark.asyncio
-async def test_progress_polls_until_entries_arrive_and_says_to_continue():
-    request = AsyncMock(
-        side_effect=[
-            _response(_progress([], done=False, cursor=None)),
-            _response(_progress([{"kind": "step", "title": "Read logs"}], done=False, cursor="c1")),
-        ]
-    )
+@pytest.mark.parametrize("status", ["pending", "running", "completed", "failed", "cancelled"])
+async def test_get_investigation_returns_current_snapshot(status):
+    attributes = {"status": status, "summary": "Disk full", "root_cause": None}
+    request = AsyncMock(return_value=_response({"data": _investigation(**attributes)}))
     tools = _register(request)
 
-    result = await tools["get_investigation_progress"](investigation_id="inv-1", wait_seconds=5)
+    result = await tools["get_investigation"](investigation_id="inv-1")
 
-    assert request.await_count == 2
-    assert request.await_args_list[0].kwargs == {"params": None}
-    assert result["entries"] == [{"kind": "step", "title": "Read logs"}]
-    assert result["next_cursor"] == "c1"
-    assert result["done"] is False
-    assert "after_cursor='c1'" in result["next_step"]
-    assert result["open_questions"] == [{"key": "pods", "question": "Were pods OOMKilled?"}]
-
-
-@pytest.mark.asyncio
-async def test_progress_waits_the_requested_time_when_shorter_than_the_poll_interval():
-    request = AsyncMock(
-        side_effect=[
-            _response(_progress([], done=False, cursor=None)),
-            _response(_progress([{"kind": "step", "title": "Read logs"}], done=False, cursor="c1")),
-        ]
-    )
-    sleep = AsyncMock()
-    mcp = FakeMCP()
-    register_investigation_tools(
-        mcp=mcp,
-        make_authenticated_request=request,
-        mcp_error=FakeMCPError(),
-        enable_write_tools=True,
-        poll_interval=3.0,
-        sleep=sleep,
-    )
-
-    result = await mcp.tools["get_investigation_progress"](investigation_id="inv-1", wait_seconds=1)
-
-    assert request.await_count == 2
-    assert sleep.await_args is not None
-    assert 0 < sleep.await_args.args[0] <= 1
-    assert result["entries"] == [{"kind": "step", "title": "Read logs"}]
-
-
-@pytest.mark.asyncio
-async def test_progress_caps_pages_per_call_and_asks_to_continue():
-    request = AsyncMock(
-        side_effect=[
-            _response(_progress([{"title": str(i)}], done=True, cursor=f"c{i}", has_more=True))
-            for i in range(MAX_PROGRESS_PAGES + 1)
-        ]
-    )
-    tools = _register(request)
-
-    result = await tools["get_investigation_progress"](investigation_id="inv-1")
-
-    assert request.await_count == MAX_PROGRESS_PAGES
-    assert len(result["entries"]) == MAX_PROGRESS_PAGES
-    assert result["has_more"] is True
-    assert result["done"] is False
-    assert f"after_cursor='c{MAX_PROGRESS_PAGES - 1}'" in result["next_step"]
-
-
-@pytest.mark.asyncio
-async def test_progress_drains_pages_and_stops_when_done():
-    request = AsyncMock(
-        side_effect=[
-            _response(_progress([{"title": "a"}], done=False, cursor="c1", has_more=True)),
-            _response(_progress([{"title": "b"}], done=True, cursor="c2")),
-        ]
-    )
-    tools = _register(request)
-
-    result = await tools["get_investigation_progress"](investigation_id="inv-1", after_cursor="c0")
-
-    assert request.await_args_list[0].kwargs == {"params": {"after": "c0"}}
-    assert request.await_args_list[1].kwargs == {"params": {"after": "c1"}}
-    assert [entry["title"] for entry in result["entries"]] == ["a", "b"]
-    assert result["done"] is True
-    assert "get_investigation" in result["next_step"]
-
-
-@pytest.mark.asyncio
-async def test_progress_returns_empty_batch_when_wait_expires():
-    request = AsyncMock(return_value=_response(_progress([], done=False, cursor="c5")))
-    tools = _register(request)
-
-    result = await tools["get_investigation_progress"](
-        investigation_id="inv-1", after_cursor="c5", wait_seconds=0
-    )
-
-    assert request.await_count == 1
-    assert result["entries"] == []
-    assert result["next_cursor"] == "c5"
+    request.assert_awaited_once_with("GET", "/v1/ai/investigations/inv-1")
+    assert result["investigation"] == {
+        "id": "inv-1",
+        "outcome": "root_cause_identified",
+        **attributes,
+    }
+    assert "get_investigation_progress" not in tools
 
 
 @pytest.mark.asyncio
@@ -271,7 +167,7 @@ async def test_start_investigation_posts_json_api_payload():
         },
     )
     assert result["investigation"]["id"] == "inv-2"
-    assert "get_investigation_progress" in result["next_step"]
+    assert "get_investigation with investigation_id='inv-2'" in result["next_step"]
 
 
 @pytest.mark.asyncio
@@ -314,6 +210,7 @@ async def test_cancel_investigation_surfaces_api_error_title_and_code():
     result = await tools["cancel_investigation"](investigation_id="inv-1")
 
     assert result["message"] == "The investigation has already finished. (not_cancellable)"
+    assert result["details"]["upstream_status"] == 409
 
 
 @pytest.mark.asyncio
@@ -328,3 +225,4 @@ async def test_get_investigation_error_without_code_shows_only_the_title():
     result = await tools["get_investigation"](investigation_id="missing")
 
     assert result["message"] == "Not found or unauthorized"
+    assert result["details"]["upstream_status"] == 404

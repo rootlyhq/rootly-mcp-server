@@ -7,20 +7,15 @@ This module provides the main entry point for the Rootly MCP Server.
 
 import argparse
 import asyncio
-import dataclasses
-import hashlib
-import importlib
 import logging
 import os
-import re
 import sys
 from collections.abc import Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from . import __version__, server_defaults
+from . import server_defaults
 from .code_mode import (
     code_mode_enabled_from_env,
     code_mode_path_from_env,
@@ -40,46 +35,45 @@ from .server_defaults import (
     enabled_tools_from_env,
     resolve_write_tools_enabled,
 )
-from .sse_deprecation import (
-    CLI_SSE_DEPRECATION_WARNING,
-    SSE_SUNSET_DATE,
-    SSEDeprecationMiddleware,
-    with_sse_deprecation_instructions,
+from .sse_removal import (
+    CLI_SSE_REMOVED_ERROR,
+    SSEGoneMiddleware,
 )
-from .telemetry_scrubber import (
-    prepare_telemetry_event,
-    redact_agentcat_telemetry_text,
-)
-from .transport import _session_auth_token, get_hosted_authenticated_user
+from .toolsets import SDK_ADDED_TOOLS
 
 if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
 
-TransportName = Literal["stdio", "sse", "streamable-http", "both"]
+# "both" predates the SSE removal, when it meant SSE + Streamable HTTP. It now
+# means Streamable HTTP plus Code Mode on one server, and keeps its name so
+# existing deployments (ROOTLY_TRANSPORT=both) need no change.
+TransportName = Literal["stdio", "streamable-http", "both"]
 TRANSPORT_ALIASES: dict[str, TransportName] = {
     "stdio": "stdio",
-    "sse": "sse",
     "streamable-http": "streamable-http",
     "streamable": "streamable-http",
     "http": "streamable-http",
     "both": "both",
     "dual": "both",
     "dual-http": "both",
+    # Old spellings of the SSE + Streamable HTTP pair: still the HTTP server,
+    # whose removed SSE paths now answer 410.
     "streamable+sse": "both",
     "sse+streamable": "both",
 }
 HOSTED_TOOL_PROFILE_QUERY_PARAM = "tool_profile"
 HOSTED_TOOL_PROFILE_HEADER = "x-rootly-tool-profile"
-SENTRY_DSN_PATTERN = re.compile(r"^https://[a-f0-9]+@[\w.-]+(?::\d+)?(?:/.*)?/\d+$")
 
 
 def normalize_transport(value: str) -> TransportName:
     """Normalize transport names and validate supported values."""
     normalized = value.strip().lower().replace("_", "-")
+    if normalized == "sse":
+        raise argparse.ArgumentTypeError(CLI_SSE_REMOVED_ERROR)
     mapped = TRANSPORT_ALIASES.get(normalized)
     if mapped is None:
-        supported = ", ".join(sorted({"stdio", "sse", "streamable-http", "both"}))
+        supported = ", ".join(sorted({"stdio", "streamable-http", "both"}))
         raise argparse.ArgumentTypeError(
             f"Unsupported transport '{value}'. Supported values: {supported}, http, dual"
         )
@@ -87,12 +81,19 @@ def normalize_transport(value: str) -> TransportName:
 
 
 def normalize_transport_or_default(value: str, default: TransportName = "stdio") -> TransportName:
-    """Normalize transport value, falling back to default when invalid."""
+    """Normalize transport value, falling back to default when invalid.
+
+    The removed ``sse`` value is not a typo to recover from: it fails, so an
+    operator learns the deployment needs reconfiguring instead of silently
+    getting stdio.
+    """
+    if value.strip().lower() == "sse":
+        raise RootlyConfigurationError(CLI_SSE_REMOVED_ERROR)
     try:
         return normalize_transport(value)
-    except argparse.ArgumentTypeError:
+    except argparse.ArgumentTypeError as error:
         logging.getLogger(__name__).warning(
-            f"Invalid ROOTLY_TRANSPORT value '{value}', defaulting to '{default}'"
+            f"Invalid ROOTLY_TRANSPORT value '{value}' ({error}), defaulting to '{default}'"
         )
         return default
 
@@ -126,222 +127,6 @@ def resolve_requested_hosted_tool_profile(
     return server_defaults.normalize_hosted_tool_profile(raw, default=default)
 
 
-def agentcat_options_supports(options_cls: type[Any], option: str) -> bool:
-    """Whether the installed AgentCat accepts *option*.
-
-    Options are a dataclass, so the accepted set is introspectable. Feature
-    detection keeps a newer hook from disabling telemetry on an older SDK,
-    which is what an unexpected keyword would cause.
-    """
-    try:
-        return option in {field.name for field in dataclasses.fields(options_cls)}
-    except TypeError:
-        # Not a dataclass in this version -- assume unsupported rather than
-        # risk the TypeError path.
-        return False
-
-
-def maybe_enable_mcpcat_tracking(server, project_id: str | None, logger: logging.Logger) -> bool:
-    """Enable AgentCat tracking when configured and available; return whether it is on.
-
-    The Python AgentCat package (formerly MCPcat) is currently deployed
-    separately from the core server dependency set, so we load it lazily and
-    only when a project ID is configured. This keeps the base server behavior
-    unchanged for self-hosted users and local development environments that do
-    not install AgentCat.
-    """
-    sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
-    if not project_id and not sentry_dsn:
-        return False
-    if sentry_dsn and not SENTRY_DSN_PATTERN.fullmatch(sentry_dsn):
-        logger.warning("Sentry telemetry is disabled because SENTRY_DSN is invalid")
-        sentry_dsn = ""
-        if not project_id:
-            return False
-
-    try:
-        agentcat = importlib.import_module("agentcat")
-        agentcat_types = importlib.import_module("agentcat.types")
-    except ImportError:
-        logger.warning(
-            "AgentCat or Sentry telemetry is configured but agentcat is not installed; "
-            "skipping telemetry"
-        )
-        return False
-
-    try:
-        options_kwargs: dict[str, Any] = {
-            # Tool calls do not need a narrative of the user's goal. Disable
-            # both SDK features that request one while retaining call telemetry.
-            "enable_tool_call_context": False,
-            "enable_report_missing": False,
-            "identify": build_mcpcat_identify_callback(
-                agentcat_types.UserIdentity,
-                include_user_name=not bool(sentry_dsn),
-            ),
-            # Registered whenever telemetry is on, not only alongside Sentry.
-            # The SDK scrubs nothing itself -- `_process_event` redacts only
-            # `if event.redaction_fn` -- so without this the project_id-only
-            # configuration sends credentials unscrubbed.
-            "redact_sensitive_information": redact_agentcat_telemetry_text,
-        }
-        # The event-level hook is the only place a credential's field name is
-        # visible; the string hook above receives bare values. It landed after
-        # 2.0.1, so it is offered only when the installed SDK accepts it --
-        # passing an unknown option raises TypeError, and the except below
-        # would turn that into telemetry being switched off entirely.
-        if agentcat_options_supports(agentcat_types.AgentCatOptions, "redact_event"):
-            options_kwargs["redact_event"] = prepare_telemetry_event
-        else:
-            # Say so rather than degrade quietly. The scrubber being silently
-            # inactive is how the SENTRY_DSN gap went unnoticed for months.
-            logger.warning(
-                "AgentCat does not support redact_event; credential-named tool "
-                "arguments will not be scrubbed. Upgrade to 2.0.2 or later."
-            )
-        # Session correlation runs in the SDK's hook mode: the server derives
-        # the session from the request, so the SDK injects no `session_id`
-        # parameter and no instruction text into the tool schemas. Without
-        # the hook, every tool carries a required parameter the tool does not
-        # need to run, described by directives aimed at the model.
-        if agentcat_options_supports(agentcat_types.AgentCatOptions, "resolve_session_id"):
-            options_kwargs["resolve_session_id"] = build_agentcat_session_resolver()
-        else:
-            logger.warning(
-                "AgentCat does not support resolve_session_id; a required "
-                "session_id parameter will be injected into every tool schema. "
-                "Upgrade to 2.1.0 or later."
-            )
-        if sentry_dsn:
-            options_kwargs["exporters"] = {
-                "sentry": {
-                    "type": "sentry",
-                    "dsn": sentry_dsn,
-                    "environment": os.getenv("ENVIRONMENT", "production"),
-                    "release": os.getenv(
-                        "SENTRY_RELEASE",
-                        f"rootly-mcp-server@{__version__}",
-                    ),
-                    "enable_tracing": True,
-                }
-            }
-        options = agentcat_types.AgentCatOptions(**options_kwargs)
-        agentcat.track(server, project_id, options)
-    except Exception as error:
-        logger.warning(
-            "AgentCat tracking could not be enabled; skipping (%s)",
-            type(error).__name__,
-        )
-        return False
-    return True
-
-
-def build_mcpcat_identify_callback(
-    user_identity_cls: type[Any],
-    *,
-    include_user_name: bool = True,
-):
-    """Build a lightweight AgentCat identify callback from hosted auth context."""
-
-    def identify(_request: dict[str, Any], _context: Any) -> Any:
-        user = get_hosted_authenticated_user()
-        if not user:
-            return None
-
-        return user_identity_cls(
-            user_id=user["id"],
-            user_name=(
-                user.get("full_name_with_team") or user.get("name") or user.get("email")
-                if include_user_name
-                else None
-            ),
-            user_data=None,
-        )
-
-    return identify
-
-
-MCP_SESSION_ID_HEADER = "mcp-session-id"
-# Without a transport session, a caller's calls are grouped by UTC hour. The
-# hosted transport is stateless and runs more than one replica with no shared
-# store, so the only task boundary every replica agrees on is the clock. A
-# fixed bucket therefore trades precision for consistency: two tasks by one
-# caller inside an hour share a session, and a task spanning the top of the
-# hour is split in two. Asking the client to carry a task handle would be the
-# precise alternative, and it is exactly the injected parameter this hook
-# exists to remove. Clients that keep a transport session get task-level
-# boundaries from the header.
-_SESSION_BUCKET_FORMAT = "%Y%m%d%H"
-
-
-def _caller_key(user: Mapping[str, str] | None, auth_header: str) -> str | None:
-    """Identify the caller without exposing the credential.
-
-    Prefers the authenticated Rootly user; falls back to a digest of the
-    bearer token so two tokens never share a key and the token never leaves
-    the process.
-    """
-    if user and user.get("id"):
-        return f"user:{user['id']}"
-    token = auth_header.strip()
-    if token:
-        return f"token:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
-    return None
-
-
-def derive_agentcat_session_key(
-    headers: Mapping[str, str] | None,
-    user: Mapping[str, str] | None,
-    auth_header: str,
-    *,
-    now: datetime | None = None,
-) -> str | None:
-    """Derive a caller-managed session key for AgentCat from request state.
-
-    The key always starts with the caller, so no two callers can share a
-    session: not through a colliding or replayed ``Mcp-Session-Id``, and not
-    through the time bucket. Within one caller the client's MCP transport
-    session is the boundary when it sends one, otherwise the UTC hour.
-    ``None`` (no caller identity at all) lets the SDK mint a fresh handle for
-    the call. The value never leaves the process as-is: the SDK folds it into
-    a deterministic KSUID.
-    """
-    caller = _caller_key(user, auth_header)
-    if caller is None:
-        return None
-
-    if headers:
-        transport_session = headers.get(MCP_SESSION_ID_HEADER, "").strip()
-        if transport_session:
-            return f"{caller}:transport:{transport_session}"
-
-    bucket = (now or datetime.now(UTC)).strftime(_SESSION_BUCKET_FORMAT)
-    return f"{caller}:hour:{bucket}"
-
-
-def build_agentcat_session_resolver():
-    """Build the AgentCat ``resolve_session_id`` hook from hosted request context.
-
-    The SDK calls the hook per tool call with its own ``(request, extra)``
-    pair; both are ignored in favor of the ContextVars the hosted auth
-    middleware already fills, which is also where ``identify`` reads from.
-    """
-
-    def resolve_session_id(_request: Any, _extra: Any) -> str | None:
-        headers: dict[str, str] = {}
-        try:
-            from fastmcp.server.dependencies import get_http_headers
-
-            headers = {str(k).lower(): str(v) for k, v in get_http_headers().items()}
-        except Exception:  # nosec B110 - no HTTP request in scope (stdio, tests)
-            pass
-        return derive_agentcat_session_key(
-            headers, get_hosted_authenticated_user(), _session_auth_token.get("")
-        )
-
-    return resolve_session_id
-
-
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Start the Rootly MCP server for API integration.")
@@ -367,7 +152,10 @@ def parse_args():
         "--transport",
         type=normalize_transport,
         default="stdio",
-        help="Transport protocol to use: stdio, sse, streamable-http/http, or both/dual. Default: stdio",
+        help=(
+            "Transport protocol to use: stdio, streamable-http/http, or both/dual "
+            "(Streamable HTTP plus Code Mode). Default: stdio"
+        ),
     )
     parser.add_argument(
         "--debug",
@@ -596,15 +384,17 @@ def build_dual_http_app(
     profiled_code_mode_servers: dict[str, Any] | None = None,
     default_tool_profile: str = server_defaults.HOSTED_TOOL_PROFILE_FULL,
 ):
-    """Build the ASGI app serving SSE, streamable-http and Code Mode together."""
+    """Build the ASGI app serving streamable-http and Code Mode together.
+
+    The removed SSE paths answer 410 Gone (see ``sse_removal``).
+    """
     import fastmcp
     from fastmcp.server.http import StreamableHTTPASGIApp, create_base_app
-    from mcp.server.sse import SseServerTransport
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.middleware import Middleware
     from starlette.requests import Request
     from starlette.responses import Response
-    from starlette.routing import BaseRoute, Mount, Route
+    from starlette.routing import BaseRoute, Route
 
     logger = logging.getLogger(__name__)
 
@@ -618,7 +408,6 @@ def build_dual_http_app(
         "Streamable HTTP configured in %s mode", "stateless" if stateless_http else "stateful"
     )
 
-    sse_transport = SseServerTransport(message_path)
     profiled_servers = profiled_servers or {default_tool_profile: server}
     profiled_code_mode_servers = profiled_code_mode_servers or (
         {default_tool_profile: code_mode_server} if code_mode_server is not None else {}
@@ -633,29 +422,6 @@ def build_dual_http_app(
             default=default_profile,
         )
         return profile if profile in available_profiles else default_profile
-
-    async def handle_sse(scope, receive, send, selected_server) -> Response:
-        async with sse_transport.connect_sse(scope, receive, send) as streams:
-            await selected_server._mcp_server.run(  # noqa: SLF001
-                streams[0],
-                streams[1],
-                # SSE is deprecated: tell the model/client in this session only.
-                with_sse_deprecation_instructions(
-                    selected_server._mcp_server.create_initialization_options()  # noqa: SLF001
-                ),
-            )
-        return Response()
-
-    async def sse_endpoint(request: Request) -> Response:
-        selected_profile = _profile_for_request(
-            request,
-            set(profiled_servers),
-            default_profile=default_tool_profile,
-        )
-        selected_server = profiled_servers[selected_profile]
-        return await handle_sse(  # noqa: SLF001
-            request.scope, request.receive, request._send, selected_server
-        )
 
     session_managers = {
         profile: StreamableHTTPSessionManager(
@@ -685,8 +451,6 @@ def build_dual_http_app(
     streamable_methods = ["POST", "DELETE"]
 
     routes: list[BaseRoute] = [
-        Route(sse_path, endpoint=sse_endpoint, methods=["GET"]),
-        Mount(message_path, app=sse_transport.handle_post_message),
         Route(streamable_path, endpoint=streamable_http_endpoint, methods=streamable_methods),
     ]
 
@@ -742,10 +506,15 @@ def build_dual_http_app(
                 await stack.enter_async_context(session_manager.run())
             yield
 
-    # Outermost of ours, so the 401 from the auth middleware carries the
-    # deprecation headers too. A fresh list: create_base_app mutates it.
+    # Outermost of ours, so a client stuck on the removed SSE paths gets the
+    # 410 rather than a 401. A fresh list: create_base_app mutates it.
     app_middleware = [
-        Middleware(SSEDeprecationMiddleware, sse_path=sse_path, message_path=message_path),
+        Middleware(
+            SSEGoneMiddleware,
+            sse_path=sse_path,
+            message_path=message_path,
+            live_paths=(streamable_path, code_mode_path),
+        ),
         *cast(list[Middleware], middleware or []),
     ]
     app = create_base_app(
@@ -755,15 +524,12 @@ def build_dual_http_app(
         lifespan=lifespan,
     )
     app.state.fastmcp_server = server
-    app.state.path = ",".join(
-        [path for path in (sse_path, streamable_path, code_mode_path) if path]
-    )
+    app.state.path = ",".join([path for path in (streamable_path, code_mode_path) if path])
     app.state.transport_type = "both"
     # What the setup page at GET / lists: Code Mode only when it is mounted.
     app.state.mcp_endpoints = McpEndpoints(
         code_mode=code_mode_path if profiled_code_mode_servers and code_mode_path else None,
         streamable=streamable_path,
-        sse=sse_path,
     )
     return app
 
@@ -778,7 +544,7 @@ def run_dual_http_server(
     profiled_code_mode_servers: dict[str, Any] | None = None,
     default_tool_profile: str = server_defaults.HOSTED_TOOL_PROFILE_FULL,
 ) -> None:
-    """Run SSE and streamable-http together on one ASGI server."""
+    """Run streamable-http and Code Mode together on one ASGI server."""
     import fastmcp
     import uvicorn
 
@@ -792,15 +558,7 @@ def run_dual_http_server(
         profiled_code_mode_servers=profiled_code_mode_servers,
         default_tool_profile=default_tool_profile,
     )
-    sse_path = fastmcp.settings.sse_path
     streamable_path = fastmcp.settings.streamable_http_path
-    logger.info(
-        "SSE endpoint %s is deprecated and will be removed after %s; "
-        "clients should use %s (or Code Mode)",
-        sse_path,
-        SSE_SUNSET_DATE,
-        streamable_path,
-    )
 
     host = fastmcp.settings.host
     port = fastmcp.settings.port
@@ -808,11 +566,8 @@ def run_dual_http_server(
 
     if code_mode_path:
         logger.info(
-            "Starting MCP server %r with dual transport on http://%s:%s%s, http://%s:%s%s, and Code Mode on http://%s:%s%s",
+            "Starting MCP server %r on http://%s:%s%s and Code Mode on http://%s:%s%s",
             server.name,
-            host,
-            port,
-            sse_path,
             host,
             port,
             streamable_path,
@@ -822,11 +577,8 @@ def run_dual_http_server(
         )
     else:
         logger.info(
-            "Starting MCP server %r with dual transport on http://%s:%s%s and http://%s:%s%s",
+            "Starting MCP server %r on http://%s:%s%s",
             server.name,
-            host,
-            port,
-            sse_path,
             host,
             port,
             streamable_path,
@@ -916,7 +668,15 @@ def run_profiled_streamable_http_server(
                 await stack.enter_async_context(session_manager.run())
             yield
 
-    app_middleware = cast(list[Middleware], middleware or [])
+    app_middleware = [
+        Middleware(
+            SSEGoneMiddleware,
+            sse_path=fastmcp.settings.sse_path,
+            message_path=fastmcp.settings.message_path,
+            live_paths=(streamable_path,),
+        ),
+        *cast(list[Middleware], middleware or []),
+    ]
     app = create_base_app(
         routes=routes,
         middleware=app_middleware,
@@ -981,8 +741,6 @@ def main():
         logger.info(f"Initializing server with name: {args.name}")
         # argparse already normalizes/validates --transport via type=normalize_transport
         normalized_transport = args.transport
-        if normalized_transport == "sse":
-            logger.warning(CLI_SSE_DEPRECATION_WARNING)
         code_mode_enabled = args.enable_code_mode or code_mode_enabled_from_env(default=True)
         enable_write_tools = resolve_write_tools_enabled(args.enable_write_tools)
         code_mode_path = (
@@ -990,7 +748,6 @@ def main():
             if args.code_mode_path
             else code_mode_path_from_env()
         )
-        mcpcat_project_id = os.getenv("ROOTLY_MCPCAT_PROJECT_ID")
         server = create_rootly_mcp_server(
             swagger_path=args.swagger_path,
             name=args.name,
@@ -1072,11 +829,18 @@ def main():
             profiled_code_mode_servers[default_hosted_tool_profile] = code_mode_server
 
         all_servers = (*profiled_servers.values(), *profiled_code_mode_servers.values())
-        for mcp_server in all_servers:
-            maybe_enable_mcpcat_tracking(mcp_server, mcpcat_project_id, logger)
         posthog_client = build_posthog_client(logger)
+        # An operator's exact tool list (--enabled-tools / ROOTLY_MCP_ENABLED_TOOLS)
+        # decides whether the SDK's send_feedback tool is added.
+        collect_feedback = not (
+            explicit_enabled_tools
+            and enabled_tools is not None
+            and not enabled_tools & SDK_ADDED_TOOLS
+        )
         for mcp_server in all_servers:
-            maybe_enable_posthog_mcp_analytics(mcp_server, posthog_client, logger)
+            maybe_enable_posthog_mcp_analytics(
+                mcp_server, posthog_client, logger, collect_feedback=collect_feedback
+            )
         # Hosted auth first, so unauthenticated requests never get a session token.
         http_middleware = [
             *(get_hosted_auth_middleware() or []),
@@ -1116,29 +880,26 @@ def main():
                     default_tool_profile=default_hosted_tool_profile,
                 )
             else:
-                run_middleware = get_hosted_auth_middleware()
-                if normalized_transport == "sse":
-                    import fastmcp
-                    from starlette.middleware import Middleware
+                import fastmcp
+                from starlette.middleware import Middleware
 
-                    run_middleware = [
-                        Middleware(
-                            SSEDeprecationMiddleware,
-                            sse_path=fastmcp.settings.sse_path,
-                            message_path=fastmcp.settings.message_path,
-                        ),
-                        *(run_middleware or []),
-                    ]
-                run_kwargs = {
-                    "transport": normalized_transport,
-                    "middleware": run_middleware,
-                    # Override FastMCP's default of 0s to allow active SSE connections
-                    # to finish gracefully during deployments (avoids 502s).
-                    "uvicorn_config": {"timeout_graceful_shutdown": 30},
-                }
-                if normalized_transport == "streamable-http":
-                    run_kwargs["stateless_http"] = direct_streamable_stateless_http
-                server.run(**run_kwargs)
+                run_middleware = [
+                    Middleware(
+                        SSEGoneMiddleware,
+                        sse_path=fastmcp.settings.sse_path,
+                        message_path=fastmcp.settings.message_path,
+                        live_paths=(fastmcp.settings.streamable_http_path,),
+                    ),
+                    *(get_hosted_auth_middleware() or []),
+                ]
+                server.run(
+                    transport=normalized_transport,
+                    middleware=run_middleware,
+                    stateless_http=direct_streamable_stateless_http,
+                    # Override FastMCP's default of 0s so in-flight requests
+                    # finish gracefully during deployments (avoids 502s).
+                    uvicorn_config={"timeout_graceful_shutdown": 30},
+                )
 
     except FileNotFoundError as e:
         logger.error(f"File not found: {e}")

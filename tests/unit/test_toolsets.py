@@ -8,6 +8,7 @@ from fastmcp.exceptions import ToolError
 
 from rootly_mcp_server import toolsets
 from rootly_mcp_server.server import ToolSelectionMiddleware, create_rootly_mcp_server
+from rootly_mcp_server.spec_transform import _filter_openapi_spec
 from rootly_mcp_server.toolsets import (
     ALL,
     CORE,
@@ -72,6 +73,39 @@ async def test_self_hosted_default_is_everything(token):
     assert len(await _names(server)) > 200
 
 
+@pytest.mark.parametrize("hosted", [True, False])
+async def test_retired_investigation_progress_is_not_exposed_or_callable(token, hosted):
+    server = create_rootly_mcp_server(hosted=hosted, enable_write_tools=True)
+
+    names = await _names(server)
+
+    assert "get_investigation" in names
+    assert "get_investigation_progress" not in names
+    async with Client(server) as client:
+        with pytest.raises(ToolError, match="[Uu]nknown tool|not found"):
+            await client.call_tool("get_investigation_progress", {"investigation_id": "inv-1"})
+
+
+@pytest.mark.parametrize("parameter", ["id", "investigation_id"])
+def test_retired_progress_is_removed_even_when_explicitly_allowed(parameter):
+    detail = f"/v1/ai/investigations/{{{parameter}}}"
+    progress = f"{detail}/progress"
+    spec = {
+        "openapi": "3.0.0",
+        "info": {"title": "Legacy investigations API", "version": "1.0"},
+        "paths": {
+            detail: {"get": {"operationId": "get_investigation"}},
+            progress: {"get": {"operationId": "get_investigation_progress"}},
+        },
+    }
+
+    filtered = _filter_openapi_spec(spec, allowed_paths=[detail, progress])
+
+    assert detail in filtered["paths"]
+    assert progress not in filtered["paths"]
+    assert progress in spec["paths"]
+
+
 async def test_requested_toolsets_add_their_tools(token):
     server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
     placed = _selection_middleware(server).tool_toolsets
@@ -82,6 +116,118 @@ async def test_requested_toolsets_add_their_tools(token):
     assert workflows <= names
     assert set(CORE_TOOLS) <= names
     assert "create_alert_route" not in names
+
+
+# AI automations live in `automations`, so a connection can leave them out
+# while keeping investigations and skills in `ai`.
+_AUTOMATION_TOOLS = {
+    "list_ai_automations",
+    "get_ai_automation",
+    "create_ai_automation",
+    "update_ai_automation",
+    "run_ai_automation",
+}
+
+
+async def test_every_toolset_but_automations_leaves_them_all_out(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    everything_else = frozenset(set(TOOLSETS) - {"automations"})
+
+    names = await _names(server, ToolSelection(everything_else))
+
+    assert not _AUTOMATION_TOOLS & names
+    # Their neighbours stay: investigations and skills.
+    assert {"start_investigation", "list_ai_skills"} <= names
+
+
+async def test_the_automations_toolset_brings_them_back(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+
+    names = await _names(server, ToolSelection(frozenset({"automations"})))
+
+    assert _AUTOMATION_TOOLS <= names
+
+
+async def test_investigations_selection_excludes_skills_automations_and_observability(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    selected = frozenset(set(TOOLSETS) - {"ai", "automations", "observability"})
+
+    names = await _names(server, ToolSelection(selected))
+    placed = _selection_middleware(server).tool_toolsets
+
+    assert {
+        "list_investigations",
+        "get_investigation",
+        "start_investigation",
+        "cancel_investigation",
+        "list_schedules",
+    } <= names
+    excluded = {
+        name for name, group in placed.items() if group in {"ai", "automations", "observability"}
+    }
+    assert excluded
+    assert not excluded & names
+    assert not any(
+        marker in name
+        for name in names
+        for marker in ("ai_skill", "ai_automation", "observability")
+    )
+    # Hiding discovery must also prevent callers from invoking a tool by name.
+    reset = toolsets.requested_selection.set(ToolSelection(selected))
+    try:
+        async with Client(server) as client:
+            with pytest.raises(ToolError, match="not available here"):
+                await client.call_tool("list_ai_skills", {})
+    finally:
+        toolsets.requested_selection.reset(reset)
+
+
+async def test_combined_ai_selection_keeps_existing_investigation_access(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    combined = await _names(server, ToolSelection(frozenset({"ai"})))
+    investigations = await _names(server, ToolSelection(frozenset({"investigations"})))
+
+    assert investigations
+    assert investigations < combined
+    assert {"list_ai_skills", "start_investigation"} <= combined
+    assert "list_ai_skills" not in investigations
+    readonly = await _names(server, ToolSelection(frozenset({"investigations"}), readonly=True))
+    assert {"list_investigations", "get_investigation"} <= readonly
+    assert not {"start_investigation", "cancel_investigation"} & readonly
+
+
+_WORKFLOW_TASK_SETUP_TOOLS = {
+    "create_workflow_task",
+    "update_workflow_task",
+    "get_workflow_task_params_schema",
+}
+
+
+async def test_workflows_without_workflow_tasks_reads_tasks_but_cannot_set_them(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+
+    names = await _names(server, ToolSelection(frozenset({"workflows"})))
+
+    assert not _WORKFLOW_TASK_SETUP_TOOLS & names
+    assert {"list_workflows", "create_workflow_run", "list_workflow_tasks"} <= names
+
+
+async def test_the_workflow_tasks_toolset_brings_task_setup_back(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+
+    names = await _names(server, ToolSelection(frozenset({"workflows", "workflow_tasks"})))
+
+    assert _WORKFLOW_TASK_SETUP_TOOLS <= names
+
+
+async def test_the_directory_submission_url_hides_every_flagged_tool(token):
+    # The ChatGPT app is submitted with every toolset but these two.
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    submitted = frozenset(set(TOOLSETS) - {"automations", "workflow_tasks"})
+
+    names = await _names(server, ToolSelection(submitted))
+
+    assert not (_AUTOMATION_TOOLS | _WORKFLOW_TASK_SETUP_TOOLS) & names
 
 
 async def test_readonly_drops_every_write(token):
@@ -267,6 +413,9 @@ async def test_toolsets_query_param_reaches_the_filter_over_http(token):
     assert await listed("/mcp?toolsets=core") == set(CORE_TOOLS)
     alerts = await listed("/mcp?toolsets=alerts")
     assert "create_alert_route" in alerts and "create_incident" not in alerts
+    investigations = await listed("/mcp?toolsets=investigations")
+    assert {"list_investigations", "start_investigation"} <= investigations
+    assert not {"list_ai_skills", "list_ai_automations", "list_observability_logs"} & investigations
     assert len(await listed("/mcp?tool_profile=full")) > 200
 
 

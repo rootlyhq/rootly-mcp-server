@@ -91,6 +91,11 @@ _CLIENT_HINT = (
     "`await call_tool(name, params)`."
 )
 _SANDBOX_NAME_HINTS = {
+    "__import__": (
+        "Use an import statement, e.g. `import json`, instead of __import__(). "
+        "Only the sandbox's supported modules are available; "
+        "use `await call_tool(name, params)` for Rootly operations."
+    ),
     "sleep": "Use `import asyncio` and `await asyncio.sleep(seconds)`.",
     "sort": "Use `sorted(items, key=...)`, or `items.sort(key=...)` on a list.",
     "client": _CLIENT_HINT,
@@ -336,8 +341,8 @@ def _example_arguments(tool: Tool) -> str:
     return repr(example)
 
 
-def _undefined_name_message(missing: str, tools: Sequence[Tool]) -> str | None:
-    """Teach the call convention when a script used a tool name as a bare name."""
+def _undefined_name_message(missing: str, tools: Sequence[Tool]) -> str:
+    """Explain an undefined script variable or the tool it may refer to."""
     resolution = resolve_tool_name(missing, tools)
     if resolution.tool is not None:
         canonical = resolution.tool.name
@@ -349,7 +354,12 @@ def _undefined_name_message(missing: str, tools: Sequence[Tool]) -> str | None:
         )
     candidates = resolution.ambiguous or resolution.suggestions
     if not candidates:
-        return None
+        return (
+            f"NameError: name '{missing}' is not defined. Define this variable before using it. "
+            "Each execute call starts with fresh variables; pass needed values in the code "
+            "or fetch them with `await call_tool(name, params)`. "
+            "Replace template placeholders with actual values."
+        )
     options = ", ".join(repr(name) for name in candidates)
     lead = (
         f"It could mean the Rootly tools {options}"
@@ -437,6 +447,26 @@ def _format_execute_exception(exc: Exception, tools: Sequence[Tool] = ()) -> str
                 "datetime.datetime.now(datetime.timezone.utc)."
             )
         return _undefined_name_message(missing, tools)
+
+    if "datetime" in message and "has no attribute 'fromisoformat'" in message:
+        return (
+            f"{message}. Code Mode's datetime has no fromisoformat(). Keep API "
+            "timestamps as ISO 8601 strings; compare them as strings only when they "
+            "use the same UTC format, or return them for conversion outside execute."
+        )
+
+    if "callable replacement is not yet supported in re.sub()" in message:
+        return (
+            f"{message}. Use a string replacement instead of a callable, e.g. "
+            "`re.sub(pattern, '[redacted]', value)`."
+        )
+
+    if any(f"'os.{name}' is not supported" in message for name in ("getenv", "environ")):
+        return (
+            f"{message}. Code Mode cannot read the host environment or local files. "
+            "Pass needed non-secret inputs in the script and use "
+            "`await call_tool(name, params)` for authenticated Rootly operations."
+        )
 
     if "worker exceeded its memory limit" in message:
         return (

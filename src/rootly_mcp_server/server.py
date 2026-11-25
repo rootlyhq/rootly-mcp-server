@@ -10,7 +10,7 @@ import logging
 import os
 import time
 import traceback
-from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from contextvars import ContextVar
 from typing import Any
 
@@ -28,7 +28,7 @@ from . import (
     toolsets,
     transport,
 )
-from .exceptions import GuidedToolError, RootlyAuthenticationError
+from .exceptions import GuidedToolError, RootlyAuthenticationError, is_tool_error_result
 from .landing_page import landing_page
 from .mcp_error import MCPError
 from .security import mask_sensitive_data, sanitize_error_message
@@ -141,6 +141,8 @@ def _provider_tool_inventory(
 # rotated webhook secret stops the old one working immediately.
 _DESTRUCTIVE_CREATE_OPERATIONS = frozenset(
     {
+        "acknowledge_alert",
+        "resolve_alert",
         "create_override_shift",
         "create_workflow_run",
         "run_ai_automation",
@@ -372,8 +374,7 @@ def _normalize_error_details(value: Any) -> Any:
 def _extract_structured_tool_error(result: Any) -> dict[str, Any]:
     """Extract structured tool error metadata from an MCP error result, if present."""
     structured = getattr(result, "structured_content", None)
-    is_structured_tool_error = isinstance(structured, dict) and structured.get("error") is True
-    if not getattr(result, "is_error", False) and not is_structured_tool_error:
+    if not is_tool_error_result(result):
         return {}
 
     error_event: dict[str, Any] = {"error_type": "ToolError"}
@@ -619,18 +620,12 @@ class ArgumentNormalizationMiddleware(fastmcp_middleware.Middleware):
 class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
     """Drops retired telemetry arguments that the target tool does not declare.
 
-    Until #223 AgentCat injected a ``context`` parameter into every tool schema,
-    and until session hook mode it injected ``session_id``. Callers with cached
-    schemas (scripts, agents, directory reviewers' harnesses) still send them.
-    Tools reject undeclared arguments, so the whole call failed -- and the
-    pydantic error echoed the caller's text into telemetry. The parameters stay
-    out of the advertised schemas; they are only tolerated.
-
-    AgentCat inserts its own middleware at index 0 of the chain (outermost), so
-    it has already copied the raw arguments before this runs; the event-level
-    scrubber removes them again there. This middleware guarantees that whatever
-    the SDK leaves behind -- or everything, when the SDK is not installed -- is
-    gone before the tool validates its arguments.
+    The retired AgentCat SDK injected ``context`` and ``session_id`` parameters
+    into every tool schema. Callers with cached schemas (scripts, agents,
+    directory reviewers' harnesses) still send them. Tools reject undeclared
+    arguments, so the whole call failed -- and the pydantic error echoed the
+    caller's text into telemetry. The parameters stay out of the advertised
+    schemas; they are only tolerated.
     """
 
     async def on_call_tool(
@@ -650,44 +645,6 @@ class LegacyContextArgumentMiddleware(fastmcp_middleware.Middleware):
                     for name in stray - set(declared):
                         args.pop(name)
         return await call_next(context)
-
-
-# Tools registered by the telemetry SDK rather than by us, with the annotations
-# they should carry. AgentCat 2.1.0 registers `get_more_tools` with only
-# `{"readOnlyHint": True}` (adapters/community.py), so `destructive_hint` and
-# `open_world_hint` fall back to the spec defaults -- both `true`, describing the
-# tool as destructive and open-world. It is neither: its handler returns a fixed
-# string and never reaches the API. Reported upstream; remove this once the SDK
-# sets them itself.
-_INJECTED_TOOL_ANNOTATIONS: dict[str, mt.ToolAnnotations] = {
-    "get_more_tools": mt.ToolAnnotations(
-        read_only_hint=True,
-        destructive_hint=False,
-        open_world_hint=False,
-    ),
-}
-
-
-class InjectedToolAnnotationMiddleware(fastmcp_middleware.Middleware):
-    """Completes safety annotations on tools this server did not register.
-
-    An injected tool cannot be annotated where it is defined, and unset hints do
-    not read as "unknown" -- the MCP spec defaults them to the cautious answer.
-    A client that respects annotations may therefore prompt before every call,
-    and annotation scanners flag the tool.
-    """
-
-    async def on_list_tools(
-        self,
-        context: fastmcp_middleware.MiddlewareContext[mt.ListToolsRequest],
-        call_next: fastmcp_middleware.CallNext[mt.ListToolsRequest, Sequence[Any]],
-    ) -> Sequence[Any]:
-        tools = await call_next(context)
-        for tool in tools:
-            annotations = _INJECTED_TOOL_ANNOTATIONS.get(getattr(tool, "name", ""))
-            if annotations is not None:
-                tool.annotations = annotations
-        return tools
 
 
 def _openapi_path_arguments(tool: Any) -> tuple[str, str, list[str]] | None:
@@ -1077,6 +1034,13 @@ class JsonApiBodyRepairMiddleware(fastmcp_middleware.Middleware):
         if route is None or str(getattr(route, "method", "GET")).upper() == "GET":
             return await call_next(context)
 
+        if context.message.name == "update_alert" and "status" in args:
+            raise GuidedToolError(
+                "update_alert does not accept 'status'. To change alert status, use "
+                "resolve_alert(id=...) or acknowledge_alert(id=...). "
+                "For other updates, put writable fields under data.attributes."
+            )
+
         try:
             repaired, rewrites = tool_arguments.repair_jsonapi_body(
                 args,
@@ -1260,10 +1224,16 @@ def _drop_null_arguments(
         plural = len(empty_required) > 1
         listed = ", ".join(f"'{name}'" for name in empty_required)
         example = ", ".join(f'"{name}": "<value>"' for name in empty_required)
+        hint = (
+            " For list_incidents, use incidents[*].incident_id, not id. "
+            "For search_incidents, use data[*].id."
+            if "incident_id" in empty_required
+            else ""
+        )
         raise GuidedToolError(
             f"{tool_name} requires the argument{'s' if plural else ''} {listed}, but got "
             f"{tool_arguments.describe_received(empty_required, args)} -- a placeholder, "
-            f"not a value. Retry with {{{example}}}."
+            f"not a value. Retry with {{{example}}}.{hint}"
         )
     if dropped:
         bucket = _tool_argument_rewrites.get()
@@ -1296,7 +1266,7 @@ def create_rootly_mcp_server(
             If None, destructive delete tools remain disabled by default.
         hosted: Whether the server is hosted (affects authentication).
         base_url: Base URL for Rootly API. If None, uses ROOTLY_BASE_URL env var or default.
-        transport: Transport protocol (stdio, sse, or streamable-http).
+        transport: Transport protocol (stdio, streamable-http, or both).
         enable_write_tools: Whether non-destructive write tools are exposed.
             If None, uses ROOTLY_MCP_ENABLE_WRITE_TOOLS.
         write_allowed_paths: Path templates where POST/PUT/PATCH operations are exposed
@@ -1468,7 +1438,6 @@ def create_rootly_mcp_server(
         mcp.add_middleware(tool_selection_middleware)
     mcp.add_middleware(ArgumentNormalizationMiddleware())
     mcp.add_middleware(LegacyContextArgumentMiddleware())
-    mcp.add_middleware(InjectedToolAnnotationMiddleware())
     mcp.add_middleware(ToolUsageLoggingMiddleware())
     # Inside usage logging, so the logged arg keys are what the caller sent and
     # the applied rewrites (or the rejection) are recorded with them. Scoped to
@@ -1796,7 +1765,9 @@ def create_rootly_mcp_server(
         registered_names = curated_names | autogen_names
 
         valid_tools = enabled_tools & registered_names
-        invalid_tools = sorted(enabled_tools - registered_names)
+        # SDK-added tools (send_feedback) are added later by PostHog analytics,
+        # so naming one is valid even though it is not registered yet.
+        invalid_tools = sorted(enabled_tools - registered_names - toolsets.SDK_ADDED_TOOLS)
 
         if invalid_tools:
             audit.audit.log_configuration_error(
@@ -1810,7 +1781,7 @@ def create_rootly_mcp_server(
                 ", ".join(invalid_tools),
             )
 
-        if not valid_tools:
+        if not valid_tools and not enabled_tools & toolsets.SDK_ADDED_TOOLS:
             error_msg = "No valid tools found in allowlist"
             audit.audit.log_configuration_error(
                 "no_valid_tools", error_msg, {"requested_tools": sorted(enabled_tools)}
