@@ -3,8 +3,8 @@
 The model other large MCP servers settled on (GitHub ``X-MCP-Toolsets`` /
 ``/readonly``, Datadog ``?toolsets=``, Supabase ``?features=``): every tool
 belongs to one toolset and a client asks for the toolsets it needs. Every
-client pays for the whole ``tools/list`` on every conversation; the full
-surface is ~125k tokens, ``?toolsets=core`` ~10k. Opt-in: with no selection a
+client pays for the whole ``tools/list`` on every conversation; ``?toolsets=core``
+keeps that catalog focused on incident workflows. Opt-in: with no selection a
 client still gets every tool, so existing configurations are unchanged.
 
 Selection, per request (hosted) or per process (self-hosted):
@@ -34,7 +34,7 @@ CORE = "core"
 
 # name -> one-line description, shown in server instructions and errors.
 TOOLSETS: dict[str, str] = {
-    CORE: "Everyday incident response: find and update incidents, alerts, who is on call.",
+    CORE: "Incident response, alert history, service ownership, and on-call coverage.",
     "incidents": "Incidents in depth: action items, events, roles, retrospectives, form fields.",
     "alerts": "Alerts, alert sources, routes and routing rules, urgencies, heartbeats.",
     "oncall": "Schedules, rotations, shifts, overrides, escalation policies and paths.",
@@ -72,6 +72,7 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "find_related_incidents",
         "suggest_solutions",
         "get_incident_retrospective",
+        "get_incident_meeting_transcripts",
         "list_incident_action_items",
         "create_incident_action_item",
         "list_incident_events",
@@ -79,6 +80,8 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "get_alert_by_short_id",
         "list_alerts",
         "get_alert",
+        "list_alert_events",
+        "list_alert_groups",
         "list_incident_alerts",
         # On-call
         "get_oncall_handoff_summary",
@@ -86,13 +89,19 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "list_shifts",
         "check_responder_availability",
         "list_schedules",
+        "get_schedule_shifts",
+        "get_shift_incidents",
+        "get_oncall_shift_metrics",
         "list_escalation_policies",
+        "get_escalation_policy",
         # Lookups
         "get_current_user",
         "list_users",
         "get_user",
         "list_teams",
+        "get_team",
         "list_services",
+        "list_status_pages",
         "list_severities",
         "get_server_version",
         # Discovery: which API endpoints exist, so a model can name the

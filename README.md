@@ -23,11 +23,11 @@ Use the hosted MCP server. No local installation required.
 
 ### Toolsets
 
-Every client loads the whole tool list into the model's context: the full surface is about 125k tokens. Tools are grouped into **toolsets** (the same model as GitHub's and Datadog's MCP servers) so a client can load only what it needs. **Recommended: `?toolsets=core`**, about 29 tools and 10k tokens. Without a selection you still get every tool, so existing configurations keep working.
+Every client loads the whole tool list into the model's context: the full surface is about 125k tokens. Tools are grouped into **toolsets** (the same model as GitHub's and Datadog's MCP servers) so a client can load only what it needs. **Recommended: `?toolsets=core`**, about 38 tools covering incident workflows, alert history, service ownership, and on-call coverage. Without a selection you still get every tool, so existing configurations keep working.
 
 | Toolset | What it covers |
 |---|---|
-| `core` (recommended) | Everyday incident response: find and update incidents, alerts, who is on call (~29 tools) |
+| `core` (recommended) | Incident response, alert history, service ownership, and on-call coverage (~38 tools) |
 | `incidents` | Action items, events, roles, retrospectives, form field selections, meeting recordings |
 | `alerts` | Alerts, alert sources, routes and routing rules, urgencies, heartbeats, live call routers |
 | `oncall` | Schedules, rotations, shifts, overrides, escalation policies and paths |
@@ -44,6 +44,7 @@ Every client loads the whole tool list into the model's context: the full surfac
 | `audit` | Audit log |
 
 - **Pick toolsets:** `https://mcp.rootly.com/mcp?toolsets=core,workflows`, or send `X-MCP-Toolsets: core,workflows`
+- **Incident workflows and AI SRE:** `?toolsets=core,investigations` adds investigation reads and authorized start/cancel operations without loading the administration catalog. OAuth scopes and Rootly permissions still determine which operations can run.
 - **Actions that run later are separate:** `workflow_tasks` and `automations` set up things Rootly does on its own afterwards (workflow steps, AI automations). Leave them out to let an assistant read and use workflows and AI investigations without being able to set those up
 - **Everything:** `?toolsets=all` (about 280 tools)
 - **Read-only:** add `readonly=true` (or `X-MCP-Readonly: true`), e.g. `?toolsets=all&readonly=true`. Any value other than `false`/`0`/`no`/`off` turns it on. Write tools are hidden and refused, and the server also refuses any non-GET request to the Rootly API on that connection. It is a per-connection guard; for a hard guarantee, connect with a Rootly API key whose role cannot write
@@ -615,7 +616,7 @@ You can run multiple MCP instances with different tool subsets:
 The default tool surface depends on deployment profile:
 
 - Hosted default: about **280 tools**
-- Hosted `?toolsets=core` (recommended): about **29 tools**
+- Hosted `?toolsets=core` (recommended): about **38 tools**
 - Hosted slim profile (deprecated): about **85 tools**
 - Self-hosted default: about **280 tools**
 

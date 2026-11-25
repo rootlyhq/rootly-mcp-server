@@ -94,4 +94,4 @@ def test_core_toolset_is_small(measured):
     # ?toolsets=core is the small surface we recommend; keep it small.
     chars = sum(s.chars for s in measured["hosted_core"])
     assert chars < 60_000, f"core toolset is {chars:,} chars"
-    assert len(measured["hosted_core"]) <= 35
+    assert len(measured["hosted_core"]) <= 40

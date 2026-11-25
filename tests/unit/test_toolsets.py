@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
@@ -116,6 +118,151 @@ async def test_requested_toolsets_add_their_tools(token):
     assert workflows <= names
     assert set(CORE_TOOLS) <= names
     assert "create_alert_route" not in names
+
+
+@pytest.mark.parametrize(
+    "workflow,required_reads",
+    [
+        (
+            "alert-triage",
+            {
+                "get_alert_by_short_id",
+                "get_alert",
+                "list_alert_events",
+                "list_alert_groups",
+                "list_alerts",
+                "get_incident",
+                "list_incidents",
+                "list_services",
+            },
+        ),
+        (
+            "deploy-check",
+            {
+                "get_incident",
+                "list_incidents",
+                "search_incidents",
+                "list_services",
+                "get_oncall_handoff_summary",
+                "get_oncall_shift_metrics",
+            },
+        ),
+        (
+            "incident-communications",
+            {"get_incident", "list_incident_action_items", "list_status_pages"},
+        ),
+        (
+            "incident-response",
+            {
+                "get_incident",
+                "list_incidents",
+                "search_incidents",
+                "find_related_incidents",
+                "suggest_solutions",
+                "get_incident_meeting_transcripts",
+                "list_services",
+                "list_teams",
+                "get_oncall_handoff_summary",
+                "get_oncall_shift_metrics",
+                "check_responder_availability",
+            },
+        ),
+        (
+            "on-call",
+            {
+                "get_current_user",
+                "list_schedules",
+                "get_oncall_schedule_summary",
+                "get_oncall_handoff_summary",
+                "get_schedule_shifts",
+                "list_shifts",
+                "get_shift_incidents",
+                "list_alerts",
+                "list_alert_events",
+                "get_oncall_shift_metrics",
+                "check_responder_availability",
+                "list_escalation_policies",
+                "get_escalation_policy",
+                "list_incident_action_items",
+            },
+        ),
+        (
+            "retrospective",
+            {
+                "get_incident",
+                "get_incident_retrospective",
+                "get_incident_meeting_transcripts",
+                "list_incident_action_items",
+                "find_related_incidents",
+            },
+        ),
+        (
+            "service-health",
+            {"list_services", "get_team", "list_incidents", "get_oncall_handoff_summary"},
+        ),
+    ],
+)
+async def test_core_covers_incident_workflow_reads(token, workflow, required_reads):
+    """Workflow contracts must work without loading entire administration toolsets.
+
+    Communications-template discovery is optional and isn't advertised by this
+    server; that workflow already accepts a user-supplied approved template.
+    """
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    reset = toolsets.requested_selection.set(ToolSelection(frozenset({CORE})))
+    try:
+        async with Client(server) as client:
+            tools = {tool.name: tool for tool in await client.list_tools()}
+    finally:
+        toolsets.requested_selection.reset(reset)
+
+    assert required_reads <= tools.keys(), workflow
+    for name in required_reads:
+        annotations = tools[name].annotations
+        assert annotations is not None, (workflow, name)
+        assert annotations.read_only_hint is True, (workflow, name)
+
+
+async def test_core_and_investigations_keep_discovery_compact_and_writes_bounded(token):
+    server = create_rootly_mcp_server(hosted=True, enable_write_tools=True)
+    reset = toolsets.requested_selection.set(ToolSelection(frozenset({CORE, "investigations"})))
+    try:
+        async with Client(server) as client:
+            tools = await client.list_tools()
+    finally:
+        toolsets.requested_selection.reset(reset)
+
+    # Regression budgets for the shared compact catalog, not vendor limits.
+    assert len(tools) <= 45
+    assert len(json.dumps([tool.model_dump(mode="json") for tool in tools]).encode()) <= 75_000
+    assert {
+        tool.name
+        for tool in tools
+        if tool.annotations is None or tool.annotations.read_only_hint is not True
+    } == {
+        "create_incident",
+        "update_incident",
+        "create_incident_action_item",
+        "start_investigation",
+        "cancel_investigation",
+    }
+    names = {tool.name for tool in tools}
+    assert {"list_investigations", "get_investigation"} <= names
+    assert (
+        not {
+            "create_ai_skill",
+            "list_ai_skills",
+            "create_ai_automation",
+            "list_ai_automations",
+            "list_observability_logs",
+            "get_investigation_progress",
+            "create_alert_routing_rule",
+            "create_on_call_role",
+            "create_sub_status",
+            "create_status_page_template",
+        }
+        & names
+    )
 
 
 # AI automations live in `automations`, so a connection can leave them out
