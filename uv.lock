@@ -131,15 +131,6 @@ wheels = [
 ]
 
 [[package]]
-name = "backoff"
-version = "2.2.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/47/d7/5bbeb12c44d7c4f2fb5b56abce497eb5ed9f34d85701de869acedd602619/backoff-2.2.1.tar.gz", hash = "sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba", size = 17001, upload-time = "2022-10-05T19:19:32.061Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/73/b6e24bd22e6720ca8ee9a85a0c4a2971af8497d8f3193fa05390cbd46e09/backoff-2.2.1-py3-none-any.whl", hash = "sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8", size = 15148, upload-time = "2022-10-05T19:19:30.546Z" },
-]
-
-[[package]]
 name = "bandit"
 version = "1.9.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1679,17 +1670,16 @@ wheels = [
 
 [[package]]
 name = "posthog"
-version = "7.91.4"
+version = "8.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "backoff" },
     { name = "distro" },
     { name = "requests" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/16/d168a88102920457224212813b34bf32bd397949d98ff9c2cf16ed515caa/posthog-7.91.4.tar.gz", hash = "sha256:ec83a1b27cfd82d76ead4d38fda05baddfca81c42812c5bf373b9bd72ae66d2c", size = 1004858, upload-time = "2026-11-17T16:39:29.13Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ab/61/ba338586300466745ff07ab9a537c7264f267144e93be8f173790fee79a3/posthog-8.0.2.tar.gz", hash = "sha256:cd75439e82bd18a8b7d635a21d80625fbe8699eb95e4b51d272c3189648d1145", size = 1039689, upload-time = "2026-11-18T20:12:16.716Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/74/7f76318e0321ec537aed4036aabb9cfe5ea53a2a0fab0d38c678fbb4907a/posthog-7.91.4-py3-none-any.whl", hash = "sha256:249e0abfa4f922ab21a5e5af57b642e3833ff3a88a32ab8d9d5ee25a57dc6b4b", size = 1155374, upload-time = "2026-11-17T16:39:27.178Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/70/ca7efbc2f18cea23c0bde5e4de17ee43a42ff6527f1712016b568070abb8/posthog-8.0.2-py3-none-any.whl", hash = "sha256:31cc8bb39f986178db92f2f238524e78cebcd1a90035fecd3aba49fe1fff3e6e", size = 1191998, upload-time = "2026-11-18T20:12:14.31Z" },
 ]
 
 [[package]]
