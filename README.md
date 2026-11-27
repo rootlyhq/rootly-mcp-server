@@ -320,7 +320,10 @@ project already has an OpenCode config, add `rootly` to its `mcp.servers` object
     "servers": {
       "rootly": {
         "type": "remote",
-        "url": "https://mcp.rootly.com/mcp?toolsets=all&readonly=true"
+        "url": "https://mcp.rootly.com/mcp?toolsets=all&readonly=true",
+        "oauth": {
+          "scope": "openid profile email ir.incidents:read ir.services:read ir.groups:read ir.retrospectives:read ir.status_pages:read oc.alerts:read oc.alert_groups:read oc.schedules:read oc.escalation_policies:read"
+        }
       }
     }
   }
@@ -338,6 +341,9 @@ The command installs the seven workflows and their reference files under
 `rootly` to sign in with your Rootly account. Use `/skills` to find a workflow.
 For example, select `incident-response` and ask OpenCode to summarize a recent
 incident and cite the Rootly records it used.
+
+The OAuth scope limits access to the listed Rootly resources. Add the relevant
+read scope if a workflow needs another type of record.
 
 See the [OpenCode MCP guide](https://opencode.ai/docs/mcp-servers/) for sign-in
 and troubleshooting.
