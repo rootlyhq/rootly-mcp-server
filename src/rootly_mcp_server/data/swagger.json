@@ -13,6 +13,461 @@
     }
   },
   "paths": {
+    "/v1/ai/sre/instructions": {
+      "get": {
+        "summary": "Lists team-wide AI instruction slots",
+        "x-beta": true,
+        "tags": [
+          "AIInstructions"
+        ],
+        "operationId": "listAIInstructions",
+        "description": "**Beta:** This endpoint is in beta. Requires an API key. Team API keys are not supported.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SRE disabled hides its slot",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ai_instruction_list"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "instructions disabled"
+          },
+          "404": {
+            "description": "team keys rejected"
+          }
+        }
+      }
+    },
+    "/v1/ai/sre/instructions/{surface}": {
+      "parameters": [
+        {
+          "name": "surface",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "global",
+              "sre"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "summary": "Shows a team-wide AI instruction slot",
+        "x-beta": true,
+        "tags": [
+          "AIInstructions"
+        ],
+        "operationId": "getAIInstruction",
+        "description": "**Beta:** This endpoint is in beta. Requires an API key. Team API keys are not supported.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "slot shown",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ai_instruction"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unconfigured slot"
+          }
+        }
+      },
+      "put": {
+        "summary": "Writes a team-wide AI instruction slot",
+        "x-beta": true,
+        "tags": [
+          "AIInstructions"
+        ],
+        "operationId": "updateAIInstruction",
+        "description": "**Beta:** This endpoint is in beta. Requires an API key. Upserts the surface slot; a blank body clears it. Team API keys are not supported.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "on-call admin can write sre",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ai_instruction"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "blank body clears the slot"
+          },
+          "400": {
+            "description": "unsupported relationships"
+          },
+          "403": {
+            "description": "SRE disabled"
+          },
+          "422": {
+            "description": "body too long"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ai_instruction_update"
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Partially writes a team-wide AI instruction slot",
+        "x-beta": true,
+        "tags": [
+          "AIInstructions"
+        ],
+        "operationId": "patchAIInstruction",
+        "description": "**Beta:** This endpoint is in beta. Requires an API key. Upserts the surface slot; a blank body clears it. Team API keys are not supported.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "slot partially updated",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ai_instruction"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "slot cleared"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ai_instruction_update"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Clears a team-wide AI instruction slot",
+        "x-beta": true,
+        "tags": [
+          "AIInstructions"
+        ],
+        "operationId": "deleteAIInstruction",
+        "description": "**Beta:** This endpoint is in beta. Requires an API key. Team API keys are not supported.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "slot cleared"
+          },
+          "403": {
+            "description": "on-call admin cannot delete global"
+          }
+        }
+      }
+    },
+    "/v1/ai/sre/investigation_rules": {
+      "get": {
+        "summary": "Lists investigation rules",
+        "x-beta": true,
+        "tags": [
+          "InvestigationRules"
+        ],
+        "operationId": "listInvestigationRules",
+        "description": "**Beta:** This endpoint is in beta.\n\nRequires an API key. Team API keys are not supported.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "filter[name]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter[status]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter[resource_type]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page[number]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page[size]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "paginated rules",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation_rule_list"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "AI SRE disabled"
+          },
+          "404": {
+            "description": "team-kind keys are unsupported"
+          }
+        }
+      },
+      "post": {
+        "summary": "Creates an investigation rule",
+        "x-beta": true,
+        "tags": [
+          "InvestigationRules"
+        ],
+        "operationId": "createInvestigationRule",
+        "description": "**Beta:** This endpoint is in beta.\n\nRequires an API key. Team API keys are not supported.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "alert condition round trip v7",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation_rule"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "incomplete condition"
+          },
+          "400": {
+            "description": "data id is unsupported on create"
+          },
+          "403": {
+            "description": "non-admin cannot write"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/investigation_rule_create"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/ai/sre/investigation_rules/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "required": true
+        }
+      ],
+      "get": {
+        "summary": "Shows an investigation rule",
+        "x-beta": true,
+        "tags": [
+          "InvestigationRules"
+        ],
+        "operationId": "getInvestigationRule",
+        "description": "**Beta:** This endpoint is in beta.\n\nRequires an API key. Team API keys are not supported.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "non-admin can read",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation_rule"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "other team's rule"
+          }
+        }
+      },
+      "put": {
+        "summary": "Updates an investigation rule",
+        "x-beta": true,
+        "tags": [
+          "InvestigationRules"
+        ],
+        "operationId": "updateInvestigationRule",
+        "description": "**Beta:** This endpoint is in beta.\n\nRequires an API key. Team API keys are not supported. Omitting conditions preserves them unless resource_type changes, in which case conditions are required. [] clears them.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "conditions explicitly cleared",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation_rule"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "unsupported alert condition field"
+          },
+          "400": {
+            "description": "unsupported relationships"
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/investigation_rule_update"
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Partially updates an investigation rule",
+        "x-beta": true,
+        "tags": [
+          "InvestigationRules"
+        ],
+        "operationId": "patchInvestigationRule",
+        "description": "**Beta:** This endpoint is in beta. Requires an API key. Team API keys are not supported. Omitting conditions preserves them unless resource_type changes, in which case conditions are required. [] clears them.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "rule partially updated",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation_rule"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/investigation_rule_update"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Deletes an investigation rule",
+        "x-beta": true,
+        "tags": [
+          "InvestigationRules"
+        ],
+        "operationId": "deleteInvestigationRule",
+        "description": "**Beta:** This endpoint is in beta.\n\nRequires an API key. Team API keys are not supported.",
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "rule deleted",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/investigation_rule"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/ai/automations/{ai_automation_id}/runs": {
       "parameters": [
         {
@@ -1868,6 +2323,17 @@
           "AISkills"
         ],
         "operationId": "GetAISkill",
+        "parameters": [
+          {
+            "name": "load",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Set to true when an agent loads the skill to follow it. Rootly MCP server requests then count as a skill load."
+          }
+        ],
         "responses": {
           "200": {
             "description": "OAuth read scope permits access",
@@ -1995,7 +2461,7 @@
       },
       "delete": {
         "summary": "Deletes an AI skill",
-        "description": "Requires OAuth scope `ai.skills:write`.",
+        "description": "Requires OAuth scope `ai.skills:write`. Soft-deletes the skill and removes its attachments while retaining its history. GitHub-managed skills are recreated on the next sync if their file remains in the repository.",
         "security": [
           {
             "bearer_auth": []
@@ -2007,7 +2473,7 @@
         "operationId": "DeleteAISkill",
         "responses": {
           "200": {
-            "description": "write scope permits deleting AI skills",
+            "description": "skill can be deleted by slug",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
@@ -2017,7 +2483,17 @@
             }
           },
           "404": {
-            "description": "read scope does not permit deleting AI skills",
+            "description": "readers cannot delete skills",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "deletion failed",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
@@ -2440,7 +2916,8 @@
                 "note",
                 "noise",
                 "maintenance",
-                "deferral"
+                "deferral",
+                "slack_reply"
               ]
             },
             "required": false
@@ -6383,7 +6860,7 @@
         "tags": [
           "API Keys"
         ],
-        "description": "Rotate an API key's token. Issues a new secret token and returns it — **the new token is only shown once**, so store it securely.\n\n**Self-only:** You can only rotate the API key that was used to authenticate this request. Attempting to rotate a different key returns `404 Not Found` when the authenticating key is not authorized to manage it, or `403 Forbidden` when it is.\n\n**Grace period:** When enabled for your organization, the previous token remains valid after rotation, giving you time to deploy the new token without downtime. Pass `grace_period_minutes` (integer, 0–1440, default 30) to control how long the old token stays valid. Set to 0 to immediately invalidate the old token. The `grace_period_ends_at` field in the response confirms the exact time the old token will stop working.\n\n**Expiration:** Optionally provide a new `expires_at` date (ISO 8601, up to 5 years). Defaults to 90 days from now if omitted. Dates in the past are rejected.\n\n**Typical rotation workflow:**\n1. Call this endpoint to get a new token (optionally with a custom `grace_period_minutes`).\n2. Deploy the new token to your systems.\n3. The old token continues working for `grace_period_minutes` (if grace period is enabled).\n4. After the grace period, the old token is automatically invalidated.\n",
+        "description": "Rotate an API key's token. Issues a new secret token and returns it — **the new token is only shown once**, so store it securely.\n\n**Self-only:** You can only rotate the API key that was used to authenticate this request. Attempting to rotate a different key returns `404 Not Found` when the authenticating key is not authorized to manage it, or `403 Forbidden` when it is.\n\n**Grace period:** The previous token remains valid after rotation, giving you time to deploy the new token without downtime. Pass `grace_period_minutes` (integer, 0–1440, default 30) to control how long the old token stays valid. Set to 0 to immediately invalidate the old token. The `grace_period_ends_at` field in the response confirms the exact time the old token will stop working.\n\n**Expiration:** Optionally provide a new `expires_at` date (ISO 8601, up to 5 years). Defaults to 90 days from now if omitted. Dates in the past are rejected.\n\n**Typical rotation workflow:**\n1. Call this endpoint to get a new token (optionally with a custom `grace_period_minutes`).\n2. Deploy the new token to your systems.\n3. The old token continues working for `grace_period_minutes`.\n4. After the grace period, the old token is automatically invalidated.\n",
         "operationId": "rotateApiKey",
         "parameters": [],
         "responses": {
@@ -11860,7 +12337,7 @@
         "tags": [
           "DashboardPanels"
         ],
-        "description": "Creates a new dashboard panel from provided data. OAuth tokens need the `ir.dashboards:write` scope. Panel data only includes records the token's other scopes allow (e.g. `ir.incidents:read`, `oc.alerts:read`).",
+        "description": "Creates a new dashboard panel from provided data. OAuth tokens need the `ir.dashboards:write` scope. Panel data only includes records the token's other scopes allow (e.g. `ir.incidents:read`, `oc.alerts:read`). When the dashboard panel collection write check is enabled for the team, members limited to alert data, or to incident data, receive a 404 when the panel targets a collection outside that limit.",
         "operationId": "createDashboardPanel",
         "parameters": [],
         "responses": {
@@ -11876,6 +12353,16 @@
           },
           "422": {
             "description": "rejects a group_by on a field that cannot be grouped",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not found or unauthorized",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
@@ -11979,7 +12466,7 @@
         "tags": [
           "DashboardPanels"
         ],
-        "description": "Duplicates a dashboard panel. OAuth tokens need the `ir.dashboards:write` scope. Panel data only includes records the token's other scopes allow (e.g. `ir.incidents:read`, `oc.alerts:read`).",
+        "description": "Duplicates a dashboard panel. OAuth tokens need the `ir.dashboards:write` scope. Panel data only includes records the token's other scopes allow (e.g. `ir.incidents:read`, `oc.alerts:read`). When the dashboard panel collection write check is enabled for the team, members limited to alert data, or to incident data, receive a 404 when the panel targets a collection outside that limit.",
         "operationId": "duplicateDashboardPanel",
         "responses": {
           "201": {
@@ -11988,6 +12475,16 @@
               "application/vnd.api+json": {
                 "schema": {
                   "$ref": "#/components/schemas/dashboard_panel_response"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not found or unauthorized",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
                 }
               }
             }
@@ -12080,7 +12577,7 @@
         "tags": [
           "DashboardPanels"
         ],
-        "description": "Update a specific dashboard panel by id. OAuth tokens need the `ir.dashboards:write` scope. Panel data only includes records the token's other scopes allow (e.g. `ir.incidents:read`, `oc.alerts:read`).",
+        "description": "Update a specific dashboard panel by id. OAuth tokens need the `ir.dashboards:write` scope. Panel data only includes records the token's other scopes allow (e.g. `ir.incidents:read`, `oc.alerts:read`). When the dashboard panel collection write check is enabled for the team, members limited to alert data, or to incident data, receive a 404 when the panel targets a collection outside that limit.",
         "operationId": "updateDashboardPanel",
         "parameters": [],
         "responses": {
@@ -12090,6 +12587,16 @@
               "application/vnd.api+json": {
                 "schema": {
                   "$ref": "#/components/schemas/dashboard_panel_response"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not found or unauthorized",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
                 }
               }
             }
@@ -12277,7 +12784,7 @@
         "tags": [
           "Dashboards"
         ],
-        "description": "Duplicates a dashboard. OAuth tokens need the `ir.dashboards:write` scope.",
+        "description": "Duplicates a dashboard. OAuth tokens need the `ir.dashboards:write` scope. When the dashboard panel collection write check is enabled for the team, panels that target a collection outside the caller's alert-only or incident-only access are left out of the copy.",
         "operationId": "duplicateDashboard",
         "responses": {
           "201": {
@@ -28368,7 +28875,7 @@
     "/v1/ai/investigations": {
       "get": {
         "summary": "Lists AI SRE investigations",
-        "description": "Requires OAuth scope `ai.investigations:read`. OAuth tokens also need `oc.alerts:read` for alert investigations and `ir.incidents:read` for incident investigations; API keys use the key's role. Investigations on alerts and incidents the caller can read, newest first.",
+        "description": "**Beta:** This endpoint is in beta.\n\nRequires OAuth scope `ai.investigations:read`. OAuth tokens also need `oc.alerts:read` for alert investigations and `ir.incidents:read` for incident investigations; API keys use the key's role. Investigations on alerts and incidents the caller can read, newest first.",
         "security": [
           {
             "bearer_auth": []
@@ -28410,7 +28917,7 @@
             "name": "filter[outcome]",
             "in": "query",
             "required": false,
-            "description": "Comma-separated outcomes.",
+            "description": "Comma-separated outcome values, as returned in `outcome`.",
             "schema": {
               "type": "string"
             }
@@ -28467,7 +28974,7 @@
       },
       "post": {
         "summary": "Starts an AI SRE investigation",
-        "description": "Requires OAuth scope `ai.investigations:write`. OAuth tokens also need `oc.alerts:write` (alerts) or `ir.incidents:write` (incidents) and update access to the resource; API keys use the key's role. Starts an investigation on an alert or incident you can update, or returns the one already running.",
+        "description": "**Beta:** This endpoint is in beta.\n\nRequires OAuth scope `ai.investigations:write`. OAuth tokens also need `oc.alerts:write` (alerts) or `ir.incidents:write` (incidents) and update access to the resource; API keys use the key's role. Starts an investigation on an alert or incident you can update, or returns the one already running.",
         "security": [
           {
             "bearer_auth": []
@@ -28555,7 +29062,7 @@
       ],
       "get": {
         "summary": "Retrieves an AI SRE investigation",
-        "description": "Requires OAuth scope `ai.investigations:read`. OAuth tokens also need `oc.alerts:read` for alert investigations and `ir.incidents:read` for incident investigations; API keys use the key's role. The verdict, hypotheses, evidence, causal chain and open questions.",
+        "description": "**Beta:** This endpoint is in beta.\n\nRequires OAuth scope `ai.investigations:read`. OAuth tokens also need `oc.alerts:read` for alert investigations and `ir.incidents:read` for incident investigations; API keys use the key's role. The investigation's current status and final outcome, summary and root cause.",
         "security": [
           {
             "bearer_auth": []
@@ -28567,7 +29074,7 @@
         "operationId": "GetInvestigation",
         "responses": {
           "200": {
-            "description": "returns the report's open questions",
+            "description": "returns the verdict with OAuth read scopes",
             "content": {
               "application/vnd.api+json": {
                 "schema": {
@@ -28599,73 +29106,6 @@
         }
       }
     },
-    "/v1/ai/investigations/{id}/progress": {
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "schema": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "required": true
-        },
-        {
-          "name": "after",
-          "in": "query",
-          "required": false,
-          "description": "next_cursor from the previous call.",
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "get": {
-        "summary": "Retrieves AI SRE investigation progress",
-        "description": "Requires OAuth scope `ai.investigations:read`. OAuth tokens also need `oc.alerts:read` for alert investigations and `ir.incidents:read` for incident investigations; API keys use the key's role. Returns immediately with steps and tool calls recorded after the cursor. Poll with after=next_cursor until done is true.",
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ],
-        "tags": [
-          "Investigations"
-        ],
-        "operationId": "GetInvestigationProgress",
-        "responses": {
-          "200": {
-            "description": "returns progress with OAuth read scopes",
-            "content": {
-              "application/vnd.api+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/investigation_progress"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "requires the AI investigations read scope",
-            "content": {
-              "application/vnd.api+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/errors_list"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "rejects a malformed cursor",
-            "content": {
-              "application/vnd.api+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/errors_list"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/ai/investigations/{id}/cancel": {
       "parameters": [
         {
@@ -28680,7 +29120,7 @@
       ],
       "post": {
         "summary": "Cancels an AI SRE investigation",
-        "description": "Requires OAuth scope `ai.investigations:write`. OAuth tokens also need `oc.alerts:write` (alerts) or `ir.incidents:write` (incidents) and update access to the resource; API keys use the key's role.",
+        "description": "**Beta:** This endpoint is in beta.\n\nRequires OAuth scope `ai.investigations:write`. OAuth tokens also need `oc.alerts:write` (alerts) or `ir.incidents:write` (incidents) and update access to the resource; API keys use the key's role.",
         "security": [
           {
             "bearer_auth": []
@@ -29220,6 +29660,16 @@
               "application/vnd.api+json": {
                 "schema": {
                   "$ref": "#/components/schemas/live_call_router_response"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "live_call_router with invalid escalation_timing",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
                 }
               }
             }
@@ -37739,6 +38189,16 @@
               }
             }
           },
+          "422": {
+            "description": "invalid request",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/errors_list"
+                }
+              }
+            }
+          },
           "404": {
             "description": "resource not found",
             "content": {
@@ -38069,7 +38529,7 @@
         "tags": [
           "SLAs"
         ],
-        "description": "Creates a new SLA from provided data",
+        "description": "Creates a new SLA from provided data. OAuth tokens need the `ir.slas:write` scope.",
         "operationId": "createSLA",
         "parameters": [],
         "responses": {
@@ -38125,7 +38585,7 @@
         "tags": [
           "SLAs"
         ],
-        "description": "List SLAs",
+        "description": "List SLAs. OAuth tokens need the `ir.slas:read` scope.",
         "operationId": "listSLAs",
         "parameters": [
           {
@@ -38308,7 +38768,7 @@
         "tags": [
           "SLAs"
         ],
-        "description": "Retrieves a specific SLA by id",
+        "description": "Retrieves a specific SLA by id. OAuth tokens need the `ir.slas:read` scope.",
         "operationId": "getSLA",
         "responses": {
           "200": {
@@ -38343,7 +38803,7 @@
         "tags": [
           "SLAs"
         ],
-        "description": "Update a specific SLA by id",
+        "description": "Update a specific SLA by id. OAuth tokens need the `ir.slas:write` scope.",
         "operationId": "updateSLA",
         "parameters": [],
         "responses": {
@@ -38389,7 +38849,7 @@
         "tags": [
           "SLAs"
         ],
-        "description": "Delete a specific SLA by id",
+        "description": "Delete a specific SLA by id. OAuth tokens need the `ir.slas:write` scope.",
         "operationId": "deleteSLA",
         "responses": {
           "200": {
@@ -45780,7 +46240,9 @@
                               "description",
                               "urgency",
                               "source",
-                              "group_status"
+                              "group_status",
+                              "services",
+                              "groups"
                             ]
                           }
                         }
@@ -46630,6 +47092,11 @@
                     ],
                     "description": "Defaults to 1_day. Stored value is returned even when limits are disabled and only applies when limits_enabled is true."
                   },
+                  "owner_user_id": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "User who is told when a run fails or the automation pauses. Must be a member who can manage automations. Defaults to the creator. null is ignored on write."
+                  },
                   "id": {
                     "type": "string",
                     "readOnly": true,
@@ -46637,12 +47104,6 @@
                   },
                   "destination_slack_channel_name": {
                     "type": "string",
-                    "nullable": true,
-                    "readOnly": true,
-                    "description": "Ignored on write."
-                  },
-                  "owner_user_id": {
-                    "type": "integer",
                     "nullable": true,
                     "readOnly": true,
                     "description": "Ignored on write."
@@ -47119,6 +47580,11 @@
                     ],
                     "description": "The stored value is returned even when limits are disabled and only applies when limits_enabled is true."
                   },
+                  "owner_user_id": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "User who is told when a run fails or the automation pauses. Must be a member who can manage automations. Defaults to the creator. null is ignored on write."
+                  },
                   "id": {
                     "type": "string",
                     "readOnly": true,
@@ -47126,12 +47592,6 @@
                   },
                   "destination_slack_channel_name": {
                     "type": "string",
-                    "nullable": true,
-                    "readOnly": true,
-                    "description": "Ignored on write."
-                  },
-                  "owner_user_id": {
-                    "type": "integer",
                     "nullable": true,
                     "readOnly": true,
                     "description": "Ignored on write."
@@ -47587,19 +48047,23 @@
                     "enum": [
                       "root_cause_identified",
                       "best_effort",
+                      "lead_found",
                       "inconclusive",
                       "blocked",
                       "could_not_investigate",
                       null
-                    ]
-                  },
-                  "confidence": {
-                    "type": "integer",
-                    "nullable": true
+                    ],
+                    "description": "How the investigation ended, or null while it runs. `root_cause_identified`: the evidence confirmed a root cause. `best_effort`: a probable cause, not confirmed. `lead_found`: a possible cause worth checking, with low confidence. `inconclusive`: no cause was confirmed. `blocked`: missing access or data stopped the investigation. `could_not_investigate`: the investigation ended before it gathered usable evidence."
                   },
                   "trigger_source": {
                     "type": "string",
-                    "nullable": true
+                    "nullable": true,
+                    "enum": [
+                      "auto",
+                      "manual",
+                      null
+                    ],
+                    "description": "auto when Rootly started the investigation on its own, manual when a person asked for it."
                   },
                   "alert_id": {
                     "type": "string",
@@ -47636,150 +48100,6 @@
                   "root_cause": {
                     "type": "string",
                     "nullable": true
-                  },
-                  "review_status": {
-                    "type": "object",
-                    "nullable": true,
-                    "description": "Set when the final review failed and the verdict rests on an earlier review round.",
-                    "properties": {
-                      "kind": {
-                        "type": "string",
-                        "enum": [
-                          "retained_prior_review"
-                        ]
-                      },
-                      "message": {
-                        "type": "string"
-                      },
-                      "final_review_failed": {
-                        "type": "string",
-                        "nullable": true
-                      },
-                      "retained_review_round": {
-                        "type": "integer",
-                        "nullable": true
-                      },
-                      "retained_decision": {
-                        "type": "string",
-                        "nullable": true,
-                        "enum": [
-                          "accept",
-                          "upgrade",
-                          null
-                        ]
-                      },
-                      "retained_kind": {
-                        "type": "string",
-                        "nullable": true
-                      }
-                    }
-                  },
-                  "hypotheses": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "format": "uuid"
-                        },
-                        "claim": {
-                          "type": "string"
-                        },
-                        "summary": {
-                          "type": "string",
-                          "nullable": true
-                        },
-                        "category": {
-                          "type": "string",
-                          "nullable": true
-                        },
-                        "confidence": {
-                          "type": "integer"
-                        },
-                        "verdict": {
-                          "type": "string",
-                          "enum": [
-                            "confirmed",
-                            "refuted",
-                            "investigating",
-                            "inconclusive"
-                          ]
-                        }
-                      }
-                    }
-                  },
-                  "evidence": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "title": {
-                          "type": "string"
-                        },
-                        "detail": {
-                          "type": "string"
-                        },
-                        "source": {
-                          "type": "string"
-                        },
-                        "url": {
-                          "type": "string"
-                        },
-                        "weight": {
-                          "type": "string",
-                          "enum": [
-                            "decisive",
-                            "supporting"
-                          ]
-                        }
-                      }
-                    }
-                  },
-                  "causal_chain": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "edge": {
-                          "type": "string"
-                        },
-                        "at": {
-                          "type": "string",
-                          "format": "date-time"
-                        },
-                        "evidence": {
-                          "type": "string"
-                        },
-                        "status": {
-                          "type": "string",
-                          "enum": [
-                            "confirmed",
-                            "likely",
-                            "refuted"
-                          ]
-                        }
-                      }
-                    }
-                  },
-                  "open_questions": {
-                    "type": "array",
-                    "description": "What the investigation could not verify.",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "key": {
-                          "type": "string"
-                        },
-                        "question": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "key",
-                        "question"
-                      ]
-                    }
                   }
                 },
                 "required": [
@@ -47837,19 +48157,23 @@
                       "enum": [
                         "root_cause_identified",
                         "best_effort",
+                        "lead_found",
                         "inconclusive",
                         "blocked",
                         "could_not_investigate",
                         null
-                      ]
-                    },
-                    "confidence": {
-                      "type": "integer",
-                      "nullable": true
+                      ],
+                      "description": "How the investigation ended, or null while it runs. `root_cause_identified`: the evidence confirmed a root cause. `best_effort`: a probable cause, not confirmed. `lead_found`: a possible cause worth checking, with low confidence. `inconclusive`: no cause was confirmed. `blocked`: missing access or data stopped the investigation. `could_not_investigate`: the investigation ended before it gathered usable evidence."
                     },
                     "trigger_source": {
                       "type": "string",
-                      "nullable": true
+                      "nullable": true,
+                      "enum": [
+                        "auto",
+                        "manual",
+                        null
+                      ],
+                      "description": "auto when Rootly started the investigation on its own, manual when a person asked for it."
                     },
                     "alert_id": {
                       "type": "string",
@@ -47878,158 +48202,6 @@
                     "created_at": {
                       "type": "string",
                       "format": "date-time"
-                    },
-                    "summary": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "root_cause": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "review_status": {
-                      "type": "object",
-                      "nullable": true,
-                      "description": "Set when the final review failed and the verdict rests on an earlier review round.",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "enum": [
-                            "retained_prior_review"
-                          ]
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "final_review_failed": {
-                          "type": "string",
-                          "nullable": true
-                        },
-                        "retained_review_round": {
-                          "type": "integer",
-                          "nullable": true
-                        },
-                        "retained_decision": {
-                          "type": "string",
-                          "nullable": true,
-                          "enum": [
-                            "accept",
-                            "upgrade",
-                            null
-                          ]
-                        },
-                        "retained_kind": {
-                          "type": "string",
-                          "nullable": true
-                        }
-                      }
-                    },
-                    "hypotheses": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string",
-                            "format": "uuid"
-                          },
-                          "claim": {
-                            "type": "string"
-                          },
-                          "summary": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "category": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "confidence": {
-                            "type": "integer"
-                          },
-                          "verdict": {
-                            "type": "string",
-                            "enum": [
-                              "confirmed",
-                              "refuted",
-                              "investigating",
-                              "inconclusive"
-                            ]
-                          }
-                        }
-                      }
-                    },
-                    "evidence": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "title": {
-                            "type": "string"
-                          },
-                          "detail": {
-                            "type": "string"
-                          },
-                          "source": {
-                            "type": "string"
-                          },
-                          "url": {
-                            "type": "string"
-                          },
-                          "weight": {
-                            "type": "string",
-                            "enum": [
-                              "decisive",
-                              "supporting"
-                            ]
-                          }
-                        }
-                      }
-                    },
-                    "causal_chain": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "edge": {
-                            "type": "string"
-                          },
-                          "at": {
-                            "type": "string",
-                            "format": "date-time"
-                          },
-                          "evidence": {
-                            "type": "string"
-                          },
-                          "status": {
-                            "type": "string",
-                            "enum": [
-                              "confirmed",
-                              "likely",
-                              "refuted"
-                            ]
-                          }
-                        }
-                      }
-                    },
-                    "open_questions": {
-                      "type": "array",
-                      "description": "What the investigation could not verify.",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "key": {
-                            "type": "string"
-                          },
-                          "question": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "key",
-                          "question"
-                        ]
-                      }
                     }
                   },
                   "required": [
@@ -48053,187 +48225,6 @@
         "required": [
           "data",
           "meta"
-        ]
-      },
-      "investigation_progress": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "format": "uuid"
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "investigation_progress"
-                ]
-              },
-              "attributes": {
-                "type": "object",
-                "properties": {
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "pending",
-                      "running",
-                      "completed",
-                      "failed",
-                      "cancelled"
-                    ]
-                  },
-                  "outcome": {
-                    "type": "string",
-                    "nullable": true
-                  },
-                  "done": {
-                    "type": "boolean",
-                    "description": "True once the investigation has finished; stop polling."
-                  },
-                  "phases": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "format": "uuid"
-                        },
-                        "phase": {
-                          "type": "string"
-                        },
-                        "label": {
-                          "type": "string"
-                        },
-                        "status": {
-                          "type": "string"
-                        },
-                        "started_at": {
-                          "type": "string",
-                          "format": "date-time",
-                          "nullable": true
-                        },
-                        "finished_at": {
-                          "type": "string",
-                          "format": "date-time",
-                          "nullable": true
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "phase",
-                        "label",
-                        "status"
-                      ]
-                    }
-                  },
-                  "open_questions": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "key": {
-                          "type": "string"
-                        },
-                        "question": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "key",
-                        "question"
-                      ]
-                    }
-                  },
-                  "entries": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "cursor": {
-                          "type": "string"
-                        },
-                        "at": {
-                          "type": "string",
-                          "format": "date-time"
-                        },
-                        "kind": {
-                          "type": "string",
-                          "enum": [
-                            "step",
-                            "tool"
-                          ]
-                        },
-                        "phase": {
-                          "type": "string"
-                        },
-                        "phase_label": {
-                          "type": "string"
-                        },
-                        "title": {
-                          "type": "string"
-                        },
-                        "tool": {
-                          "type": "string"
-                        },
-                        "sentence": {
-                          "type": "string"
-                        },
-                        "outcome": {
-                          "type": "string"
-                        },
-                        "error_type": {
-                          "type": "string"
-                        },
-                        "error_label": {
-                          "type": "string"
-                        },
-                        "rows_returned": {
-                          "type": "integer"
-                        },
-                        "duration_ms": {
-                          "type": "integer"
-                        }
-                      },
-                      "required": [
-                        "cursor",
-                        "at",
-                        "kind"
-                      ]
-                    }
-                  },
-                  "has_more": {
-                    "type": "boolean",
-                    "description": "More entries are ready; call again with after=next_cursor without waiting."
-                  },
-                  "next_cursor": {
-                    "type": "string",
-                    "nullable": true,
-                    "description": "Pass as `after` on the next call."
-                  }
-                },
-                "required": [
-                  "status",
-                  "done",
-                  "phases",
-                  "open_questions",
-                  "entries",
-                  "has_more",
-                  "next_cursor"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "type",
-              "attributes"
-            ]
-          }
-        },
-        "required": [
-          "data"
         ]
       },
       "new_investigation": {
@@ -48300,6 +48291,601 @@
           "data"
         ],
         "additionalProperties": false
+      },
+      "investigation_rule": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "investigation_rules"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "resource_type": {
+                    "type": "string",
+                    "enum": [
+                      "alert",
+                      "incident"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "manual",
+                      "auto_run",
+                      "paused"
+                    ]
+                  },
+                  "instruction": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "cooldown_seconds": {
+                    "type": "integer",
+                    "nullable": true,
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "position": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "description": "All conditions must match. Omitting conditions on update preserves them unless resource_type changes, in which case conditions are required. Send [] to clear them.",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "field": {
+                          "type": "string",
+                          "description": "Alert: summary, description, urgency, source, status, group_status, payload, or alert_field:<UUID>. Incident: severity, services, groups, incident_types."
+                        },
+                        "key": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "JSON path when field is payload."
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "is_one_of",
+                            "contains_one_of",
+                            "is_not_one_of"
+                          ],
+                          "description": "The condition's property_field_condition_type."
+                        },
+                        "values": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "field",
+                        "operator",
+                        "values"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "attributes"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "investigation_rule_list": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "investigation_rules"
+                  ]
+                },
+                "attributes": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "resource_type": {
+                      "type": "string",
+                      "enum": [
+                        "alert",
+                        "incident"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "manual",
+                        "auto_run",
+                        "paused"
+                      ]
+                    },
+                    "instruction": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "cooldown_seconds": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 0,
+                      "maximum": 2147483647
+                    },
+                    "position": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "conditions": {
+                      "type": "array",
+                      "description": "All conditions must match. Omitting conditions on update preserves them unless resource_type changes, in which case conditions are required. Send [] to clear them.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "description": "Alert: summary, description, urgency, source, status, group_status, payload, or alert_field:<UUID>. Incident: severity, services, groups, incident_types."
+                          },
+                          "key": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "JSON path when field is payload."
+                          },
+                          "operator": {
+                            "type": "string",
+                            "enum": [
+                              "is_one_of",
+                              "contains_one_of",
+                              "is_not_one_of"
+                            ],
+                            "description": "The condition's property_field_condition_type."
+                          },
+                          "values": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "operator",
+                          "values"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "attributes"
+              ]
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "investigation_rule_create": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "investigation_rules"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "resource_type": {
+                    "type": "string",
+                    "enum": [
+                      "alert",
+                      "incident"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "manual",
+                      "auto_run",
+                      "paused"
+                    ]
+                  },
+                  "instruction": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "cooldown_seconds": {
+                    "type": "integer",
+                    "nullable": true,
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "position": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "description": "All conditions must match. Omitting conditions on update preserves them unless resource_type changes, in which case conditions are required. Send [] to clear them.",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "field": {
+                          "type": "string",
+                          "description": "Alert: summary, description, urgency, source, status, group_status, payload, or alert_field:<UUID>. Incident: severity, services, groups, incident_types."
+                        },
+                        "key": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "JSON path when field is payload."
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "is_one_of",
+                            "contains_one_of",
+                            "is_not_one_of"
+                          ],
+                          "description": "The condition's property_field_condition_type."
+                        },
+                        "values": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "field",
+                        "operator",
+                        "values"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "resource_type"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "attributes"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "investigation_rule_update": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "investigation_rules"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Must match the path id."
+              },
+              "attributes": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "resource_type": {
+                    "type": "string",
+                    "enum": [
+                      "alert",
+                      "incident"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "manual",
+                      "auto_run",
+                      "paused"
+                    ]
+                  },
+                  "instruction": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "cooldown_seconds": {
+                    "type": "integer",
+                    "nullable": true,
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "position": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "description": "All conditions must match. Omitting conditions on update preserves them unless resource_type changes, in which case conditions are required. Send [] to clear them.",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "field": {
+                          "type": "string",
+                          "description": "Alert: summary, description, urgency, source, status, group_status, payload, or alert_field:<UUID>. Incident: severity, services, groups, incident_types."
+                        },
+                        "key": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "JSON path when field is payload."
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "is_one_of",
+                            "contains_one_of",
+                            "is_not_one_of"
+                          ],
+                          "description": "The condition's property_field_condition_type."
+                        },
+                        "values": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "field",
+                        "operator",
+                        "values"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "type",
+              "attributes"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ai_instruction": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "nullable": true
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ai_instructions"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "surface": {
+                    "type": "string",
+                    "enum": [
+                      "global",
+                      "sre"
+                    ]
+                  },
+                  "body": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 20000,
+                    "description": "For global, the effective instruction text: Rootly's best-practice default when source is best_practice."
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "best_practice",
+                      "custom"
+                    ],
+                    "readOnly": true,
+                    "description": "Read-only active source: best_practice or custom."
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  }
+                }
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "attributes"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ai_instruction_list": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "nullable": true
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "ai_instructions"
+                  ]
+                },
+                "attributes": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "surface": {
+                      "type": "string",
+                      "enum": [
+                        "global",
+                        "sre"
+                      ]
+                    },
+                    "body": {
+                      "type": "string",
+                      "nullable": true,
+                      "maxLength": 20000,
+                      "description": "For global, the effective instruction text: Rootly's best-practice default when source is best_practice."
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "best_practice",
+                        "custom"
+                      ],
+                      "readOnly": true,
+                      "description": "Read-only active source: best_practice or custom."
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    }
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "attributes"
+              ]
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ai_instruction_update": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ai_instructions"
+                ]
+              },
+              "attributes": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "body": {
+                    "type": "string",
+                    "maxLength": 20000
+                  }
+                },
+                "required": [
+                  "body"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "attributes"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ]
       },
       "attach_alert": {
         "type": "object",
@@ -48500,7 +49086,7 @@
                   },
                   "notification_targets": {
                     "type": "array",
-                    "description": "Only available for organizations with Rootly On-Call enabled. Page multiple destinations (any combination of Group, Service, EscalationPolicy, Functionality, or User) in a single request. `Functionality` targets require the `enable_paging_functionalities` feature; a request that includes one while it is disabled is rejected. Applies to alert creation only. When provided, this takes precedence over the singular `notification_target_type` / `notification_target_id` fields.",
+                    "description": "Only available for organizations with Rootly On-Call enabled. Page multiple destinations (any combination of Group, Service, EscalationPolicy, Functionality, or User) in a single request. Applies to alert creation only. When provided, this takes precedence over the singular `notification_target_type` / `notification_target_id` fields.",
                     "nullable": true,
                     "minItems": 1,
                     "items": {
@@ -49042,7 +49628,7 @@
           },
           "alert_field_values": {
             "type": "array",
-            "description": "Custom alert field values associated with the alert. Only present when the enable_alert_fields feature flag is enabled for the team.",
+            "description": "Custom alert field values associated with the alert.",
             "items": {
               "type": "object",
               "properties": {
@@ -49738,7 +50324,8 @@
               "note",
               "noise",
               "maintenance",
-              "deferral"
+              "deferral",
+              "slack_reply"
             ]
           },
           "action": {
@@ -49806,6 +50393,64 @@
             "nullable": true,
             "description": "Permalink to the Slack message Rootly posted for this event, when present."
           },
+          "slack_reply": {
+            "type": "object",
+            "nullable": true,
+            "description": "Present on slack_reply events: a reply posted in the Slack thread under the alert message.",
+            "properties": {
+              "slack_team_id": {
+                "type": "string",
+                "nullable": true,
+                "description": "Slack workspace ID the reply was posted in."
+              },
+              "channel_id": {
+                "type": "string"
+              },
+              "thread_ts": {
+                "type": "string"
+              },
+              "message_ts": {
+                "type": "string"
+              },
+              "author_slack_user_id": {
+                "type": "string",
+                "nullable": true
+              },
+              "author_name": {
+                "type": "string",
+                "nullable": true
+              },
+              "edited_at": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true
+              },
+              "broadcast": {
+                "type": "boolean",
+                "description": "Whether the reply was also sent to the channel."
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "mimetype": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "permalink": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
           "notification_type": {
             "type": "string",
             "enum": [
@@ -49825,7 +50470,7 @@
           },
           "details": {
             "type": "string",
-            "description": "Note message.",
+            "description": "Event body. For `slack_reply` events, the reply rendered as HTML once enrichment completes (raw Slack mrkdwn until then).",
             "nullable": true
           },
           "user": {
@@ -51492,7 +52137,7 @@
                             "type": "string",
                             "format": "uuid"
                           },
-                          "description": "Alert sources this rule applies to. Each must be one of the route's alert sources, and an empty list applies the rule to all of them. Can't be set on the fallback rule. Only available when rule-level source selection is enabled for the organization"
+                          "description": "Alert sources this rule applies to. Each must be one of the route's alert sources, and an empty list applies the rule to all of them. Can't be set on the fallback rule. Only available when dynamic alert routing is enabled for the organization"
                         },
                         "ai_sre_provider": {
                           "type": "string",
@@ -51554,7 +52199,7 @@
                                 "type": "array",
                                 "minItems": 1,
                                 "maxItems": 2,
-                                "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when matching on more than one property is enabled for the organization",
+                                "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when dynamic alert routing is enabled for the organization",
                                 "items": {
                                   "type": "object",
                                   "properties": {
@@ -51577,7 +52222,7 @@
                                     },
                                     "normalizers": {
                                       "type": "object",
-                                      "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when value normalization is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
+                                      "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when dynamic alert routing is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
                                       "properties": {
                                         "ignore_case": {
                                           "type": "boolean",
@@ -51805,7 +52450,7 @@
                             "type": "string",
                             "format": "uuid"
                           },
-                          "description": "Alert sources this rule applies to. Each must be one of the route's alert sources, and an empty list applies the rule to all of them. Can't be set on the fallback rule. Only available when rule-level source selection is enabled for the organization"
+                          "description": "Alert sources this rule applies to. Each must be one of the route's alert sources, and an empty list applies the rule to all of them. Can't be set on the fallback rule. Only available when dynamic alert routing is enabled for the organization"
                         },
                         "ai_sre_provider": {
                           "type": "string",
@@ -51867,7 +52512,7 @@
                                 "type": "array",
                                 "minItems": 1,
                                 "maxItems": 2,
-                                "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when matching on more than one property is enabled for the organization",
+                                "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when dynamic alert routing is enabled for the organization",
                                 "items": {
                                   "type": "object",
                                   "properties": {
@@ -51890,7 +52535,7 @@
                                     },
                                     "normalizers": {
                                       "type": "object",
-                                      "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when value normalization is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
+                                      "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when dynamic alert routing is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
                                       "properties": {
                                         "ignore_case": {
                                           "type": "boolean",
@@ -52130,7 +52775,7 @@
                             "type": "string",
                             "format": "uuid"
                           },
-                          "description": "Alert sources this rule applies to. Each must be one of the route's alert sources, and an empty list applies the rule to all of them. Can't be set on the fallback rule. Only available when rule-level source selection is enabled for the organization"
+                          "description": "Alert sources this rule applies to. Each must be one of the route's alert sources, and an empty list applies the rule to all of them. Can't be set on the fallback rule. Only available when dynamic alert routing is enabled for the organization"
                         },
                         "ai_sre_provider": {
                           "type": "string",
@@ -52201,7 +52846,7 @@
                                 "type": "array",
                                 "minItems": 1,
                                 "maxItems": 2,
-                                "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when matching on more than one property is enabled for the organization",
+                                "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when dynamic alert routing is enabled for the organization",
                                 "items": {
                                   "type": "object",
                                   "properties": {
@@ -52224,7 +52869,7 @@
                                     },
                                     "normalizers": {
                                       "type": "object",
-                                      "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when value normalization is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
+                                      "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when dynamic alert routing is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
                                       "properties": {
                                         "ignore_case": {
                                           "type": "boolean",
@@ -52441,7 +53086,7 @@
                     "type": "string",
                     "format": "uuid"
                   },
-                  "description": "Alert sources this rule applies to; empty means all of the route's sources. Returned when the rule is limited to sources or rule-level source selection is enabled for the organization"
+                  "description": "Alert sources this rule applies to; empty means all of the route's sources. Returned when the rule is limited to sources or dynamic alert routing is enabled for the organization"
                 },
                 "ai_sre_provider": {
                   "type": "string",
@@ -52505,7 +53150,7 @@
                         "type": "array",
                         "minItems": 1,
                         "maxItems": 2,
-                        "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when matching on more than one property is enabled for the organization",
+                        "description": "Dynamic destinations only. How alert values are matched to catalog entity properties. An alert routes to the entities that match every key. Each key uses a different property. A second key is only available when dynamic alert routing is enabled for the organization",
                         "items": {
                           "type": "object",
                           "properties": {
@@ -52528,7 +53173,7 @@
                             },
                             "normalizers": {
                               "type": "object",
-                              "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when value normalization is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
+                              "description": "How the alert value is cleaned up before it is compared with the catalog property. Only available when dynamic alert routing is enabled for the organization; otherwise the booleans are ignored and a prefix or suffix is rejected",
                               "properties": {
                                 "ignore_case": {
                                   "type": "boolean",
@@ -54840,6 +55485,12 @@
             "type": "integer",
             "description": "Time window for the alert grouping"
           },
+          "position": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Where this rule sits in the organization's alert grouping rule order, starting at 1. Null until rule ordering is turned on for the organization. New rules are then added at the end.",
+            "readOnly": true
+          },
           "group_by_alert_title": {
             "type": "boolean",
             "deprecated": true,
@@ -55253,7 +55904,7 @@
                   },
                   "grace_period_minutes": {
                     "type": "integer",
-                    "description": "How many minutes to keep the old token valid. Only applies when the grace period feature is enabled for your organization. Defaults to 30.",
+                    "description": "How many minutes to keep the old token valid. Set to 0 to invalidate the old token immediately. Defaults to 30.",
                     "minimum": 0,
                     "maximum": 1440,
                     "default": 30
@@ -55332,6 +55983,10 @@
             "type": "string",
             "description": "Grace period end date",
             "nullable": true
+          },
+          "token": {
+            "type": "string",
+            "description": "The API key token. Returned only when the key is created or rotated; omitted from list, show, update and delete responses."
           }
         },
         "required": [
@@ -56351,6 +57006,12 @@
                   "name": {
                     "type": "string"
                   },
+                  "description": {
+                    "type": "string",
+                    "description": "Helper text shown under the property when filling in a catalog entry.",
+                    "maxLength": 500,
+                    "nullable": true
+                  },
                   "kind": {
                     "type": "string",
                     "enum": [
@@ -56450,6 +57111,12 @@
                   "name": {
                     "type": "string"
                   },
+                  "description": {
+                    "type": "string",
+                    "description": "Helper text shown under the property when filling in a catalog entry.",
+                    "maxLength": 500,
+                    "nullable": true
+                  },
                   "kind": {
                     "type": "string",
                     "enum": [
@@ -56522,6 +57189,12 @@
           },
           "name": {
             "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "Helper text shown under the property when filling in a catalog entry.",
+            "maxLength": 500,
+            "nullable": true
           },
           "slug": {
             "type": "string",
@@ -56730,6 +57403,12 @@
                   "name": {
                     "type": "string"
                   },
+                  "description": {
+                    "type": "string",
+                    "description": "Helper text shown under the property when filling in a catalog entry.",
+                    "maxLength": 500,
+                    "nullable": true
+                  },
                   "kind": {
                     "type": "string",
                     "enum": [
@@ -56829,6 +57508,12 @@
                   "name": {
                     "type": "string"
                   },
+                  "description": {
+                    "type": "string",
+                    "description": "Helper text shown under the property when filling in a catalog entry.",
+                    "maxLength": 500,
+                    "nullable": true
+                  },
                   "kind": {
                     "type": "string",
                     "enum": [
@@ -56901,6 +57586,12 @@
           },
           "name": {
             "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "Helper text shown under the property when filling in a catalog entry.",
+            "maxLength": 500,
+            "nullable": true
           },
           "slug": {
             "type": "string",
@@ -73747,7 +74438,7 @@
                   },
                   "value_kind_catalog_id": {
                     "type": "string",
-                    "description": "The ID of the catalog used when value_kind is `catalog_entity`",
+                    "description": "The ID of the catalog used when value_kind is `catalog_entity`. Required when value_kind is `catalog_entity`.",
                     "nullable": true
                   },
                   "name": {
@@ -73936,7 +74627,7 @@
                   },
                   "value_kind_catalog_id": {
                     "type": "string",
-                    "description": "The ID of the catalog used when value_kind is `catalog_entity`",
+                    "description": "The ID of the catalog used when value_kind is `catalog_entity`. Required when value_kind is `catalog_entity`.",
                     "nullable": true
                   },
                   "name": {
@@ -77676,6 +78367,21 @@
             "description": "Sets the video conference type attached to the meeting",
             "nullable": true
           },
+          "record_meeting": {
+            "type": "boolean",
+            "description": "Scribe joins the event's Google Meet when the event starts and records it on the incident. Requires conference_solution_key hangoutsMeet."
+          },
+          "recording_mode": {
+            "type": "string",
+            "enum": [
+              "speaker_view",
+              "gallery_view",
+              "gallery_view_v2",
+              "audio_only"
+            ],
+            "description": "The video layout for the bot's recording (e.g. speaker_view, gallery_view, gallery_view_v2, audio_only)",
+            "nullable": true
+          },
           "post_to_incident_timeline": {
             "type": "boolean"
           },
@@ -79597,6 +80303,14 @@
           },
           "show_action_items_as_table": {
             "type": "boolean"
+          },
+          "include_timeline": {
+            "type": "boolean",
+            "default": true
+          },
+          "include_follow_ups": {
+            "type": "boolean",
+            "default": true
           }
         },
         "required": [
@@ -79781,6 +80495,14 @@
           },
           "show_action_items_as_table": {
             "type": "boolean"
+          },
+          "include_timeline": {
+            "type": "boolean",
+            "default": true
+          },
+          "include_follow_ups": {
+            "type": "boolean",
+            "default": true
           }
         },
         "required": [
@@ -82370,14 +83092,14 @@
               "type": "string"
             },
             "maxItems": 50,
-            "description": "Publishes the update to every listed status page. This field is in limited Early Access; contact Rootly Support to request access. When set, it takes precedence over status_page_id and the first entry becomes status_page_id."
+            "description": "Publishes the update to every listed status page. When set, it takes precedence over status_page_id and the first entry becomes status_page_id."
           },
           "selected_component_keys": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Composite \"SourceType:<id>\" keys of the status page components affected by the publish. This field is in Early Access and is not generally available; contact Rootly Support to request access."
+            "description": "Composite \"SourceType:<id>\" keys of the status page components affected by the publish."
           },
           "selected_component_statuses": {
             "type": "object",
@@ -82394,7 +83116,7 @@
           },
           "sync_incident_components": {
             "type": "boolean",
-            "description": "When true, every run also publishes the incident's tagged services and functionalities that are components on the target page. Defaults to true when selected_component_keys is empty. This field is in Early Access and is not generally available; contact Rootly Support to request access.",
+            "description": "When true, every run also publishes the incident's tagged services and functionalities that are components on the target page. Defaults to true when selected_component_keys is empty.",
             "nullable": true
           },
           "synced_component_status": {
@@ -85009,6 +85731,21 @@
           "prompt"
         ]
       },
+      "start_ai_sre_investigation_task_params": {
+        "type": "object",
+        "properties": {
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "start_ai_sre_investigation"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the workflow task"
+          }
+        }
+      },
       "run_ai_skill_task_params": {
         "type": "object",
         "properties": {
@@ -85573,6 +86310,9 @@
                         "$ref": "#/components/schemas/create_anthropic_chat_completion_task_params"
                       },
                       {
+                        "$ref": "#/components/schemas/start_ai_sre_investigation_task_params"
+                      },
+                      {
                         "$ref": "#/components/schemas/run_ai_skill_task_params"
                       },
                       {
@@ -86094,6 +86834,9 @@
                         "$ref": "#/components/schemas/create_anthropic_chat_completion_task_params"
                       },
                       {
+                        "$ref": "#/components/schemas/start_ai_sre_investigation_task_params"
+                      },
+                      {
                         "$ref": "#/components/schemas/run_ai_skill_task_params"
                       },
                       {
@@ -86581,6 +87324,9 @@
               },
               {
                 "$ref": "#/components/schemas/create_anthropic_chat_completion_task_params"
+              },
+              {
+                "$ref": "#/components/schemas/start_ai_sre_investigation_task_params"
               },
               {
                 "$ref": "#/components/schemas/run_ai_skill_task_params"
@@ -88871,7 +89617,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "description": "Actions that trigger the workflow. One of custom_fields.<slug>.updated, incident_in_triage, incident_created, incident_started, incident_updated, title_updated, summary_updated, status_updated, severity_updated, notify_emails_updated, scheduled_for_updated, scheduled_until_updated, environments_added, environments_removed, environments_updated, incident_types_added, incident_types_removed, incident_types_updated, services_added, services_removed, services_updated, visibility_updated, functionalities_added, functionalities_removed, functionalities_updated, teams_added, teams_removed, teams_updated, causes_added, causes_removed, causes_updated, timeline_updated, status_page_timeline_updated, role_assignments_updated, role_assignments_added, role_assignments_removed, slack_command, slack_channel_created, slack_channel_converted, microsoft_teams_channel_created, microsoft_teams_chat_created, google_chat_space_created, subscribers_updated, subscribers_added, subscribers_removed, user_joined_slack_channel, user_left_slack_channel, meeting_summary_created"
+              "description": "Actions that trigger the workflow. One of custom_fields.<slug>.updated, incident_in_triage, incident_created, incident_started, incident_updated, title_updated, summary_updated, status_updated, severity_updated, notify_emails_updated, scheduled_for_updated, scheduled_until_updated, environments_added, environments_removed, environments_updated, incident_types_added, incident_types_removed, incident_types_updated, services_added, services_removed, services_updated, visibility_updated, functionalities_added, functionalities_removed, functionalities_updated, teams_added, teams_removed, teams_updated, causes_added, causes_removed, causes_updated, timeline_updated, status_page_timeline_updated, role_assignments_updated, role_assignments_added, role_assignments_removed, slack_command, slack_channel_created, slack_channel_converted, microsoft_teams_channel_created, microsoft_teams_chat_created, google_chat_space_created, subscribers_updated, subscribers_added, subscribers_removed, user_joined_slack_channel, user_left_slack_channel, meeting_summary_created, retrospective_completed, retrospective_step_updated, retrospective_step_completed"
             }
           },
           "incident_visibilities": {
@@ -88913,6 +89659,18 @@
                 "scheduled",
                 "in_progress",
                 "completed"
+              ]
+            }
+          },
+          "incident_retrospective_progress_statuses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "completed",
+                "skipped"
               ]
             }
           },
@@ -88961,6 +89719,21 @@
             "default": "IS"
           },
           "incident_condition_status": {
+            "type": "string",
+            "enum": [
+              "IS",
+              "IS NOT",
+              "ANY",
+              "CONTAINS",
+              "CONTAINS_ALL",
+              "CONTAINS_NONE",
+              "NONE",
+              "SET",
+              "UNSET"
+            ],
+            "default": "ANY"
+          },
+          "incident_condition_retrospective_progress_status": {
             "type": "string",
             "enum": [
               "IS",
@@ -89240,7 +90013,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "description": "Actions that trigger the workflow. One of custom_fields.<slug>.updated, post_mortem_created, post_mortem_updated, status_updated, slack_command"
+              "description": "Actions that trigger the workflow. One of custom_fields.<slug>.updated, post_mortem_created, post_mortem_updated, status_updated, slack_command, retrospective_completed"
             }
           },
           "incident_visibilities": {
@@ -89282,6 +90055,18 @@
                 "scheduled",
                 "in_progress",
                 "completed"
+              ]
+            }
+          },
+          "incident_retrospective_progress_statuses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "completed",
+                "skipped"
               ]
             }
           },
@@ -89330,6 +90115,21 @@
             "default": "IS"
           },
           "incident_condition_status": {
+            "type": "string",
+            "enum": [
+              "IS",
+              "IS NOT",
+              "ANY",
+              "CONTAINS",
+              "CONTAINS_ALL",
+              "CONTAINS_NONE",
+              "NONE",
+              "SET",
+              "UNSET"
+            ],
+            "default": "ANY"
+          },
+          "incident_condition_retrospective_progress_status": {
             "type": "string",
             "enum": [
               "IS",
@@ -89687,6 +90487,18 @@
               ]
             }
           },
+          "incident_retrospective_progress_statuses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "active",
+                "completed",
+                "skipped"
+              ]
+            }
+          },
           "incident_inactivity_duration": {
             "type": "string",
             "description": "ex. 10 min, 1h, 3 days, 2 weeks",
@@ -89732,6 +90544,21 @@
             "default": "IS"
           },
           "incident_condition_status": {
+            "type": "string",
+            "enum": [
+              "IS",
+              "IS NOT",
+              "ANY",
+              "CONTAINS",
+              "CONTAINS_ALL",
+              "CONTAINS_NONE",
+              "NONE",
+              "SET",
+              "UNSET"
+            ],
+            "default": "ANY"
+          },
+          "incident_condition_retrospective_progress_status": {
             "type": "string",
             "enum": [
               "IS",
@@ -90198,6 +91025,29 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "alert_condition_source_id": {
+            "type": "string",
+            "enum": [
+              "IS",
+              "IS NOT",
+              "ANY",
+              "CONTAINS",
+              "CONTAINS_ALL",
+              "CONTAINS_NONE",
+              "NONE",
+              "SET",
+              "UNSET"
+            ],
+            "default": "ANY"
+          },
+          "alert_source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "IDs of the alert sources the alert must come from. Use alert_sources to match on source type instead."
           },
           "alert_condition_payload": {
             "type": "string",
@@ -91107,6 +91957,14 @@
                     "type": "integer",
                     "description": "This overrides the delay (seconds) in escalation levels"
                   },
+                  "escalation_timing": {
+                    "type": "string",
+                    "description": "Whether the live call router uses its own escalation level delay (lcr_override) or follows the escalation policy's timing (escalation_policy). Ignored unless escalation policy timing is enabled for the team",
+                    "enum": [
+                      "lcr_override",
+                      "escalation_policy"
+                    ]
+                  },
                   "should_auto_resolve_alert_on_call_end": {
                     "type": "boolean",
                     "description": "This overrides the delay (seconds) in escalation levels"
@@ -91318,6 +92176,14 @@
                     "type": "integer",
                     "description": "This overrides the delay (seconds) in escalation levels"
                   },
+                  "escalation_timing": {
+                    "type": "string",
+                    "description": "Whether the live call router uses its own escalation level delay (lcr_override) or follows the escalation policy's timing (escalation_policy). Ignored unless escalation policy timing is enabled for the team",
+                    "enum": [
+                      "lcr_override",
+                      "escalation_policy"
+                    ]
+                  },
                   "should_auto_resolve_alert_on_call_end": {
                     "type": "boolean",
                     "description": "This overrides the delay (seconds) in escalation levels"
@@ -91507,6 +92373,14 @@
           "escalation_level_delay_in_seconds": {
             "type": "integer",
             "description": "This overrides the delay (seconds) in escalation levels"
+          },
+          "escalation_timing": {
+            "type": "string",
+            "description": "Whether the live call router uses its own escalation level delay (lcr_override) or follows the escalation policy's timing (escalation_policy)",
+            "enum": [
+              "lcr_override",
+              "escalation_policy"
+            ]
           },
           "should_auto_resolve_alert_on_call_end": {
             "type": "boolean",
@@ -94573,6 +95447,37 @@
           "enabled": {
             "type": "boolean"
           },
+          "severity_params": {
+            "type": "object",
+            "nullable": true,
+            "description": "Severity scoping for this permission. Null unless severity-based incident permissions are enabled for the team.",
+            "properties": {
+              "fully_enabled": {
+                "type": "boolean",
+                "description": "Whether permissions are enabled for any severity incident",
+                "default": true
+              },
+              "applies_to_unassigned": {
+                "type": "boolean",
+                "description": "Whether permissions are enabled for incident without severity",
+                "default": true
+              },
+              "create_enabled": {
+                "type": "boolean",
+                "description": "Whether permissions are enabled when creating incident",
+                "default": false
+              },
+              "severity_ids": {
+                "type": "array",
+                "description": "Severity ids that determine if an incident is permitted based on matching severity",
+                "items": {
+                  "type": "string"
+                },
+                "nullable": true
+              }
+            },
+            "additionalProperties": false
+          },
           "created_at": {
             "type": "string"
           },
@@ -94881,6 +95786,37 @@
           },
           "resource_type": {
             "type": "string"
+          },
+          "severity_params": {
+            "type": "object",
+            "nullable": true,
+            "description": "Severity scoping for this permission. Null unless severity-based incident permissions are enabled for the team.",
+            "properties": {
+              "fully_enabled": {
+                "type": "boolean",
+                "description": "Whether permissions are enabled for any severity incident",
+                "default": true
+              },
+              "applies_to_unassigned": {
+                "type": "boolean",
+                "description": "Whether permissions are enabled for incident without severity",
+                "default": true
+              },
+              "create_enabled": {
+                "type": "boolean",
+                "description": "Whether permissions are enabled when creating incident",
+                "default": false
+              },
+              "severity_ids": {
+                "type": "array",
+                "description": "Severity ids that determine if an incident is permitted based on matching severity",
+                "items": {
+                  "type": "string"
+                },
+                "nullable": true
+              }
+            },
+            "additionalProperties": false
           },
           "created_at": {
             "type": "string"
@@ -95506,6 +96442,31 @@
             "type": "string",
             "description": "The url to the incident retrospective"
           },
+          "notion_page_id": {
+            "type": "string",
+            "description": "ID of the Notion page the retrospective was exported to",
+            "nullable": true
+          },
+          "notion_page_url": {
+            "type": "string",
+            "description": "URL of the Notion page the retrospective was exported to",
+            "nullable": true
+          },
+          "coda_doc_id": {
+            "type": "string",
+            "description": "ID of the Coda doc the retrospective was exported to",
+            "nullable": true
+          },
+          "coda_doc_url": {
+            "type": "string",
+            "description": "URL of the Coda doc the retrospective was exported to",
+            "nullable": true
+          },
+          "coda_page_id": {
+            "type": "string",
+            "description": "ID of the Coda page the retrospective was exported to",
+            "nullable": true
+          },
           "created_at": {
             "type": "string",
             "description": "Date of creation"
@@ -95847,6 +96808,11 @@
                       "medium",
                       "low"
                     ]
+                  },
+                  "position": {
+                    "type": "integer",
+                    "description": "Position of the incident task",
+                    "nullable": true
                   }
                 },
                 "additionalProperties": false,
@@ -95903,6 +96869,11 @@
                       "medium",
                       "low"
                     ]
+                  },
+                  "position": {
+                    "type": "integer",
+                    "description": "Position of the incident task",
+                    "nullable": true
                   }
                 },
                 "additionalProperties": false
@@ -95943,6 +96914,11 @@
               "medium",
               "low"
             ]
+          },
+          "position": {
+            "type": "integer",
+            "description": "Position of the incident task",
+            "nullable": true
           },
           "created_at": {
             "type": "string",
@@ -96414,7 +97390,7 @@
                   "status_page_components": {
                     "type": "array",
                     "nullable": true,
-                    "description": "Affected status page components and their statuses. This field is in Early Access and is not generally available; contact Rootly Support to request access. Ignored for terminal event statuses (resolved, completed), which clear component impact. A status is required per component except for scheduled maintenance incidents.",
+                    "description": "Affected status page components and their statuses. Ignored for terminal event statuses (resolved, completed), which clear component impact. A status is required per component except for scheduled maintenance incidents.",
                     "items": {
                       "type": "object",
                       "properties": {
@@ -98805,6 +99781,31 @@
             "description": "Quip page URL",
             "nullable": true
           },
+          "notion_page_id": {
+            "type": "string",
+            "description": "Notion page ID",
+            "nullable": true
+          },
+          "notion_page_url": {
+            "type": "string",
+            "description": "Notion page URL",
+            "nullable": true
+          },
+          "coda_doc_id": {
+            "type": "string",
+            "description": "Coda doc ID",
+            "nullable": true
+          },
+          "coda_doc_url": {
+            "type": "string",
+            "description": "Coda doc URL",
+            "nullable": true
+          },
+          "coda_page_id": {
+            "type": "string",
+            "description": "Coda page ID",
+            "nullable": true
+          },
           "sharepoint_page_id": {
             "type": "string",
             "description": "SharePoint page ID",
@@ -100754,6 +101755,16 @@
                       ]
                     }
                   },
+                  "pay_calculator_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "manage"
+                      ]
+                    }
+                  },
                   "on_call_roles_permissions": {
                     "type": "array",
                     "items": {
@@ -101143,6 +102154,16 @@
                       ]
                     }
                   },
+                  "pay_calculator_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "manage"
+                      ]
+                    }
+                  },
                   "on_call_roles_permissions": {
                     "type": "array",
                     "items": {
@@ -101491,6 +102512,16 @@
               "type": "string",
               "enum": [
                 "read"
+              ]
+            }
+          },
+          "pay_calculator_permissions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "manage"
               ]
             }
           },
@@ -111559,7 +112590,7 @@
                   },
                   "position": {
                     "type": "integer",
-                    "description": "Position of the severity",
+                    "description": "Position of the severity. Omit it to keep the current position; a null value is rejected with a 422.",
                     "nullable": true
                   },
                   "notify_emails": {
@@ -117422,6 +118453,24 @@
                 },
                 "description": "Server-evaluated flags for the calling credential. `ai-native-home` indicates whether the AI-native home is available. `ai-skills` is true only when the organization has AI Skills enabled, the credential is not a group API key, and its role or OAuth scopes allow reading the resource; a true value means `GET /v1/ai/skills` is expected to succeed. `ai-automations` is true only when the organization has AI Automations enabled, the credential is not a group API key, and its role or OAuth scopes allow reading the resource; a true value means `GET /v1/ai/automations` is expected to succeed. `ai-chat` is true when the organization can use the `/v1/ai/chat` endpoints (feature rollout, `config_ai_api_chat_enabled`, and the AI assistant are all on) and, for OAuth tokens, the token has `ai.chat:write` or an AI meta scope; a true value means `POST /v1/ai/chat` is expected to pass these gates. May be absent; treat a missing object or key as unknown, not false."
               },
+              "organization": {
+                "type": "object",
+                "description": "The organization the calling credential is scoped to, which every request made with it reads from and writes to. It can differ from the organization the user last opened in the web app. May be absent on older servers.",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "description": "The organization's ID"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "The organization's name"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ]
+              },
               "abilities": {
                 "type": "object",
                 "description": "AI resource permissions for the calling credential. May be absent on older servers.",
@@ -118091,6 +119140,7 @@
                         "incident.closed",
                         "incident.cancelled",
                         "incident.deleted",
+                        "incident.retrospective.completed",
                         "incident.scheduled.created",
                         "incident.scheduled.updated",
                         "incident.scheduled.in_progress",
@@ -118100,6 +119150,8 @@
                         "incident_post_mortem.updated",
                         "incident_post_mortem.published",
                         "incident_post_mortem.deleted",
+                        "incident_retrospective_step.updated",
+                        "incident_retrospective_step.completed",
                         "incident_status_page_event.created",
                         "incident_status_page_event.updated",
                         "incident_status_page_event.deleted",
@@ -118213,6 +119265,7 @@
                         "incident.closed",
                         "incident.cancelled",
                         "incident.deleted",
+                        "incident.retrospective.completed",
                         "incident.scheduled.created",
                         "incident.scheduled.updated",
                         "incident.scheduled.in_progress",
@@ -118222,6 +119275,8 @@
                         "incident_post_mortem.updated",
                         "incident_post_mortem.published",
                         "incident_post_mortem.deleted",
+                        "incident_retrospective_step.updated",
+                        "incident_retrospective_step.completed",
                         "incident_status_page_event.created",
                         "incident_status_page_event.updated",
                         "incident_status_page_event.deleted",
@@ -118314,6 +119369,7 @@
                 "incident.closed",
                 "incident.cancelled",
                 "incident.deleted",
+                "incident.retrospective.completed",
                 "incident.scheduled.created",
                 "incident.scheduled.updated",
                 "incident.scheduled.in_progress",
@@ -118323,6 +119379,8 @@
                 "incident_post_mortem.updated",
                 "incident_post_mortem.published",
                 "incident_post_mortem.deleted",
+                "incident_retrospective_step.updated",
+                "incident_retrospective_step.completed",
                 "incident_status_page_event.created",
                 "incident_status_page_event.updated",
                 "incident_status_page_event.deleted",
