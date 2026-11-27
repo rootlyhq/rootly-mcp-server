@@ -306,6 +306,51 @@ Claude Desktop handles OAuth2 login automatically.
 </details>
 
 <details>
+<summary><strong>OpenCode V2</strong></summary>
+
+<br>
+
+Add the hosted Rootly server to `opencode.json` in your project root. If your
+project already has an OpenCode config, add `rootly` to its `mcp.servers` object.
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "rootly": {
+        "type": "remote",
+        "url": "https://mcp.rootly.com/mcp?toolsets=all&readonly=true",
+        "oauth": {
+          "scope": "openid profile email ir.incidents:read ir.services:read ir.groups:read ir.retrospectives:read ir.status_pages:read oc.alerts:read oc.alert_groups:read oc.schedules:read oc.escalation_policies:read"
+        }
+      }
+    }
+  }
+}
+```
+
+From the same project, install the [Rootly agent skills](https://github.com/rootlyhq/agent-skills):
+
+```bash
+npx skills add rootlyhq/agent-skills --agent opencode --copy --yes
+```
+
+The command installs the seven workflows and their reference files under
+`.agents/skills/`. Start `opencode` in the project, open `/mcps`, and select
+`rootly` to sign in with your Rootly account. Use `/skills` to find a workflow.
+For example, select `incident-response` and ask OpenCode to summarize a recent
+incident and cite the Rootly records it used.
+
+The OAuth scope limits access to the listed Rootly resources. Add the relevant
+read scope if a workflow needs another type of record.
+
+See the [OpenCode MCP guide](https://opencode.ai/docs/mcp-servers/) for sign-in
+and troubleshooting.
+
+</details>
+
+<details>
 <summary><strong>Databricks</strong></summary>
 
 <br>
